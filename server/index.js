@@ -15,6 +15,10 @@ const PORT = process.env.PORT || process.env.STU_PORT || 3002;
 // Seed team on first run
 seedTeam();
 
+// Auto-import founder data on first production deploy
+const { seedIfEmpty } = require('./seed-production');
+seedIfEmpty();
+
 // Security
 app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false }));
 
