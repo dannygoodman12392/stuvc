@@ -1,0 +1,150 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-white text-gray-900 antialiased;
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+  }
+
+  *:focus-visible {
+    @apply outline-none ring-2 ring-blue-500/40 ring-offset-1 rounded-sm;
+  }
+
+  ::selection {
+    @apply bg-blue-100;
+  }
+
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-track {
+    @apply bg-transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply bg-gray-200 rounded-full border-2 border-transparent;
+    background-clip: padding-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-gray-300;
+  }
+}
+
+@layer components {
+  /* Cards */
+  .card {
+    @apply bg-white border border-gray-200 rounded-xl;
+  }
+  .card-hover {
+    @apply bg-white border border-gray-200 rounded-xl transition-all duration-150;
+  }
+  .card-hover:hover {
+    @apply bg-gray-50 border-gray-300;
+  }
+
+  /* Buttons */
+  .btn-primary {
+    @apply bg-gray-900 text-white text-sm font-medium px-4 py-2 rounded-lg transition-all duration-150 inline-flex items-center gap-2;
+  }
+  .btn-primary:hover {
+    @apply bg-gray-800;
+  }
+  .btn-primary:disabled {
+    @apply opacity-40 cursor-not-allowed;
+  }
+
+  .btn-secondary {
+    @apply bg-white text-gray-700 text-sm font-medium px-4 py-2 rounded-lg border border-gray-200 transition-all duration-150 inline-flex items-center gap-2;
+  }
+  .btn-secondary:hover {
+    @apply bg-gray-50 border-gray-300;
+  }
+  .btn-secondary:disabled {
+    @apply opacity-40 cursor-not-allowed;
+  }
+
+  .btn-ghost {
+    @apply text-gray-500 text-sm font-medium px-3 py-1.5 rounded-lg transition-all duration-150 inline-flex items-center gap-2;
+  }
+  .btn-ghost:hover {
+    @apply bg-gray-100 text-gray-700;
+  }
+
+  .btn-danger {
+    @apply bg-white text-red-600 text-sm font-medium px-4 py-2 rounded-lg border border-red-200 transition-all duration-150 inline-flex items-center gap-2;
+  }
+  .btn-danger:hover {
+    @apply bg-red-50;
+  }
+
+  .btn-accent {
+    @apply bg-blue-600 text-white text-sm font-semibold px-4 py-2 rounded-lg transition-all duration-150 inline-flex items-center gap-2;
+  }
+  .btn-accent:hover {
+    @apply bg-blue-700;
+  }
+
+  /* Inputs */
+  .input {
+    @apply bg-white border border-gray-200 rounded-lg px-3 py-2 text-gray-900 text-sm placeholder-gray-400 transition-all;
+  }
+  .input:focus {
+    @apply outline-none border-blue-400 ring-2 ring-blue-500/10;
+  }
+
+  .select {
+    @apply bg-white border border-gray-200 rounded-lg px-3 py-2 text-gray-900 text-sm transition-all appearance-none pr-8 cursor-pointer;
+    background-image: url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20fill%3D%22none%22%20viewBox%3D%220%200%2020%2020%22%3E%3Cpath%20stroke%3D%22%239ca3af%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%20stroke-width%3D%221.5%22%20d%3D%22m6%208%204%204%204-4%22%2F%3E%3C%2Fsvg%3E');
+    background-size: 1.25rem;
+    background-position: right 0.5rem center;
+    background-repeat: no-repeat;
+  }
+  .select:focus {
+    @apply outline-none border-blue-400 ring-2 ring-blue-500/10;
+  }
+
+  .label {
+    @apply block text-xs font-medium text-gray-500 mb-1.5;
+  }
+
+  /* Badges */
+  .badge {
+    @apply inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium;
+  }
+  .badge-green {
+    @apply bg-emerald-50 text-emerald-700;
+  }
+  .badge-blue {
+    @apply bg-blue-50 text-blue-700;
+  }
+  .badge-amber {
+    @apply bg-amber-50 text-amber-700;
+  }
+  .badge-gray {
+    @apply bg-gray-100 text-gray-600;
+  }
+  .badge-red {
+    @apply bg-red-50 text-red-700;
+  }
+  .badge-purple {
+    @apply bg-purple-50 text-purple-700;
+  }
+
+  /* Signal indicators */
+  .signal-strong-pass { @apply text-emerald-600; }
+  .signal-pass { @apply text-blue-600; }
+  .signal-watch { @apply text-amber-600; }
+  .signal-pass-on { @apply text-red-600; }
+}
+
+@layer utilities {
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+}
