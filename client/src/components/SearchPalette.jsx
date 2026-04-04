@@ -153,9 +153,8 @@ export default function SearchPalette({ open, onClose }) {
                       </div>
                       {a.overall_signal && (
                         <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
-                          a.overall_signal === 'Strong Pass' ? 'bg-emerald-50 text-emerald-600' :
-                          a.overall_signal === 'Pass' ? 'bg-blue-50 text-blue-600' :
-                          a.overall_signal === 'Watch' ? 'bg-amber-50 text-amber-600' :
+                          a.overall_signal === 'Invest' ? 'bg-emerald-50 text-emerald-600' :
+                          a.overall_signal === 'Monitor' ? 'bg-amber-50 text-amber-600' :
                           'bg-red-50 text-red-600'
                         }`}>{a.overall_signal}</span>
                       )}

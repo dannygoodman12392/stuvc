@@ -143,7 +143,7 @@ const TOOLS = [
       type: 'object',
       properties: {
         founder_id: { type: 'number', description: 'Filter by founder' },
-        signal: { type: 'string', description: 'Filter by signal: Strong Pass, Pass, Watch, Pass On' }
+        signal: { type: 'string', description: 'Filter by signal: Invest, Monitor, Pass' }
       }
     }
   },
@@ -442,7 +442,7 @@ INVESTMENT CONTEXT:
 - Focus: B2B SaaS, AI Infrastructure, Vertical Software, Fintech, Healthtech, Marketplace
 - Four required founder traits: Speed, Storytelling, Salesmanship, Build+Motivate
 - Team: Brandon Cruz (Managing Partner), Eric Hutt (VP), Rob Schinske (Senior Associate), Danny Goodman (Strategic Initiatives)
-- Signals: Strong Pass, Pass, Watch, Pass On`;
+- Signals: Invest, Monitor, Pass`;
 
 // Truncate tool results to prevent context overflow
 function truncateToolResult(result) {

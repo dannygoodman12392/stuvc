@@ -365,6 +365,6 @@ function statusBadge(status) {
 }
 
 function signalBadge(signal) {
-  const map = { 'Strong Pass': 'badge-green', 'Pass': 'badge-blue', 'Watch': 'badge-amber', 'Pass On': 'badge-red' };
+  const map = { 'Invest': 'badge-green', 'Monitor': 'badge-amber', 'Pass': 'badge-red' };
   return map[signal] || 'badge-gray';
 }

@@ -13,10 +13,9 @@ WRITING RULES:
 - 2-3 sentences per trait, not paragraphs. Evidence, not adjectives.
 
 VERDICT SIGNAL DEFINITIONS:
-- Strong Pass: Would fight to get into this round. Exceptional founder with clear earned insight and all four traits.
-- Pass: Solid founder, real signal, worth pursuing. Some gaps but addressable.
-- Watch: Interesting but significant gaps — monitor, don't deploy capital yet. Name what resolves it.
-- Pass On: Breaks critical patterns, unacceptable risks, or poor founder-problem fit.
+- Invest: Would back this founder. Strong earned insight, clear founder-market fit, all four traits present. Gaps are addressable.
+- Monitor: Interesting but significant gaps — track closely, don't deploy capital yet. Name what resolves it.
+- Pass: Breaks critical patterns, unacceptable risks, or poor founder-problem fit. Not investable at this stage.
 
 SCORE CALIBRATION (1-10):
 - 9-10: Top 5% of founders you've seen at this stage. Reserve this.
@@ -55,7 +54,7 @@ KEY QUOTES:
 Return your analysis as a JSON object with this exact structure (no markdown wrapping):
 {
   "verdict": {
-    "signal": "Strong Pass | Pass | Watch | Pass On",
+    "signal": "Invest | Monitor | Pass",
     "score": <1-10>,
     "one_liner": "One sentence: who this founder is and why they do or don't clear the bar. Lead with the call.",
     "archetype": "e.g. DOMAIN_EXPERT / MARKETPLACE_NATIVE, TECHNICAL_FOUNDER / FIRST_TIMER, REPEAT_FOUNDER / OPERATOR_TURNED_CEO"
@@ -281,10 +280,9 @@ Your job:
 The Founder Evaluator now produces a structured assessment with verdict, founder-problem fit, founder-market fit, four trait scores, key quotes, and risks. Use these directly — do not re-derive them. The founder score in signal_scores should match the founder agent's verdict score.
 
 SIGNAL DEFINITIONS:
-- Strong Pass: Would fight to get into this round. Exceptional founder, strong fit, manageable risks.
-- Pass: Solid opportunity, worth pursuing. Some gaps but addressable.
-- Watch: Interesting but significant gaps — monitor, don't deploy capital yet.
-- Pass On: Breaks critical patterns, unacceptable risks, or poor founder-problem fit.
+- Invest: Would back this founder. Strong earned insight, clear fit, manageable risks.
+- Monitor: Interesting but significant gaps — track closely, don't deploy capital yet.
+- Pass: Breaks critical patterns, unacceptable risks, or not investable at this stage.
 
 WRITING RULES:
 - Lead with the call. No throat-clearing.
@@ -294,7 +292,7 @@ WRITING RULES:
 Return your analysis as JSON:
 {
   "executive_summary": "3 paragraphs: thesis (what this is and why it matters), key strengths (what makes this investable), key risks (what could kill it)",
-  "overall_signal": "Strong Pass | Pass | Watch | Pass On",
+  "overall_signal": "Invest | Monitor | Pass",
   "signal_scores": {
     "founder": <1-10>,
     "market": <1-10>,
@@ -305,7 +303,7 @@ Return your analysis as JSON:
   "agent_consensus": ["areas where agents agree"],
   "agent_disagreements": ["areas where agents disagree"],
   "top_questions": ["top 5 questions for next meeting, deduplicated across agents"],
-  "recommended_next_step": "Pass On | Second Meeting | IC Memo | Term Sheet Discussion",
+  "recommended_next_step": "Pass | Second Meeting | IC Memo | Term Sheet Discussion",
   "ic_memo_outline": {
     "thesis": "...",
     "founder_assessment": "...",

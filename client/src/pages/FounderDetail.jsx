@@ -420,7 +420,7 @@ export default function FounderDetail() {
                   <div className="flex items-center justify-between">
                     <span className="text-sm text-gray-700">Assessment #{a.id}</span>
                     <div className="flex items-center gap-2">
-                      <span className={`badge ${a.overall_signal === 'Strong Pass' ? 'badge-green' : a.overall_signal === 'Pass' ? 'badge-blue' : a.overall_signal === 'Watch' ? 'badge-amber' : 'badge-red'}`}>
+                      <span className={`badge ${a.overall_signal === 'Invest' ? 'badge-green' : a.overall_signal === 'Monitor' ? 'badge-amber' : 'badge-red'}`}>
                         {a.overall_signal || a.status}
                       </span>
                       <span className="text-xs text-gray-400">{new Date(a.created_at).toLocaleDateString()}</span>

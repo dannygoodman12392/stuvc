@@ -104,10 +104,9 @@ export default function AssessmentDetail() {
   const isComplete = assessment.status === 'complete' || assessment.status === 'partial';
 
   const SIGNAL_COLORS = {
-    'Strong Pass': 'text-emerald-600',
-    'Pass': 'text-blue-600',
-    'Watch': 'text-amber-600',
-    'Pass On': 'text-red-600',
+    'Invest': 'text-emerald-600',
+    'Monitor': 'text-amber-600',
+    'Pass': 'text-red-600',
   };
 
   return (
@@ -230,7 +229,7 @@ export default function AssessmentDetail() {
                             ))}
                           </div>
                         )}
-                        <span className={`badge text-[10px] ${v.overall_signal === 'Strong Pass' ? 'badge-green' : v.overall_signal === 'Pass' ? 'badge-blue' : v.overall_signal === 'Watch' ? 'badge-amber' : v.overall_signal === 'Pass On' ? 'badge-red' : 'badge-gray'}`}>
+                        <span className={`badge text-[10px] ${v.overall_signal === 'Invest' ? 'badge-green' : v.overall_signal === 'Monitor' ? 'badge-amber' : v.overall_signal === 'Pass' ? 'badge-red' : 'badge-gray'}`}>
                           {v.overall_signal || v.status}
                         </span>
                       </div>
@@ -548,16 +547,14 @@ function AgentOutput({ data, type }) {
 // ════════════════════════════════════════════════════════
 
 const SIGNAL_BG = {
-  'Strong Pass': 'bg-emerald-50 border-emerald-200',
-  'Pass': 'bg-blue-50 border-blue-200',
-  'Watch': 'bg-amber-50 border-amber-200',
-  'Pass On': 'bg-red-50 border-red-200',
+  'Invest': 'bg-emerald-50 border-emerald-200',
+  'Monitor': 'bg-amber-50 border-amber-200',
+  'Pass': 'bg-red-50 border-red-200',
 };
 const SIGNAL_TEXT = {
-  'Strong Pass': 'text-emerald-700',
-  'Pass': 'text-blue-700',
-  'Watch': 'text-amber-700',
-  'Pass On': 'text-red-700',
+  'Invest': 'text-emerald-700',
+  'Monitor': 'text-amber-700',
+  'Pass': 'text-red-700',
 };
 const FIT_COLORS = {
   'strong': 'text-emerald-600 bg-emerald-50',
@@ -819,7 +816,7 @@ function LegacyFounderOutput({ data }) {
           {data.overall_signal && (
             <div>
               <p className="text-xs text-gray-500 uppercase tracking-wider">Signal</p>
-              <p className={`text-sm font-medium mt-0.5 ${data.overall_signal === 'Strong Pass' ? 'text-emerald-600' : data.overall_signal === 'Pass' ? 'text-blue-600' : data.overall_signal === 'Watch' ? 'text-amber-600' : 'text-red-500'}`}>{data.overall_signal}</p>
+              <p className={`text-sm font-medium mt-0.5 ${data.overall_signal === 'Invest' ? 'text-emerald-600' : data.overall_signal === 'Monitor' ? 'text-amber-600' : 'text-red-500'}`}>{data.overall_signal}</p>
             </div>
           )}
         </div>

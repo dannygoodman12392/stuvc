@@ -62,7 +62,7 @@ export default function DealRoom() {
               {d.overall_signal && (
                 <div className="flex items-center gap-2 mb-3">
                   <span className="text-xs text-gray-500">Assessment:</span>
-                  <span className={`text-xs font-medium ${d.overall_signal === 'Strong Pass' ? 'text-emerald-600' : d.overall_signal === 'Pass' ? 'text-blue-600' : 'text-amber-600'}`}>
+                  <span className={`text-xs font-medium ${d.overall_signal === 'Invest' ? 'text-emerald-600' : d.overall_signal === 'Monitor' ? 'text-amber-600' : 'text-red-600'}`}>
                     {d.overall_signal}
                   </span>
                 </div>

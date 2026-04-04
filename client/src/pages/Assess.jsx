@@ -133,10 +133,9 @@ export default function Assess() {
   }
 
   const SIGNAL_COLORS = {
-    'Strong Pass': 'badge-green',
-    'Pass': 'badge-blue',
-    'Watch': 'badge-amber',
-    'Pass On': 'badge-red',
+    'Invest': 'badge-green',
+    'Monitor': 'badge-amber',
+    'Pass': 'badge-red',
   };
 
   // Group assessments by group_id for display
