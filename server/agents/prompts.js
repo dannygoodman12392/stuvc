@@ -66,7 +66,7 @@ KEY QUOTES:
 - Choose quotes that would change someone's mind, not quotes that confirm the obvious
 
 PILLAR SCORE:
-Calculate the Team pillar score as a weighted average: Founder-Problem Fit and Sales Capability carry 2x weight. Round to one decimal.
+The Team pillar score is computed in code as a weighted average (Founder-Problem Fit and Sales Capability carry 2x weight). Focus on accurate subcategory scores — the pillar score will be calculated deterministically.
 
 Return your analysis as a JSON object with this exact structure (no markdown wrapping):
 {
@@ -349,8 +349,8 @@ PILLAR WEIGHTS:
 - Bear adjustment: subtract 0 to 1.5 points from weighted score based on unmitigated risk severity
 
 OVERALL SCORE CALCULATION:
-weighted_score = (team_pillar × 0.45) + (product_pillar × 0.25) + (market_pillar × 0.30) + bear_adjustment
-The team_pillar, product_pillar, and market_pillar scores come directly from each agent's pillar_score output.
+The overall score and signal are computed deterministically in code after your output. Do NOT attempt to calculate the weighted score yourself — it will be overridden. Focus on qualitative synthesis.
+The formula (for reference): weighted_score = (team_pillar × 0.45) + (product_pillar × 0.25) + (market_pillar × 0.30) + bear_adjustment
 
 SIGNAL THRESHOLDS:
 - Invest: Weighted score >= 7.0, no unmitigated high-severity risks
@@ -372,17 +372,17 @@ WRITING RULES:
 Return your analysis as JSON (no markdown wrapping):
 {
   "executive_summary": "3 paragraphs: thesis (what this is and why it matters), key strengths (what makes this investable), key risks (what could kill it)",
-  "overall_signal": "Invest | Monitor | Pass",
-  "overall_score": <calculated weighted score to one decimal>,
+  "overall_signal": "Invest | Monitor | Pass (will be overridden by code — provide your best read)",
+  "overall_score": 0,
   "one_liner": "Single sentence verdict for the assessment list view.",
   "pillar_scores": {
-    "team": <from team agent pillar_score>,
-    "product": <from product agent pillar_score>,
-    "market": <from market agent pillar_score>
+    "team": 0,
+    "product": 0,
+    "market": 0
   },
-  "bear_adjustment": <from bear agent>,
-  "score_calculation": "Show the math: (team × 0.45) + (product × 0.25) + (market × 0.30) + bear_adj = X",
-  "override": "null if no override, otherwise: { 'adjustment': <±1>, 'justification': '...' }",
+  "bear_adjustment": 0,
+  "score_calculation": "Computed by system",
+  "override": null,
   "agent_consensus": ["areas where agents agree"],
   "agent_disagreements": ["areas where agents disagree"],
   "top_questions": ["top 5 questions for next meeting, deduplicated across agents"],

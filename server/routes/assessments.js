@@ -406,6 +406,10 @@ async function runAssessmentAgents(assessmentId, founderId) {
       bear: results[3].status === 'fulfilled' ? results[3].value : { error: results[3].reason?.message || 'Agent failed' },
     };
 
+    // ── Deterministic score computation ──
+    // LLMs can't do arithmetic reliably. Compute all scores in code.
+    correctPillarScores(agentOutputs);
+
     // Save agent outputs — reuse existing DB columns:
     // founder_agent_output → team, market_agent_output → product,
     // economics_agent_output → market, bear_agent_output → bear
@@ -426,6 +430,9 @@ async function runAssessmentAgents(assessmentId, founderId) {
       const synthesis = await runSynthesis(client, AGENT_PROMPTS.synthesis, agentOutputs, cappedContext, signal);
       if (signal.aborted) return;
 
+      // Override synthesis scores with deterministic computation
+      correctSynthesisScores(synthesis, agentOutputs);
+
       db.prepare(`UPDATE opportunity_assessments SET
         synthesis_output = ?, overall_signal = ?, status = 'complete', updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
@@ -437,6 +444,119 @@ async function runAssessmentAgents(assessmentId, founderId) {
     }
   } finally {
     runManager.cleanup(assessmentId);
+  }
+}
+
+// ══════════════════════════════════════════════════════════
+// Deterministic Score Computation
+// LLMs hallucinate arithmetic. All scores are computed here.
+// ══════════════════════════════════════════════════════════
+
+function round1(n) {
+  return Math.round(n * 10) / 10;
+}
+
+function computeTeamPillarScore(subs) {
+  if (!subs) return null;
+  // Founder-Problem Fit and Sales Capability carry 2x weight
+  const weights = {
+    founder_problem_fit: 2,
+    sales_capability: 2,
+    velocity: 1,
+    founder_market_fit: 1,
+    team_composition: 1,
+    idea_maze: 1,
+    experience_stage_fit: 1,
+  };
+  let totalWeight = 0, totalScore = 0;
+  for (const [key, w] of Object.entries(weights)) {
+    const sub = subs[key];
+    if (sub && typeof sub.score === 'number') {
+      totalScore += sub.score * w;
+      totalWeight += w;
+    }
+  }
+  return totalWeight > 0 ? round1(totalScore / totalWeight) : null;
+}
+
+function computeSimplePillarScore(subs) {
+  if (!subs) return null;
+  const scores = Object.values(subs)
+    .filter(s => s && typeof s.score === 'number')
+    .map(s => s.score);
+  if (scores.length === 0) return null;
+  return round1(scores.reduce((a, b) => a + b, 0) / scores.length);
+}
+
+function correctPillarScores(agentOutputs) {
+  // Team: weighted average (FPF and Sales 2x)
+  if (agentOutputs.team && agentOutputs.team.subcategories) {
+    const computed = computeTeamPillarScore(agentOutputs.team.subcategories);
+    if (computed !== null) {
+      agentOutputs.team.pillar_score = computed;
+      if (agentOutputs.team.verdict) {
+        agentOutputs.team.verdict.score = computed;
+      }
+    }
+  }
+  // Product: simple average
+  if (agentOutputs.product && agentOutputs.product.subcategories) {
+    const computed = computeSimplePillarScore(agentOutputs.product.subcategories);
+    if (computed !== null) agentOutputs.product.pillar_score = computed;
+  }
+  // Market: simple average
+  if (agentOutputs.market && agentOutputs.market.subcategories) {
+    const computed = computeSimplePillarScore(agentOutputs.market.subcategories);
+    if (computed !== null) agentOutputs.market.pillar_score = computed;
+  }
+  // Bear: clamp adjustment to [0, -1.5]
+  if (agentOutputs.bear && typeof agentOutputs.bear.bear_adjustment === 'number') {
+    agentOutputs.bear.bear_adjustment = round1(
+      Math.max(-1.5, Math.min(0, agentOutputs.bear.bear_adjustment))
+    );
+  }
+}
+
+function correctSynthesisScores(synthesis, agentOutputs) {
+  const teamScore = agentOutputs.team?.pillar_score;
+  const productScore = agentOutputs.product?.pillar_score;
+  const marketScore = agentOutputs.market?.pillar_score;
+  const bearAdj = agentOutputs.bear?.bear_adjustment ?? 0;
+
+  // Set pillar scores from the (already corrected) agent outputs
+  synthesis.pillar_scores = {
+    team: teamScore,
+    product: productScore,
+    market: marketScore,
+  };
+  synthesis.bear_adjustment = bearAdj;
+
+  // Compute weighted score
+  const t = (teamScore || 0) * 0.45;
+  const p = (productScore || 0) * 0.25;
+  const m = (marketScore || 0) * 0.30;
+  const raw = t + p + m + bearAdj;
+  const overall = round1(raw);
+
+  synthesis.overall_score = overall;
+  synthesis.score_calculation = `(${teamScore} × 0.45) + (${productScore} × 0.25) + (${marketScore} × 0.30) + (${bearAdj}) = ${round1(t)} + ${round1(p)} + ${round1(m)} + ${bearAdj} = ${overall}`;
+
+  // Apply override if synthesis agent requested one (±1 max)
+  let finalScore = overall;
+  if (synthesis.override && typeof synthesis.override === 'object' && typeof synthesis.override.adjustment === 'number') {
+    const adj = Math.max(-1, Math.min(1, synthesis.override.adjustment));
+    finalScore = round1(overall + adj);
+    synthesis.overall_score = finalScore;
+    synthesis.score_calculation += ` → override ${adj > 0 ? '+' : ''}${adj} = ${finalScore} (${synthesis.override.justification || 'no justification'})`;
+  }
+
+  // Determine signal from score thresholds
+  if (finalScore >= 7.0) {
+    synthesis.overall_signal = 'Invest';
+  } else if (finalScore >= 5.0) {
+    synthesis.overall_signal = 'Monitor';
+  } else {
+    synthesis.overall_signal = 'Pass';
   }
 }
 
