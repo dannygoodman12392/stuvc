@@ -76,7 +76,7 @@ app.use('/api', rateLimit({ windowMs: 15 * 60 * 1000, max: 200, standardHeaders:
 app.use('/api/ai', rateLimit({ windowMs: 15 * 60 * 1000, max: 50, standardHeaders: true, legacyHeaders: false }));
 
 // Public routes
-app.get('/api/health', (req, res) => res.json({ status: 'ok', app: 'Stu' }));
+app.get('/api/health', (req, res) => res.json({ status: 'ok', app: 'Stu', version: '2.0.0' }));
 app.use('/api/auth', require('./routes/auth'));
 
 // Protected routes
