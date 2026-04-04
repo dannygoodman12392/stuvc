@@ -382,14 +382,13 @@ async function runAssessmentAgents(assessmentId, founderId) {
       console.warn(`[Assessment] Context truncated from ${fullContext.length} to 150K chars`);
     }
 
-    // Run all 5 agents in parallel
+    // Run all 4 agents in parallel (Team, Product, Market, Bear)
     const AGENT_PROMPTS = require('../agents/prompts');
 
     const agentPromises = [
-      runAgent(client, AGENT_PROMPTS.founder, cappedContext, signal),
+      runAgent(client, AGENT_PROMPTS.team, cappedContext, signal),
+      runAgent(client, AGENT_PROMPTS.product, cappedContext, signal),
       runAgent(client, AGENT_PROMPTS.market, cappedContext, signal),
-      runAgent(client, AGENT_PROMPTS.economics, cappedContext, signal),
-      runAgent(client, AGENT_PROMPTS.pattern, cappedContext, signal),
       runAgent(client, AGENT_PROMPTS.bear, cappedContext, signal),
     ];
 
@@ -401,21 +400,22 @@ async function runAssessmentAgents(assessmentId, founderId) {
     }
 
     const agentOutputs = {
-      founder: results[0].status === 'fulfilled' ? results[0].value : { error: results[0].reason?.message || 'Agent failed' },
-      market: results[1].status === 'fulfilled' ? results[1].value : { error: results[1].reason?.message || 'Agent failed' },
-      economics: results[2].status === 'fulfilled' ? results[2].value : { error: results[2].reason?.message || 'Agent failed' },
-      pattern: results[3].status === 'fulfilled' ? results[3].value : { error: results[3].reason?.message || 'Agent failed' },
-      bear: results[4].status === 'fulfilled' ? results[4].value : { error: results[4].reason?.message || 'Agent failed' },
+      team: results[0].status === 'fulfilled' ? results[0].value : { error: results[0].reason?.message || 'Agent failed' },
+      product: results[1].status === 'fulfilled' ? results[1].value : { error: results[1].reason?.message || 'Agent failed' },
+      market: results[2].status === 'fulfilled' ? results[2].value : { error: results[2].reason?.message || 'Agent failed' },
+      bear: results[3].status === 'fulfilled' ? results[3].value : { error: results[3].reason?.message || 'Agent failed' },
     };
 
-    // Save agent outputs — save each one individually for real-time polling visibility
+    // Save agent outputs — reuse existing DB columns:
+    // founder_agent_output → team, market_agent_output → product,
+    // economics_agent_output → market, bear_agent_output → bear
     db.prepare(`UPDATE opportunity_assessments SET
       founder_agent_output = ?, market_agent_output = ?, economics_agent_output = ?,
-      pattern_agent_output = ?, bear_agent_output = ?, status = 'synthesizing'
+      pattern_agent_output = NULL, bear_agent_output = ?, status = 'synthesizing'
       WHERE id = ?
     `).run(
-      JSON.stringify(agentOutputs.founder), JSON.stringify(agentOutputs.market),
-      JSON.stringify(agentOutputs.economics), JSON.stringify(agentOutputs.pattern),
+      JSON.stringify(agentOutputs.team), JSON.stringify(agentOutputs.product),
+      JSON.stringify(agentOutputs.market),
       JSON.stringify(agentOutputs.bear), assessmentId
     );
 
@@ -429,7 +429,7 @@ async function runAssessmentAgents(assessmentId, founderId) {
       db.prepare(`UPDATE opportunity_assessments SET
         synthesis_output = ?, overall_signal = ?, status = 'complete', updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
-      `).run(JSON.stringify(synthesis), synthesis.overall_signal || 'Watch', assessmentId);
+      `).run(JSON.stringify(synthesis), synthesis.overall_signal || 'Monitor', assessmentId);
     } catch (err) {
       if (signal.aborted) return;
       console.error('[Assessment] Synthesis error:', err);

@@ -2,11 +2,11 @@ import { useState, useEffect, useRef } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { api } from '../utils/api';
 
+// Agent tab config — maps to DB columns (reused existing column names)
 const AGENTS = [
-  { key: 'founder', label: 'Founder', field: 'founder_agent_output' },
-  { key: 'market', label: 'Market', field: 'market_agent_output' },
-  { key: 'economics', label: 'Economics', field: 'economics_agent_output' },
-  { key: 'pattern', label: 'Pattern', field: 'pattern_agent_output' },
+  { key: 'team', label: 'Team', field: 'founder_agent_output' },
+  { key: 'product', label: 'Product', field: 'market_agent_output' },
+  { key: 'market', label: 'Market', field: 'economics_agent_output' },
   { key: 'bear', label: 'Bear', field: 'bear_agent_output' },
 ];
 
@@ -37,66 +37,38 @@ export default function AssessmentDetail() {
       const a = await api.getAssessment(id);
       setAssessment(a);
 
-      // Load inputs
       api.getAssessmentInputs(id).then(setInputs).catch(() => {});
 
-      // Load version history if group_id exists
       if (a.group_id) {
         api.getAssessmentGroup(a.group_id).then(setVersions).catch(() => {});
       }
 
-      // Poll if running
       if (a.status === 'running' || a.status === 'synthesizing' || a.status === 'processing_inputs') {
         pollRef.current = setInterval(async () => {
           try {
             const updated = await api.getAssessment(id);
             setAssessment(updated);
-            if (['complete', 'partial', 'error', 'cancelled'].includes(updated.status)) {
+            if (updated.status === 'complete' || updated.status === 'partial' || updated.status === 'error') {
               clearInterval(pollRef.current);
-              // Reload versions
-              if (updated.group_id) api.getAssessmentGroup(updated.group_id).then(setVersions).catch(() => {});
+              pollRef.current = null;
             }
           } catch {}
         }, 3000);
       }
     } catch (err) {
-      console.error(err);
-    }
-    setLoading(false);
-  }
-
-  function parseOutput(jsonStr) {
-    if (!jsonStr) return null;
-    try { return JSON.parse(jsonStr); } catch { return null; }
-  }
-
-  async function handleCancel() {
-    try {
-      await api.cancelAssessment(id);
-      setAssessment(a => ({ ...a, status: 'cancelled' }));
-      if (pollRef.current) clearInterval(pollRef.current);
-    } catch (err) {
-      alert('Failed to cancel: ' + err.message);
+      console.error('Failed to load assessment:', err);
+    } finally {
+      setLoading(false);
     }
   }
 
-  async function handleDelete() {
-    if (!confirm('Delete this assessment? This cannot be undone.')) return;
-    try {
-      await api.deleteAssessment(id);
-      navigate('/assess');
-    } catch (err) {
-      alert('Failed to delete: ' + err.message);
-    }
+  function parseOutput(raw) {
+    if (!raw) return null;
+    try { return typeof raw === 'string' ? JSON.parse(raw) : raw; }
+    catch { return null; }
   }
 
-  function handleRerun() {
-    const params = new URLSearchParams({ rerun: id });
-    if (assessment.group_id) params.set('group', assessment.group_id);
-    navigate(`/assess?${params.toString()}`);
-  }
-
-  if (loading) return <div className="text-center py-12 text-gray-500 text-sm">Loading assessment...</div>;
+  if (loading) return <div className="text-center py-12 text-gray-500 text-sm">Loading...</div>;
   if (!assessment) return <div className="text-center py-12 text-gray-500 text-sm">Assessment not found</div>;
 
   const synthesis = parseOutput(assessment.synthesis_output);
@@ -117,127 +89,65 @@ export default function AssessmentDetail() {
         <div className="flex items-center gap-2 text-sm text-gray-400 mb-4">
           <Link to="/assess" className="hover:text-gray-600">Assess</Link>
           <span>/</span>
-          <span className="text-gray-700">{assessment.founder_name || `Assessment #${id}`}</span>
-          {assessment.version_number > 1 && <span className="badge badge-gray text-[10px]">v{assessment.version_number}</span>}
+          <span className="text-gray-700">{assessment.founder_name || 'Assessment'}</span>
+          {assessment.founder_company && <span className="text-gray-400">/ {assessment.founder_company}</span>}
         </div>
 
         {/* Header */}
-        <div className="flex items-start justify-between mb-4">
+        <div className="flex items-start justify-between mb-6">
           <div>
-            <h1 className="text-xl font-bold text-gray-900">
-              {assessment.founder_name || 'Opportunity Assessment'}
-              {assessment.founder_company && <span className="text-gray-400 font-normal ml-2">({assessment.founder_company})</span>}
-            </h1>
-            <p className="text-sm text-gray-500 mt-0.5">
-              {assessment.status === 'processing_inputs' && 'Processing uploaded materials...'}
-              {assessment.status === 'running' && 'Agents analyzing...'}
-              {assessment.status === 'synthesizing' && 'Synthesizing results...'}
-              {assessment.status === 'complete' && `Completed ${new Date(assessment.updated_at).toLocaleDateString()}`}
-              {assessment.status === 'partial' && 'Partial results (some agents failed)'}
-              {assessment.status === 'error' && 'Assessment failed'}
-              {assessment.status === 'cancelled' && 'Cancelled'}
-            </p>
+            <h1 className="text-xl font-bold text-gray-900">{assessment.founder_name || 'Unknown Founder'}</h1>
+            <p className="text-sm text-gray-500 mt-0.5">{assessment.founder_company || ''}</p>
           </div>
-          <div className="flex items-center gap-2">
-            {assessment.overall_signal && (
-              <span className={`text-lg font-bold ${SIGNAL_COLORS[assessment.overall_signal] || 'text-gray-400'}`}>
-                {assessment.overall_signal}
+          <div className="flex items-center gap-3">
+            <span className={`text-lg font-bold ${SIGNAL_COLORS[assessment.overall_signal] || 'text-gray-500'}`}>
+              {assessment.overall_signal || assessment.status}
+            </span>
+            {isRunning && (
+              <span className="badge badge-blue animate-pulse text-xs">
+                {assessment.status === 'processing_inputs' ? 'Processing...' : assessment.status === 'synthesizing' ? 'Synthesizing...' : 'Running...'}
               </span>
             )}
           </div>
         </div>
 
-        {/* Action bar */}
-        <div className="flex items-center gap-2 mb-6">
-          {isRunning && (
-            <button onClick={handleCancel} className="text-xs text-red-600 hover:text-red-700 border border-red-200 rounded-lg px-3 py-1.5 hover:bg-red-50 transition-colors">
-              Cancel Run
+        {/* Version history */}
+        {versions.length > 1 && (
+          <div className="mb-4">
+            <button onClick={() => setShowVersions(!showVersions)} className="text-xs text-gray-400 hover:text-gray-600">
+              {showVersions ? 'Hide' : 'Show'} version history ({versions.length} versions)
             </button>
-          )}
-          {isComplete && (
-            <button onClick={handleRerun} className="text-xs text-blue-600 hover:text-blue-700 border border-blue-200 rounded-lg px-3 py-1.5 hover:bg-blue-50 transition-colors">
-              + Add Info & Re-run
-            </button>
-          )}
-          {versions.length > 1 && (
-            <button onClick={() => setShowVersions(!showVersions)} className="text-xs text-gray-500 hover:text-gray-700 border border-gray-200 rounded-lg px-3 py-1.5 hover:bg-gray-50 transition-colors">
-              {showVersions ? 'Hide' : 'Show'} Version History ({versions.length})
-            </button>
-          )}
-          <button onClick={handleDelete} className="text-xs text-gray-400 hover:text-red-500 border border-gray-200 rounded-lg px-3 py-1.5 hover:bg-red-50 transition-colors ml-auto">
-            Delete
-          </button>
-        </div>
-
-        {/* Per-agent progress (while running) */}
-        {isRunning && (
-          <div className="card p-4 mb-6">
-            <div className="flex items-center gap-3 mb-3">
-              <svg className="w-5 h-5 animate-spin text-blue-600" fill="none" viewBox="0 0 24 24">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-              </svg>
-              <span className="text-sm text-gray-600">
-                {assessment.status === 'processing_inputs' ? 'Fetching URLs and processing files...' :
-                 assessment.status === 'synthesizing' ? 'All agents complete. Synthesizing...' :
-                 'Agents analyzing in parallel...'}
-              </span>
-            </div>
-            <div className="grid grid-cols-5 gap-2">
-              {AGENTS.map(agent => {
-                const hasOutput = !!assessment[agent.field];
-                return (
-                  <div key={agent.key} className={`text-center rounded-lg py-2 ${hasOutput ? 'bg-emerald-50' : 'bg-gray-50'}`}>
-                    {hasOutput ? (
-                      <svg className="w-4 h-4 text-emerald-500 mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>
-                    ) : (
-                      <svg className="w-4 h-4 text-gray-300 mx-auto animate-pulse" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6l4 2" /></svg>
-                    )}
-                    <p className={`text-[10px] mt-1 ${hasOutput ? 'text-emerald-600 font-medium' : 'text-gray-400'}`}>
-                      {agent.label}{agent.key === 'bear' ? ' !' : ''}
-                    </p>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        {/* Version comparison (if showing) */}
-        {showVersions && versions.length > 1 && (
-          <div className="card p-4 mb-6">
-            <h3 className="text-sm font-semibold text-gray-700 mb-3">Version History</h3>
-            <div className="space-y-2">
-              {versions.map((v) => {
-                const vSynthesis = parseOutput(v.synthesis_output);
-                const isCurrent = v.id === parseInt(id);
-                return (
-                  <Link key={v.id} to={`/assess/${v.id}`} className={`block rounded-lg p-3 transition-colors ${isCurrent ? 'bg-blue-50 border border-blue-200' : 'bg-gray-50 hover:bg-gray-100'}`}>
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <span className={`text-sm font-medium ${isCurrent ? 'text-blue-700' : 'text-gray-700'}`}>
-                          Version {v.version_number || 1}
-                        </span>
-                        <span className="text-xs text-gray-400 ml-2">{new Date(v.created_at).toLocaleDateString()}</span>
-                        {v.change_summary && <p className="text-xs text-gray-500 mt-0.5">{v.change_summary}</p>}
+            {showVersions && (
+              <div className="mt-2 space-y-1">
+                {versions.map(v => {
+                  const vSynthesis = parseOutput(v.synthesis_output);
+                  return (
+                    <Link key={v.id} to={`/assess/${v.id}`}
+                      className={`block rounded-lg p-2 text-sm ${v.id === parseInt(id) ? 'bg-blue-50 border border-blue-200' : 'bg-gray-50 hover:bg-gray-100'}`}>
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <span className="font-medium">v{v.version_number}</span>
+                          <span className="text-gray-400 ml-2">{new Date(v.created_at).toLocaleDateString()}</span>
+                          {v.change_summary && <span className="text-gray-400 ml-2">{v.change_summary}</span>}
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {vSynthesis?.pillar_scores && (
+                            <div className="flex gap-1 text-[10px] font-mono">
+                              <span className={vSynthesis.pillar_scores.team >= 7 ? 'text-emerald-600' : vSynthesis.pillar_scores.team >= 5 ? 'text-amber-600' : 'text-red-500'}>T:{vSynthesis.pillar_scores.team}</span>
+                              <span className={vSynthesis.pillar_scores.product >= 7 ? 'text-emerald-600' : vSynthesis.pillar_scores.product >= 5 ? 'text-amber-600' : 'text-red-500'}>P:{vSynthesis.pillar_scores.product}</span>
+                              <span className={vSynthesis.pillar_scores.market >= 7 ? 'text-emerald-600' : vSynthesis.pillar_scores.market >= 5 ? 'text-amber-600' : 'text-red-500'}>M:{vSynthesis.pillar_scores.market}</span>
+                            </div>
+                          )}
+                          <span className={`badge text-[10px] ${v.overall_signal === 'Invest' ? 'badge-green' : v.overall_signal === 'Monitor' ? 'badge-amber' : v.overall_signal === 'Pass' ? 'badge-red' : 'badge-gray'}`}>
+                            {v.overall_signal || v.status}
+                          </span>
+                        </div>
                       </div>
-                      <div className="flex items-center gap-2">
-                        {vSynthesis?.signal_scores && (
-                          <div className="flex gap-1">
-                            {Object.entries(vSynthesis.signal_scores).map(([k, val]) => (
-                              <span key={k} className={`text-[10px] font-mono ${val >= 7 ? 'text-emerald-600' : val >= 5 ? 'text-amber-600' : 'text-red-500'}`}>{val}</span>
-                            ))}
-                          </div>
-                        )}
-                        <span className={`badge text-[10px] ${v.overall_signal === 'Invest' ? 'badge-green' : v.overall_signal === 'Monitor' ? 'badge-amber' : v.overall_signal === 'Pass' ? 'badge-red' : 'badge-gray'}`}>
-                          {v.overall_signal || v.status}
-                        </span>
-                      </div>
-                    </div>
-                  </Link>
-                );
-              })}
-            </div>
+                    </Link>
+                  );
+                })}
+              </div>
+            )}
           </div>
         )}
 
@@ -260,58 +170,7 @@ export default function AssessmentDetail() {
         {/* Tab content */}
         <div className="space-y-4">
           {activeTab === 'synthesis' && (
-            synthesis ? (
-              <div className="space-y-4">
-                <div className="card p-4">
-                  <h3 className="text-sm font-semibold text-gray-700 mb-2">Executive Summary</h3>
-                  <p className="text-sm text-gray-600 whitespace-pre-wrap">{synthesis.executive_summary}</p>
-                </div>
-
-                {synthesis.signal_scores && (
-                  <div className="card p-4">
-                    <h3 className="text-sm font-semibold text-gray-700 mb-3">Signal Scorecard</h3>
-                    <div className="grid grid-cols-5 gap-3">
-                      {Object.entries(synthesis.signal_scores).map(([key, val]) => (
-                        <div key={key} className="text-center">
-                          <div className={`text-2xl font-bold ${val >= 7 ? 'text-emerald-600' : val >= 5 ? 'text-amber-600' : 'text-red-500'}`}>{val}</div>
-                          <p className="text-[10px] text-gray-500 uppercase tracking-wider mt-1">{key.replace('_', ' ')}</p>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {synthesis.top_questions && (
-                  <div className="card p-4">
-                    <h3 className="text-sm font-semibold text-gray-700 mb-2">Top Questions for Next Meeting</h3>
-                    <ol className="text-sm text-gray-600 space-y-2">
-                      {synthesis.top_questions.map((q, i) => (
-                        <li key={i} className="flex gap-2"><span className="text-blue-600 font-bold">{i + 1}.</span> {q}</li>
-                      ))}
-                    </ol>
-                  </div>
-                )}
-
-                {synthesis.recommended_next_step && (
-                  <div className="card p-4">
-                    <h3 className="text-sm font-semibold text-gray-700 mb-2">Recommended Next Step</h3>
-                    <p className="text-sm text-blue-600 font-medium">{synthesis.recommended_next_step}</p>
-                  </div>
-                )}
-
-                {synthesis.ic_memo_outline && (
-                  <div className="card p-4">
-                    <h3 className="text-sm font-semibold text-gray-700 mb-2">IC Memo Outline</h3>
-                    {Object.entries(synthesis.ic_memo_outline).map(([key, val]) => (
-                      <div key={key} className="mb-3">
-                        <p className="text-xs text-gray-500 uppercase tracking-wider">{key.replace(/_/g, ' ')}</p>
-                        <p className="text-sm text-gray-600 mt-0.5">{val}</p>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            ) : (
+            synthesis ? <SynthesisView data={synthesis} /> : (
               <div className="text-center py-8 text-gray-500 text-sm">
                 {isRunning ? 'Synthesis will appear once all agents complete...' : 'Synthesis not available'}
               </div>
@@ -348,202 +207,8 @@ export default function AssessmentDetail() {
   );
 }
 
-function AgentOutput({ data, type }) {
-  if (!data) return <div className="text-center py-8 text-gray-500 text-sm">Agent output not yet available</div>;
-  if (data.error) return <div className="card p-4 text-sm text-red-600">Agent error: {data.error}</div>;
-
-  // ── New Founder Assessment Layout ──
-  if (type === 'founder' && data.verdict) {
-    return <FounderAssessment data={data} />;
-  }
-
-  // ── Legacy founder format (backward compat) ──
-  if (type === 'founder' && data.trait_scores && !data.verdict) {
-    return <LegacyFounderOutput data={data} />;
-  }
-
-  return (
-    <div className="space-y-4">
-      {data.narrative && (
-        <div className="card p-4">
-          <h3 className="text-sm font-semibold text-gray-700 mb-2">Analysis</h3>
-          <p className="text-sm text-gray-600 whitespace-pre-wrap">{data.narrative}</p>
-        </div>
-      )}
-
-      {/* Market-specific */}
-      {type === 'market' && data.enabling_conditions && (
-        <div className="card p-4">
-          <h3 className="text-sm font-semibold text-gray-700 mb-3">Enabling Conditions</h3>
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-            {Object.entries(data.enabling_conditions).filter(([k]) => k !== 'convergence_score').map(([key, val]) => (
-              <div key={key} className="bg-gray-50 rounded-lg p-3">
-                <p className="text-[10px] text-gray-500 uppercase tracking-wider">{key.replace(/_/g, ' ')}</p>
-                <p className={`text-lg font-bold ${(val.score || val) >= 7 ? 'text-emerald-600' : (val.score || val) >= 5 ? 'text-amber-600' : 'text-red-500'}`}>{val.score || val}/10</p>
-                {val.evidence && <p className="text-xs text-gray-500 mt-1">{val.evidence}</p>}
-              </div>
-            ))}
-          </div>
-          {data.enabling_conditions.convergence_score && (
-            <div className="mt-3 pt-3 border-t border-gray-100 flex items-center justify-between">
-              <span className="text-sm text-gray-500">Convergence Score</span>
-              <span className="text-lg font-bold text-blue-600">{data.enabling_conditions.convergence_score}/10</span>
-            </div>
-          )}
-        </div>
-      )}
-
-      {type === 'market' && data.why_now_score && (
-        <div className="card p-4">
-          <h3 className="text-sm font-semibold text-gray-700 mb-3">Why Now</h3>
-          <div className="grid grid-cols-3 gap-3">
-            {Object.entries(data.why_now_score).map(([key, val]) => (
-              <div key={key} className="bg-gray-50 rounded-lg p-3 text-center">
-                <p className={`text-lg font-bold ${(val.score || val) >= 7 ? 'text-emerald-600' : (val.score || val) >= 5 ? 'text-amber-600' : 'text-red-500'}`}>{val.score || val}/10</p>
-                <p className="text-[10px] text-gray-500 uppercase tracking-wider capitalize">{key}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {type === 'market' && (data.tam_assessment || data.market_timing) && (
-        <div className="card p-4 flex items-center gap-6 flex-wrap">
-          {data.tam_assessment && <div><p className="text-xs text-gray-500 uppercase">TAM</p><p className="text-sm font-medium text-gray-900 mt-0.5 capitalize">{data.tam_assessment}</p></div>}
-          {data.market_timing && <div><p className="text-xs text-gray-500 uppercase">Timing</p><p className="text-sm font-medium text-gray-900 mt-0.5 capitalize">{data.market_timing}</p></div>}
-        </div>
-      )}
-
-      {/* Economics-specific */}
-      {type === 'economics' && data.metrics_disclosed && (
-        <div className="card p-4">
-          <h3 className="text-sm font-semibold text-gray-700 mb-3">Metrics Disclosed</h3>
-          <div className="grid grid-cols-2 gap-2">
-            {Object.entries(data.metrics_disclosed).filter(([_, v]) => v && v !== 'null' && v !== 'N/A').map(([key, val]) => (
-              <div key={key} className="bg-gray-50 rounded-lg p-2">
-                <p className="text-[10px] text-gray-500 uppercase">{key.replace(/_/g, ' ')}</p>
-                <p className="text-sm text-gray-700">{val}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {type === 'economics' && data.implied_unit_economics && (
-        <div className="card p-4">
-          <h3 className="text-sm font-semibold text-gray-700 mb-3">Implied Unit Economics</h3>
-          {Object.entries(data.implied_unit_economics).map(([key, val]) => (
-            <div key={key} className="mb-2">
-              <p className="text-xs text-gray-500 uppercase">{key.replace(/_/g, ' ')}</p>
-              <p className="text-sm text-gray-600">{val}</p>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {type === 'economics' && (data.revenue_quality_signal || data.nrr_potential) && (
-        <div className="card p-4 flex items-center gap-6 flex-wrap">
-          {data.revenue_quality_signal && <div><p className="text-xs text-gray-500 uppercase">Revenue Quality</p><p className="text-sm font-medium capitalize">{data.revenue_quality_signal}</p></div>}
-          {data.nrr_potential && <div><p className="text-xs text-gray-500 uppercase">NRR Potential</p><p className="text-sm font-medium capitalize">{data.nrr_potential.replace(/_/g, ' ')}</p></div>}
-        </div>
-      )}
-
-      {/* Bear-specific */}
-      {type === 'bear' && data.primary_risks && (
-        <div className="card p-4">
-          <h3 className="text-sm font-semibold text-red-600 mb-3">Primary Risks</h3>
-          <div className="space-y-3">
-            {data.primary_risks.map((r, i) => (
-              <div key={i} className="bg-gray-50 rounded-lg p-3">
-                <div className="flex items-center gap-2 mb-1">
-                  <span className={`badge ${r.severity === 'high' ? 'badge-red' : r.severity === 'medium' ? 'badge-amber' : 'badge-gray'}`}>{r.severity}</span>
-                  <span className="text-sm font-medium text-gray-800">{r.risk}</span>
-                </div>
-                {r.detail && <p className="text-xs text-gray-500 mt-1">{r.detail}</p>}
-                {r.mitigation && <p className="text-xs text-gray-400 mt-1">Mitigation: {r.mitigation}</p>}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {type === 'bear' && data.kill_shot_risk && (
-        <div className="card p-4 border-red-200">
-          <h3 className="text-sm font-semibold text-red-600 mb-2">Kill Shot Risk</h3>
-          <p className="text-sm text-gray-600">{data.kill_shot_risk}</p>
-        </div>
-      )}
-
-      {type === 'bear' && data.failure_scenarios && (
-        <div className="card p-4">
-          <h3 className="text-sm font-semibold text-gray-700 mb-2">Failure Scenarios</h3>
-          <ul className="text-sm text-gray-600 space-y-1.5">
-            {data.failure_scenarios.map((s, i) => <li key={i} className="flex gap-2"><span className="text-red-400">-</span> {s}</li>)}
-          </ul>
-        </div>
-      )}
-
-      {/* Pattern-specific */}
-      {type === 'pattern' && data.pattern_matches && (
-        <div className="card p-4">
-          <h3 className="text-sm font-semibold text-gray-700 mb-3">Pattern Matches</h3>
-          {data.pattern_matches.map((p, i) => (
-            <div key={i} className="flex items-start gap-2 mb-2">
-              <span className={`badge ${p.verdict === 'strong_match' ? 'badge-green' : p.verdict === 'partial_match' ? 'badge-amber' : 'badge-red'}`}>
-                {p.verdict?.replace(/_/g, ' ')}
-              </span>
-              <div>
-                <p className="text-sm text-gray-700">{p.pattern}</p>
-                {p.evidence && <p className="text-xs text-gray-500 mt-0.5">{p.evidence}</p>}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {type === 'pattern' && data.pattern_breaks && data.pattern_breaks.length > 0 && (
-        <div className="card p-4">
-          <h3 className="text-sm font-semibold text-amber-600 mb-3">Pattern Breaks</h3>
-          {data.pattern_breaks.map((p, i) => (
-            <div key={i} className="flex items-start gap-2 mb-2">
-              <span className={`badge ${p.verdict === 'intentional_anti_pattern' ? 'badge-blue' : 'badge-red'}`}>
-                {p.verdict?.replace(/_/g, ' ')}
-              </span>
-              <div>
-                <p className="text-sm text-gray-700">{p.pattern}</p>
-                {p.interpretation && <p className="text-xs text-gray-500 mt-0.5">{p.interpretation}</p>}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {type === 'pattern' && (data.portfolio_fit || data.comparable_deals) && (
-        <div className="card p-4">
-          {data.portfolio_fit && <div className="mb-3"><p className="text-xs text-gray-500 uppercase">Portfolio Fit</p><p className="text-sm text-gray-700 capitalize">{data.portfolio_fit}</p></div>}
-          {data.comparable_deals && data.comparable_deals.length > 0 && (
-            <div><p className="text-xs text-gray-500 uppercase mb-1">Comparable Deals</p>{data.comparable_deals.map((d, i) => <p key={i} className="text-sm text-gray-600">- {d}</p>)}</div>
-          )}
-        </div>
-      )}
-
-      {/* Key questions (all agents) */}
-      {data.key_questions && (
-        <div className="card p-4">
-          <h3 className="text-sm font-semibold text-gray-700 mb-2">Key Questions</h3>
-          <ul className="text-sm text-gray-600 space-y-1.5">
-            {data.key_questions.map((q, i) => (
-              <li key={i} className="flex gap-2"><span className="text-blue-600">?</span> {q}</li>
-            ))}
-          </ul>
-        </div>
-      )}
-    </div>
-  );
-}
-
 // ════════════════════════════════════════════════════════
-// New Founder Assessment Component
+// Shared helpers
 // ════════════════════════════════════════════════════════
 
 const SIGNAL_BG = {
@@ -572,58 +237,258 @@ function scoreColor(score) {
   if (score >= 5) return 'text-amber-600';
   return 'text-red-500';
 }
-
 function scoreBg(score) {
   if (score >= 7) return 'bg-emerald-500';
   if (score >= 5) return 'bg-amber-500';
   return 'bg-red-500';
 }
 
-function FounderAssessment({ data }) {
-  const v = data.verdict;
-  const traits = data.four_traits;
+function SubcategoryCard({ label, score, evidence, extras }) {
+  return (
+    <div className="bg-gray-50 rounded-lg p-3">
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-sm font-semibold text-gray-700">{label}</span>
+        <span className={`text-lg font-black ${scoreColor(score)}`}>{score}</span>
+      </div>
+      <div className="w-full bg-gray-200 rounded-full h-1 mb-2">
+        <div className={`h-1 rounded-full ${scoreBg(score)}`} style={{ width: `${score * 10}%` }} />
+      </div>
+      <p className="text-xs text-gray-500 leading-relaxed">{evidence}</p>
+      {extras}
+    </div>
+  );
+}
 
+function RisksList({ risks }) {
+  if (!risks || risks.length === 0) return null;
+  return (
+    <div className="card p-4">
+      <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Risks</h3>
+      <div className="space-y-2">
+        {risks.map((r, i) => (
+          <div key={i} className="flex items-start gap-2">
+            <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded shrink-0 mt-0.5 ${
+              r.severity === 'high' ? 'bg-red-100 text-red-700' :
+              r.severity === 'medium' ? 'bg-amber-100 text-amber-700' :
+              'bg-gray-100 text-gray-600'
+            }`}>{r.severity}</span>
+            <div>
+              <p className="text-sm text-gray-800">{r.risk}</p>
+              {r.evidence && <p className="text-xs text-gray-400 mt-0.5">{r.evidence}</p>}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function QuestionsList({ questions, title }) {
+  if (!questions || questions.length === 0) return null;
+  return (
+    <div className="card p-4">
+      <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">{title || 'Open Questions'}</h3>
+      <ul className="space-y-1.5">
+        {questions.map((q, i) => (
+          <li key={i} className="text-sm text-gray-600 flex gap-2">
+            <span className="text-blue-500 font-bold shrink-0">{i + 1}.</span>
+            <span>{q}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════
+// Synthesis View
+// ════════════════════════════════════════════════════════
+
+function SynthesisView({ data }) {
   return (
     <div className="space-y-4">
-      {/* ── VERDICT BANNER ── */}
-      <div className={`rounded-xl border p-5 ${SIGNAL_BG[v.signal] || 'bg-gray-50 border-gray-200'}`}>
-        <div className="flex items-start justify-between gap-4">
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-3 mb-2">
-              <span className={`text-2xl font-black ${SIGNAL_TEXT[v.signal] || 'text-gray-700'}`}>{v.signal}</span>
-              <span className={`text-3xl font-black ${scoreColor(v.score)}`}>{v.score}<span className="text-base font-medium text-gray-400">/10</span></span>
+      {/* Verdict banner */}
+      {data.overall_signal && (
+        <div className={`rounded-xl border p-5 ${SIGNAL_BG[data.overall_signal] || 'bg-gray-50 border-gray-200'}`}>
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-3 mb-2">
+                <span className={`text-2xl font-black ${SIGNAL_TEXT[data.overall_signal] || 'text-gray-700'}`}>{data.overall_signal}</span>
+                {data.overall_score && (
+                  <span className={`text-3xl font-black ${scoreColor(data.overall_score)}`}>
+                    {data.overall_score}<span className="text-base font-medium text-gray-400">/10</span>
+                  </span>
+                )}
+              </div>
+              {data.one_liner && <p className="text-sm text-gray-800 font-medium leading-snug">{data.one_liner}</p>}
             </div>
-            <p className="text-sm text-gray-800 font-medium leading-snug">{v.one_liner}</p>
-          </div>
-          <div className="text-right shrink-0">
-            <p className="text-[10px] text-gray-400 uppercase tracking-wider">Archetype</p>
-            <p className="text-xs font-mono text-gray-600 mt-0.5">{v.archetype}</p>
-            {data.stage_classification && (
-              <>
-                <p className="text-[10px] text-gray-400 uppercase tracking-wider mt-2">Stage</p>
-                <p className="text-xs font-medium text-gray-600 mt-0.5">{data.stage_classification}</p>
-              </>
+            {data.recommended_next_step && (
+              <div className="text-right shrink-0">
+                <p className="text-[10px] text-gray-400 uppercase tracking-wider">Next Step</p>
+                <p className="text-sm font-semibold text-blue-600 mt-0.5">{data.recommended_next_step}</p>
+              </div>
             )}
           </div>
         </div>
-      </div>
+      )}
 
-      {/* ── SNAPSHOT ── */}
+      {/* Pillar scores */}
+      {data.pillar_scores && (
+        <div className="card p-4">
+          <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Pillar Scores</h3>
+          <div className="grid grid-cols-3 gap-4">
+            {[
+              { key: 'team', label: 'Team', weight: '45%' },
+              { key: 'product', label: 'Product', weight: '25%' },
+              { key: 'market', label: 'Market', weight: '30%' },
+            ].map(({ key, label, weight }) => {
+              const val = data.pillar_scores[key];
+              if (val == null) return null;
+              return (
+                <div key={key} className="text-center">
+                  <div className={`text-3xl font-black ${scoreColor(val)}`}>{val}</div>
+                  <p className="text-sm font-semibold text-gray-700 mt-1">{label}</p>
+                  <p className="text-[10px] text-gray-400">{weight} weight</p>
+                </div>
+              );
+            })}
+          </div>
+          {data.bear_adjustment != null && data.bear_adjustment !== 0 && (
+            <div className="mt-3 pt-3 border-t border-gray-100 flex items-center justify-between">
+              <span className="text-xs text-gray-500">Bear Adjustment</span>
+              <span className="text-sm font-bold text-red-600">{data.bear_adjustment}</span>
+            </div>
+          )}
+          {data.score_calculation && (
+            <div className="mt-2 pt-2 border-t border-gray-100">
+              <p className="text-[10px] text-gray-400 font-mono">{data.score_calculation}</p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Executive Summary */}
+      {data.executive_summary && (
+        <div className="card p-4">
+          <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Executive Summary</h3>
+          <p className="text-sm text-gray-600 whitespace-pre-wrap leading-relaxed">{data.executive_summary}</p>
+        </div>
+      )}
+
+      {/* Consensus & Disagreements */}
+      {(data.agent_consensus || data.agent_disagreements) && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {data.agent_consensus && data.agent_consensus.length > 0 && (
+            <div className="card p-4">
+              <h3 className="text-xs font-semibold text-emerald-600 uppercase tracking-wider mb-2">Agent Consensus</h3>
+              <ul className="space-y-1.5">
+                {data.agent_consensus.map((c, i) => (
+                  <li key={i} className="text-sm text-gray-600 flex gap-2"><span className="text-emerald-500 shrink-0">+</span>{c}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {data.agent_disagreements && data.agent_disagreements.length > 0 && (
+            <div className="card p-4">
+              <h3 className="text-xs font-semibold text-amber-600 uppercase tracking-wider mb-2">Agent Disagreements</h3>
+              <ul className="space-y-1.5">
+                {data.agent_disagreements.map((d, i) => (
+                  <li key={i} className="text-sm text-gray-600 flex gap-2"><span className="text-amber-500 shrink-0">~</span>{d}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
+
+      <QuestionsList questions={data.top_questions} title="Top Questions for Next Meeting" />
+
+      {/* Override note */}
+      {data.override && data.override !== 'null' && typeof data.override === 'object' && (
+        <div className="card p-3 bg-blue-50 border-blue-200">
+          <p className="text-xs text-blue-700">
+            <span className="font-bold">Synthesis Override ({data.override.adjustment > 0 ? '+' : ''}{data.override.adjustment}):</span> {data.override.justification}
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════
+// Agent Output Router
+// ════════════════════════════════════════════════════════
+
+function AgentOutput({ data, type }) {
+  if (!data) return <div className="text-center py-8 text-gray-500 text-sm">Agent output not yet available</div>;
+  if (data.error) return <div className="card p-4 text-sm text-red-600">Agent error: {data.error}</div>;
+
+  if (type === 'team') return <TeamOutput data={data} />;
+  if (type === 'product') return <ProductOutput data={data} />;
+  if (type === 'market') return <MarketOutput data={data} />;
+  if (type === 'bear') return <BearOutput data={data} />;
+
+  // Fallback for any unknown agent type
+  return (
+    <div className="card p-4">
+      <pre className="text-xs text-gray-500 whitespace-pre-wrap">{JSON.stringify(data, null, 2)}</pre>
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════
+// TEAM Output
+// ════════════════════════════════════════════════════════
+
+function TeamOutput({ data }) {
+  const v = data.verdict;
+  const subs = data.subcategories;
+
+  return (
+    <div className="space-y-4">
+      {/* Verdict Banner */}
+      {v && (
+        <div className={`rounded-xl border p-5 ${SIGNAL_BG[v.signal] || 'bg-gray-50 border-gray-200'}`}>
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-3 mb-2">
+                <span className={`text-2xl font-black ${SIGNAL_TEXT[v.signal] || 'text-gray-700'}`}>{v.signal}</span>
+                <span className={`text-3xl font-black ${scoreColor(v.score)}`}>{v.score}<span className="text-base font-medium text-gray-400">/10</span></span>
+                {data.pillar_score && (
+                  <span className="text-sm text-gray-400 font-mono ml-2">Pillar: {data.pillar_score}</span>
+                )}
+              </div>
+              <p className="text-sm text-gray-800 font-medium leading-snug">{v.one_liner}</p>
+            </div>
+            <div className="text-right shrink-0">
+              <p className="text-[10px] text-gray-400 uppercase tracking-wider">Archetype</p>
+              <p className="text-xs font-mono text-gray-600 mt-0.5">{v.archetype}</p>
+              {data.stage_classification && (
+                <>
+                  <p className="text-[10px] text-gray-400 uppercase tracking-wider mt-2">Stage</p>
+                  <p className="text-xs font-medium text-gray-600 mt-0.5">{data.stage_classification}</p>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Snapshot */}
       {data.snapshot && data.snapshot.length > 0 && (
         <div className="card p-4">
           <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Snapshot</h3>
           <ul className="space-y-1.5">
             {data.snapshot.map((bullet, i) => (
               <li key={i} className="text-sm text-gray-700 flex gap-2">
-                <span className="text-gray-300 shrink-0">-</span>
-                <span>{bullet}</span>
+                <span className="text-gray-300 shrink-0">-</span><span>{bullet}</span>
               </li>
             ))}
           </ul>
         </div>
       )}
 
-      {/* ── THE READ ── */}
+      {/* The Read */}
       {data.the_read && (
         <div className="card p-4 border-l-4 border-l-gray-900">
           <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">The Read</h3>
@@ -631,69 +496,50 @@ function FounderAssessment({ data }) {
         </div>
       )}
 
-      {/* ── FOUNDER-PROBLEM FIT + FOUNDER-MARKET FIT ── */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {data.founder_problem_fit && (
-          <div className="card p-4">
-            <div className="flex items-center justify-between mb-2">
-              <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Founder-Problem Fit</h3>
-              <div className="flex items-center gap-2">
-                <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full ${FIT_COLORS[data.founder_problem_fit.fit_signal] || 'text-gray-500 bg-gray-50'}`}>
-                  {data.founder_problem_fit.fit_signal}
-                </span>
-                <span className="text-[10px] text-gray-400 font-mono">
-                  {data.founder_problem_fit.insight_type === 'earned_insider' ? 'EARNED' : 'SYNTHESIZED'}
-                </span>
-              </div>
-            </div>
-            <p className="text-sm text-gray-600 leading-relaxed">{data.founder_problem_fit.assessment}</p>
-          </div>
-        )}
-
-        {data.founder_market_fit && (
-          <div className="card p-4">
-            <div className="flex items-center justify-between mb-2">
-              <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Founder-Market Fit</h3>
-              <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full ${FIT_COLORS[data.founder_market_fit.fit_signal] || 'text-gray-500 bg-gray-50'}`}>
-                {data.founder_market_fit.fit_signal}
-              </span>
-            </div>
-            <p className="text-sm text-gray-600 leading-relaxed">{data.founder_market_fit.assessment}</p>
-          </div>
-        )}
-      </div>
-
-      {/* ── FOUR TRAITS ── */}
-      {traits && (
+      {/* Subcategory Scores */}
+      {subs && (
         <div className="card p-4">
-          <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-4">Four Required Traits</h3>
+          <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-4">Team Subcategories</h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {[
-              { key: 'speed', label: 'Speed' },
-              { key: 'storytelling', label: 'Storytelling' },
-              { key: 'salesmanship', label: 'Salesmanship' },
-              { key: 'build_and_motivate', label: 'Build + Motivate' },
-            ].map(({ key, label }) => {
-              const trait = traits[key];
-              if (!trait) return null;
+              { key: 'founder_problem_fit', label: 'Founder-Problem Fit', weight: '2x' },
+              { key: 'sales_capability', label: 'Sales Capability', weight: '2x' },
+              { key: 'velocity', label: 'Velocity & Bias to Action' },
+              { key: 'founder_market_fit', label: 'Founder-Market Fit' },
+              { key: 'team_composition', label: 'Team Composition' },
+              { key: 'idea_maze', label: 'Idea Maze Navigation' },
+              { key: 'experience_stage_fit', label: 'Experience & Stage Fit' },
+            ].map(({ key, label, weight }) => {
+              const sub = subs[key];
+              if (!sub) return null;
               return (
-                <div key={key} className="bg-gray-50 rounded-lg p-3">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-sm font-semibold text-gray-700">{label}</span>
-                    <span className={`text-lg font-black ${scoreColor(trait.score)}`}>{trait.score}</span>
-                  </div>
-                  <div className="w-full bg-gray-200 rounded-full h-1 mb-2">
-                    <div className={`h-1 rounded-full ${scoreBg(trait.score)}`} style={{ width: `${trait.score * 10}%` }} />
-                  </div>
-                  <p className="text-xs text-gray-500 leading-relaxed">{trait.evidence}</p>
-                </div>
+                <SubcategoryCard
+                  key={key}
+                  label={weight ? `${label} (${weight})` : label}
+                  score={sub.score}
+                  evidence={sub.evidence}
+                  extras={
+                    <>
+                      {sub.insight_type && (
+                        <span className="inline-block text-[10px] font-mono text-gray-400 mt-1">
+                          {sub.insight_type === 'earned_insider' ? 'EARNED' : 'SYNTHESIZED'}
+                        </span>
+                      )}
+                      {sub.fit_signal && (
+                        <span className={`inline-block ml-2 text-[10px] font-medium px-2 py-0.5 rounded-full ${FIT_COLORS[sub.fit_signal] || 'text-gray-500 bg-gray-50'}`}>
+                          {sub.fit_signal}
+                        </span>
+                      )}
+                    </>
+                  }
+                />
               );
             })}
           </div>
         </div>
       )}
 
-      {/* ── KEY QUOTES ── */}
+      {/* Key Quotes */}
       {data.key_quotes && data.key_quotes.length > 0 && (
         <div className="card p-4">
           <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Key Quotes</h3>
@@ -713,124 +559,245 @@ function FounderAssessment({ data }) {
         </div>
       )}
 
-      {/* ── RISKS ── */}
-      {data.risks && data.risks.length > 0 && (
-        <div className="card p-4">
-          <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Risks</h3>
-          <div className="space-y-2">
-            {data.risks.map((r, i) => (
-              <div key={i} className="flex items-start gap-2">
-                <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded shrink-0 mt-0.5 ${
-                  r.severity === 'high' ? 'bg-red-100 text-red-700' :
-                  r.severity === 'medium' ? 'bg-amber-100 text-amber-700' :
-                  'bg-gray-100 text-gray-600'
-                }`}>{r.severity}</span>
-                <div>
-                  <p className="text-sm text-gray-800">{r.risk}</p>
-                  {r.evidence && <p className="text-xs text-gray-400 mt-0.5">{r.evidence}</p>}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* ── OPEN QUESTIONS ── */}
-      {data.open_questions && data.open_questions.length > 0 && (
-        <div className="card p-4">
-          <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Open Questions for Next Meeting</h3>
-          <ul className="space-y-1.5">
-            {data.open_questions.map((q, i) => (
-              <li key={i} className="text-sm text-gray-600 flex gap-2">
-                <span className="text-blue-500 font-bold shrink-0">{i + 1}.</span>
-                <span>{q}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
+      <RisksList risks={data.risks} />
+      <QuestionsList questions={data.open_questions} />
     </div>
   );
 }
 
 // ════════════════════════════════════════════════════════
-// Legacy Founder Output (backward compat for old assessments)
+// PRODUCT Output
 // ════════════════════════════════════════════════════════
 
-function LegacyFounderOutput({ data }) {
+function ProductOutput({ data }) {
+  const subs = data.subcategories;
+
   return (
     <div className="space-y-4">
+      {/* Pillar score header */}
+      {data.pillar_score && (
+        <div className="card p-4 flex items-center justify-between">
+          <h3 className="text-sm font-semibold text-gray-700">Product Pillar Score</h3>
+          <span className={`text-3xl font-black ${scoreColor(data.pillar_score)}`}>
+            {data.pillar_score}<span className="text-base font-medium text-gray-400">/10</span>
+          </span>
+        </div>
+      )}
+
+      {/* Product Thesis */}
+      {data.product_thesis && (
+        <div className="card p-4 border-l-4 border-l-blue-500">
+          <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Product Thesis</h3>
+          <p className="text-sm text-gray-700 leading-relaxed">{data.product_thesis}</p>
+        </div>
+      )}
+
+      {/* Build vs Buy + Vision Gap */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {data.build_vs_buy_risk && (
+          <div className="card p-4">
+            <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Build vs. Buy Risk</h3>
+            <p className="text-sm text-gray-600 leading-relaxed">{data.build_vs_buy_risk}</p>
+          </div>
+        )}
+        {data.vision_gap && (
+          <div className="card p-4">
+            <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Vision Gap</h3>
+            <p className="text-sm text-gray-600 leading-relaxed">{data.vision_gap}</p>
+          </div>
+        )}
+      </div>
+
+      {/* Subcategory Scores */}
+      {subs && (
+        <div className="card p-4">
+          <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-4">Product Subcategories</h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {[
+              { key: 'product_velocity', label: 'Product Velocity' },
+              { key: 'customer_proximity', label: 'Customer Proximity' },
+              { key: 'focus_prioritization', label: 'Focus & Prioritization' },
+              { key: 'technical_defensibility', label: 'Technical Defensibility' },
+              { key: 'product_market_intuition', label: 'Product-Market Intuition' },
+            ].map(({ key, label }) => {
+              const sub = subs[key];
+              if (!sub) return null;
+              return <SubcategoryCard key={key} label={label} score={sub.score} evidence={sub.evidence} />;
+            })}
+          </div>
+        </div>
+      )}
+
+      <RisksList risks={data.risks} />
+      <QuestionsList questions={data.key_questions} />
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════
+// MARKET Output
+// ════════════════════════════════════════════════════════
+
+function MarketOutput({ data }) {
+  const subs = data.subcategories;
+
+  return (
+    <div className="space-y-4">
+      {/* Pillar score header */}
+      {data.pillar_score && (
+        <div className="card p-4 flex items-center justify-between">
+          <h3 className="text-sm font-semibold text-gray-700">Market Pillar Score</h3>
+          <span className={`text-3xl font-black ${scoreColor(data.pillar_score)}`}>
+            {data.pillar_score}<span className="text-base font-medium text-gray-400">/10</span>
+          </span>
+        </div>
+      )}
+
+      {/* Why Now */}
+      {data.why_now && (
+        <div className="card p-4 border-l-4 border-l-blue-500">
+          <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Why Now</h3>
+          <p className="text-sm text-gray-700 leading-relaxed">{data.why_now}</p>
+        </div>
+      )}
+
+      {/* Competitive Moat + Kill Shot */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {data.competitive_moat && (
+          <div className="card p-4">
+            <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Competitive Moat</h3>
+            <p className="text-sm text-gray-600 leading-relaxed">{data.competitive_moat}</p>
+          </div>
+        )}
+        {data.kill_shot_risk && (
+          <div className="card p-4 border-red-200">
+            <h3 className="text-xs font-semibold text-red-600 uppercase tracking-wider mb-2">Kill Shot Risk</h3>
+            <p className="text-sm text-gray-600 leading-relaxed">{data.kill_shot_risk}</p>
+          </div>
+        )}
+      </div>
+
+      {/* Subcategory Scores */}
+      {subs && (
+        <div className="card p-4">
+          <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-4">Market Subcategories</h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {[
+              { key: 'market_timing', label: 'Market Timing' },
+              { key: 'market_structure', label: 'Market Structure' },
+              { key: 'competitive_landscape', label: 'Competitive Landscape' },
+              { key: 'tam_realism', label: 'TAM Realism' },
+              { key: 'unit_economics_structure', label: 'Unit Economics Structure' },
+              { key: 'category_momentum', label: 'Category Momentum' },
+            ].map(({ key, label }) => {
+              const sub = subs[key];
+              if (!sub) return null;
+              return <SubcategoryCard key={key} label={label} score={sub.score} evidence={sub.evidence} />;
+            })}
+          </div>
+        </div>
+      )}
+
+      <RisksList risks={data.risks} />
+      <QuestionsList questions={data.key_questions} />
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════
+// BEAR Output
+// ════════════════════════════════════════════════════════
+
+function BearOutput({ data }) {
+  return (
+    <div className="space-y-4">
+      {/* Bear adjustment badge */}
+      {data.bear_adjustment != null && (
+        <div className="card p-4 flex items-center justify-between bg-red-50 border-red-200">
+          <span className="text-sm font-semibold text-red-700">Bear Score Adjustment</span>
+          <span className="text-2xl font-black text-red-600">{data.bear_adjustment}</span>
+        </div>
+      )}
+
+      {/* Kill shot */}
+      {data.kill_shot_risk && (
+        <div className="card p-4 border-l-4 border-l-red-500">
+          <h3 className="text-xs font-semibold text-red-600 uppercase tracking-wider mb-2">Kill Shot Risk</h3>
+          <p className="text-sm text-gray-700 leading-relaxed">{data.kill_shot_risk}</p>
+        </div>
+      )}
+
+      {/* Narrative */}
       {data.narrative && (
         <div className="card p-4">
-          <h3 className="text-sm font-semibold text-gray-700 mb-2">Analysis</h3>
-          <p className="text-sm text-gray-600 whitespace-pre-wrap">{data.narrative}</p>
+          <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Bear Case</h3>
+          <p className="text-sm text-gray-600 whitespace-pre-wrap leading-relaxed">{data.narrative}</p>
         </div>
       )}
-      {data.trait_scores && (
+
+      {/* Primary risks */}
+      {data.primary_risks && data.primary_risks.length > 0 && (
         <div className="card p-4">
-          <h3 className="text-sm font-semibold text-gray-700 mb-3">Required Traits</h3>
+          <h3 className="text-xs font-semibold text-red-600 uppercase tracking-wider mb-3">Primary Risks</h3>
           <div className="space-y-3">
-            {Object.entries(data.trait_scores).map(([trait, val]) => (
-              <div key={trait}>
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-sm text-gray-600 capitalize">{trait === 'build' ? 'Build + Motivate' : trait}</span>
-                  <span className={`text-sm font-bold ${val.score >= 7 ? 'text-emerald-600' : val.score >= 5 ? 'text-amber-600' : 'text-red-500'}`}>{val.score}/10</span>
+            {data.primary_risks.map((r, i) => (
+              <div key={i} className="bg-gray-50 rounded-lg p-3">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded ${
+                    r.severity === 'high' ? 'bg-red-100 text-red-700' :
+                    r.severity === 'medium' ? 'bg-amber-100 text-amber-700' :
+                    'bg-gray-100 text-gray-600'
+                  }`}>{r.severity}</span>
+                  <span className="text-sm font-medium text-gray-800">{r.risk}</span>
                 </div>
-                <div className="w-full bg-gray-100 rounded-full h-1.5">
-                  <div className={`h-1.5 rounded-full ${val.score >= 7 ? 'bg-emerald-500' : val.score >= 5 ? 'bg-amber-500' : 'bg-red-500'}`} style={{ width: `${val.score * 10}%` }} />
-                </div>
-                {val.evidence && <p className="text-xs text-gray-500 mt-1">{val.evidence}</p>}
-                {val.gaps && <p className="text-xs text-amber-600 mt-0.5">Gap: {val.gaps}</p>}
+                {r.detail && <p className="text-xs text-gray-500 mt-1">{r.detail}</p>}
+                {r.mitigation && <p className="text-xs text-gray-400 mt-1">Mitigation: {r.mitigation}</p>}
               </div>
             ))}
           </div>
         </div>
       )}
-      {data.eniac_dimensions && (
+
+      {/* Failure scenarios */}
+      {data.failure_scenarios && data.failure_scenarios.length > 0 && (
         <div className="card p-4">
-          <h3 className="text-sm font-semibold text-gray-700 mb-3">ENIAC Dimensions</h3>
-          <div className="grid grid-cols-3 gap-2">
-            {Object.entries(data.eniac_dimensions).map(([key, val]) => (
-              <div key={key} className="bg-gray-50 rounded-lg p-2 text-center">
-                <p className={`text-lg font-bold ${val >= 7 ? 'text-emerald-600' : val >= 5 ? 'text-amber-600' : 'text-red-500'}`}>{val}</p>
-                <p className="text-[10px] text-gray-500 capitalize">{key.replace(/_/g, ' ')}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-      {(data.stage_classification || data.founding_insight_type) && (
-        <div className="card p-4 flex items-center gap-6 flex-wrap">
-          {data.stage_classification && (
-            <div>
-              <p className="text-xs text-gray-500 uppercase tracking-wider">Stage</p>
-              <p className="text-sm font-medium text-gray-900 mt-0.5">{data.stage_classification}</p>
-            </div>
-          )}
-          {data.founding_insight_type && (
-            <div>
-              <p className="text-xs text-gray-500 uppercase tracking-wider">Insight Type</p>
-              <p className="text-sm font-medium text-gray-900 mt-0.5">{data.founding_insight_type.replace(/_/g, ' ')}</p>
-            </div>
-          )}
-          {data.overall_signal && (
-            <div>
-              <p className="text-xs text-gray-500 uppercase tracking-wider">Signal</p>
-              <p className={`text-sm font-medium mt-0.5 ${data.overall_signal === 'Invest' ? 'text-emerald-600' : data.overall_signal === 'Monitor' ? 'text-amber-600' : 'text-red-500'}`}>{data.overall_signal}</p>
-            </div>
-          )}
-        </div>
-      )}
-      {data.key_questions && (
-        <div className="card p-4">
-          <h3 className="text-sm font-semibold text-gray-700 mb-2">Key Questions</h3>
+          <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Failure Scenarios</h3>
           <ul className="text-sm text-gray-600 space-y-1.5">
-            {data.key_questions.map((q, i) => (
-              <li key={i} className="flex gap-2"><span className="text-blue-600">?</span> {q}</li>
-            ))}
+            {data.failure_scenarios.map((s, i) => <li key={i} className="flex gap-2"><span className="text-red-400 shrink-0">-</span> {s}</li>)}
           </ul>
         </div>
       )}
+
+      {/* Deck omissions */}
+      {data.deck_omissions && data.deck_omissions.length > 0 && (
+        <div className="card p-4">
+          <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Deck Omissions</h3>
+          <ul className="text-sm text-gray-600 space-y-1.5">
+            {data.deck_omissions.map((o, i) => <li key={i} className="flex gap-2"><span className="text-amber-500 shrink-0">?</span> {o}</li>)}
+          </ul>
+        </div>
+      )}
+
+      {/* Assumptions */}
+      {data.assumptions_required && data.assumptions_required.length > 0 && (
+        <div className="card p-4">
+          <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Required Assumptions</h3>
+          <div className="space-y-2">
+            {data.assumptions_required.map((a, i) => (
+              <div key={i} className="flex items-start gap-2">
+                <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded shrink-0 mt-0.5 ${
+                  a.likelihood === 'high' ? 'bg-emerald-100 text-emerald-700' :
+                  a.likelihood === 'medium' ? 'bg-amber-100 text-amber-700' :
+                  'bg-red-100 text-red-700'
+                }`}>{a.likelihood}</span>
+                <p className="text-sm text-gray-700">{a.assumption}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <QuestionsList questions={data.key_questions} />
     </div>
   );
 }
