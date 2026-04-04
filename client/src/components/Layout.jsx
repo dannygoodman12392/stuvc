@@ -1,8 +1,10 @@
-import { useState } from 'react';
-import { NavLink, useLocation } from 'react-router-dom';
+import { useState, useEffect } from 'react';
+import { NavLink, useMatch } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import DannyAI from './DannyAI';
+import SearchPalette from './SearchPalette';
 import StuLogo from './StuLogo';
+import { api } from '../utils/api';
 
 const navItems = [
   { to: '/ask', label: 'Ask Stu', accent: true },
@@ -13,10 +15,35 @@ const navItems = [
 ];
 
 export default function Layout({ children }) {
-  const location = useLocation();
   const { user, logout } = useAuth();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [aiOpen, setAiOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [founderData, setFounderData] = useState(null);
+
+  // Detect founder detail page and load context for AI sidebar
+  const founderMatch = useMatch('/founders/:id');
+  useEffect(() => {
+    if (founderMatch?.params?.id) {
+      api.getFounder(founderMatch.params.id)
+        .then(f => setFounderData(f))
+        .catch(() => setFounderData(null));
+    } else {
+      setFounderData(null);
+    }
+  }, [founderMatch?.params?.id]);
+
+  // Cmd+K listener
+  useEffect(() => {
+    function handleKey(e) {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        setSearchOpen(o => !o);
+      }
+    }
+    window.addEventListener('keydown', handleKey);
+    return () => window.removeEventListener('keydown', handleKey);
+  }, []);
 
   return (
     <div className="flex h-screen overflow-hidden bg-gray-50">
@@ -33,6 +60,20 @@ export default function Layout({ children }) {
               <span className="text-[15px] font-semibold text-gray-900 tracking-tight">Stu</span>
             </div>
           </NavLink>
+        </div>
+
+        {/* Search trigger */}
+        <div className="px-3 mb-2">
+          <button
+            onClick={() => setSearchOpen(true)}
+            className="w-full flex items-center gap-2 px-3 py-1.5 rounded-lg bg-gray-50 border border-gray-200 text-xs text-gray-400 hover:border-gray-300 hover:text-gray-500 transition-colors"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
+            </svg>
+            <span className="flex-1 text-left">Search...</span>
+            <kbd className="text-[10px] bg-gray-100 px-1 py-0.5 rounded font-mono">{typeof navigator !== 'undefined' && navigator.platform?.includes('Mac') ? '\u2318' : 'Ctrl'}K</kbd>
+          </button>
         </div>
 
         <nav className="flex-1 px-2 space-y-0.5 overflow-y-auto">
@@ -122,16 +163,24 @@ export default function Layout({ children }) {
             className={`hidden md:flex items-center justify-center w-10 flex-shrink-0 border-l transition-colors ${
               aiOpen ? 'bg-blue-50 border-gray-200 text-blue-600' : 'bg-white border-gray-200 text-gray-400 hover:text-blue-600'
             }`}
-            title="Toggle Stu AI"
+            title={founderData ? `Stu AI (${founderData.name})` : 'Toggle Stu AI'}
           >
-            <svg className="w-[18px] h-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
-            </svg>
+            <div className="flex flex-col items-center gap-1">
+              <svg className="w-[18px] h-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
+              </svg>
+              {founderData && (
+                <div className="w-1.5 h-1.5 rounded-full bg-blue-500" />
+              )}
+            </div>
           </button>
 
-          {aiOpen && <DannyAI onClose={() => setAiOpen(false)} />}
+          {aiOpen && <DannyAI onClose={() => setAiOpen(false)} founderData={founderData} />}
         </div>
       </div>
+
+      {/* Global search */}
+      <SearchPalette open={searchOpen} onClose={() => setSearchOpen(false)} />
     </div>
   );
 }

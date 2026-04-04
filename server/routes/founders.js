@@ -2,13 +2,14 @@ const express = require('express');
 const router = express.Router();
 const db = require('../db');
 
-const RELATIONSHIP_STATUSES = ['Identified', 'Contacted', 'Meeting Scheduled', 'Met', 'Passed'];
-const DEAL_STATUSES = ['Under Consideration', 'Active Diligence', 'IC Review', 'Committed', 'Passed'];
-const RESIDENT_STATUSES = ['Prospect', 'Tour Scheduled', 'Admitted', 'Active', 'Alumni'];
+const RELATIONSHIP_STATUSES = ['Sourced', 'Outreach', 'Interviewing', 'Active', 'Hold', 'Passed', 'Not Admitted', 'Inactive'];
+const ADMISSIONS_STATUSES = ['Sourced', 'Outreach', 'First Call Scheduled', 'First Call Complete', 'Second Call Scheduled', 'Second Call Complete', 'Admitted', 'Active Resident', 'Density Resident', 'Alumni', 'Hold/Nurture', 'Not Admitted'];
+const DEAL_STATUSES = ['Under Consideration', 'First Meeting', 'Partner Call', 'Memo Draft', 'IC Review', 'Committed', 'Passed'];
+const RESIDENT_STATUSES = ['Prospect', 'Tour Scheduled', 'Admitted', 'Active', 'Alumni']; // legacy
 
 // GET /api/founders — list with filters
 router.get('/', (req, res) => {
-  const { search, status, domain, stage, source, minScore, sort, order, track, deal_status, resident_status } = req.query;
+  const { search, status, domain, stage, source, minScore, sort, order, track, deal_status, resident_status, admissions_status } = req.query;
   let where = ['f.is_deleted = 0'];
   const params = [];
 
@@ -23,13 +24,16 @@ router.get('/', (req, res) => {
   if (minScore) { where.push('f.fit_score >= ?'); params.push(parseInt(minScore)); }
 
   // Track filters
-  if (track === 'resident') {
-    where.push("f.pipeline_tracks LIKE '%resident%'");
+  if (track === 'admissions') {
+    where.push("f.pipeline_tracks LIKE '%admissions%'");
+  } else if (track === 'resident') {
+    where.push("(f.pipeline_tracks LIKE '%resident%' OR f.pipeline_tracks LIKE '%admissions%')");
   } else if (track === 'investment') {
     where.push("f.pipeline_tracks LIKE '%investment%'");
   }
   if (deal_status) { where.push('f.deal_status = ?'); params.push(deal_status); }
   if (resident_status) { where.push('f.resident_status = ?'); params.push(resident_status); }
+  if (req.query.admissions_status) { where.push('f.admissions_status = ?'); params.push(req.query.admissions_status); }
 
   const sortCol = ['name', 'company', 'fit_score', 'status', 'created_at', 'updated_at', 'deal_status', 'deal_entered_at'].includes(sort) ? `f.${sort}` : 'f.updated_at';
   const sortDir = order === 'asc' ? 'ASC' : 'DESC';
@@ -49,12 +53,14 @@ router.get('/stats', (req, res) => {
   const sourcedPending = db.prepare('SELECT COUNT(*) as c FROM sourced_founders WHERE status = ?').get('pending').c;
 
   // Track counts
-  const residents = db.prepare("SELECT COUNT(*) as c FROM founders WHERE is_deleted = 0 AND pipeline_tracks LIKE '%resident%'").get().c;
+  const admissions = db.prepare("SELECT COUNT(*) as c FROM founders WHERE is_deleted = 0 AND pipeline_tracks LIKE '%admissions%'").get().c;
+  const residents = db.prepare("SELECT COUNT(*) as c FROM founders WHERE is_deleted = 0 AND (pipeline_tracks LIKE '%resident%' OR pipeline_tracks LIKE '%admissions%')").get().c;
   const investments = db.prepare("SELECT COUNT(*) as c FROM founders WHERE is_deleted = 0 AND pipeline_tracks LIKE '%investment%'").get().c;
   const byDealStatus = db.prepare("SELECT deal_status, COUNT(*) as count FROM founders WHERE is_deleted = 0 AND pipeline_tracks LIKE '%investment%' AND deal_status IS NOT NULL GROUP BY deal_status ORDER BY count DESC").all();
-  const byResidentStatus = db.prepare("SELECT resident_status, COUNT(*) as count FROM founders WHERE is_deleted = 0 AND pipeline_tracks LIKE '%resident%' AND resident_status IS NOT NULL GROUP BY resident_status ORDER BY count DESC").all();
+  const byResidentStatus = db.prepare("SELECT resident_status, COUNT(*) as count FROM founders WHERE is_deleted = 0 AND (pipeline_tracks LIKE '%resident%' OR pipeline_tracks LIKE '%admissions%') AND resident_status IS NOT NULL GROUP BY resident_status ORDER BY count DESC").all();
+  const byAdmissionsStatus = db.prepare("SELECT admissions_status, COUNT(*) as count FROM founders WHERE is_deleted = 0 AND pipeline_tracks LIKE '%admissions%' AND admissions_status IS NOT NULL GROUP BY admissions_status ORDER BY count DESC").all();
 
-  res.json({ total, byStatus, byDomain, recentlyAdded, topScored, sourcedPending, residents, investments, byDealStatus, byResidentStatus });
+  res.json({ total, byStatus, byDomain, recentlyAdded, topScored, sourcedPending, admissions, residents, investments, byDealStatus, byResidentStatus, byAdmissionsStatus });
 });
 
 // GET /api/founders/:id
@@ -72,21 +78,21 @@ router.get('/:id', (req, res) => {
 
 // POST /api/founders
 router.post('/', (req, res) => {
-  const { name, company, role, email, linkedin_url, twitter, github_url, website_url, location_city, location_state, stage, domain, tags, status, source, bio, chicago_connection, previous_companies, notable_background, pipeline_tracks, resident_status, deal_status, company_one_liner, next_action, deal_lead, valuation, round_size, investment_amount, arr, monthly_burn, runway_months, security_type, memo_status, diligence_status, desks_needed } = req.body;
+  const { name, company, role, email, linkedin_url, twitter, github_url, website_url, location_city, location_state, stage, domain, tags, status, source, bio, chicago_connection, previous_companies, notable_background, pipeline_tracks, resident_status, admissions_status, deal_status, company_one_liner, next_action, deal_lead, valuation, round_size, investment_amount, arr, monthly_burn, runway_months, security_type, memo_status, diligence_status, desks_needed } = req.body;
   if (!name) return res.status(400).json({ error: 'Name is required' });
 
   const result = db.prepare(`
-    INSERT INTO founders (name, company, role, email, linkedin_url, twitter, github_url, website_url, location_city, location_state, stage, domain, tags, status, source, bio, chicago_connection, previous_companies, notable_background, pipeline_tracks, resident_status, deal_status, company_one_liner, next_action, deal_lead, valuation, round_size, investment_amount, arr, monthly_burn, runway_months, security_type, memo_status, diligence_status, desks_needed, deal_entered_at, admitted_at, created_by)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO founders (name, company, role, email, linkedin_url, twitter, github_url, website_url, location_city, location_state, stage, domain, tags, status, source, bio, chicago_connection, previous_companies, notable_background, pipeline_tracks, resident_status, admissions_status, deal_status, company_one_liner, next_action, deal_lead, valuation, round_size, investment_amount, arr, monthly_burn, runway_months, security_type, memo_status, diligence_status, desks_needed, deal_entered_at, admitted_at, created_by)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     name, company || null, role || null, email || null, linkedin_url || null, twitter || null, github_url || null, website_url || null,
-    location_city || null, location_state || null, stage || 'Pre-seed', domain || null, tags || null, status || 'Identified',
+    location_city || null, location_state || null, stage || 'Pre-seed', domain || null, tags || null, status || 'Sourced',
     source || null, bio || null, chicago_connection || null, previous_companies || null, notable_background || null,
-    pipeline_tracks || '', resident_status || null, deal_status || null, company_one_liner || null, next_action || null,
+    pipeline_tracks || '', resident_status || null, admissions_status || null, deal_status || null, company_one_liner || null, next_action || null,
     deal_lead || null, valuation || null, round_size || null, investment_amount || null, arr || null, monthly_burn || null,
     runway_months || null, security_type || null, memo_status || null, diligence_status || null, desks_needed || null,
     deal_status ? new Date().toISOString() : null,
-    resident_status === 'Admitted' || resident_status === 'Active' ? new Date().toISOString() : null,
+    admissions_status === 'Admitted' || admissions_status === 'Active Resident' || resident_status === 'Admitted' || resident_status === 'Active' ? new Date().toISOString() : null,
     req.user.id
   );
 
@@ -104,8 +110,8 @@ router.put('/:id', (req, res) => {
     'location_city', 'location_state', 'stage', 'domain', 'tags', 'status', 'source',
     'fit_score', 'fit_score_rationale', 'ai_summary', 'bio', 'chicago_connection',
     'previous_companies', 'notable_background',
-    // New track fields
-    'pipeline_tracks', 'resident_status', 'deal_status', 'deal_lead',
+    // Track fields
+    'pipeline_tracks', 'resident_status', 'admissions_status', 'deal_status', 'deal_lead',
     'valuation', 'round_size', 'investment_amount', 'arr', 'monthly_burn', 'runway_months',
     'security_type', 'memo_status', 'diligence_status', 'pass_reason',
     'company_one_liner', 'next_action', 'desks_needed'
@@ -136,6 +142,24 @@ router.put('/:id', (req, res) => {
 
   db.prepare(`UPDATE founders SET ${updates.join(', ')} WHERE id = ?`).run(...params);
   const updated = db.prepare('SELECT * FROM founders WHERE id = ?').get(req.params.id);
+
+  // Fire-and-forget Airtable sync on stage changes
+  try {
+    const airtableSync = require('../services/airtable-sync');
+    if (req.body.admissions_status && req.body.admissions_status !== founder.admissions_status) {
+      airtableSync.pushAdmissionsChange(updated, founder.admissions_status).catch(err =>
+        console.error('[AirtableSync] Admissions push failed:', err.message)
+      );
+    }
+    if (req.body.deal_status && req.body.deal_status !== founder.deal_status) {
+      airtableSync.pushDealChange(updated, founder.deal_status).catch(err =>
+        console.error('[AirtableSync] Deal push failed:', err.message)
+      );
+    }
+  } catch (syncErr) {
+    console.error('[AirtableSync] Module load failed:', syncErr.message);
+  }
+
   res.json(updated);
 });
 

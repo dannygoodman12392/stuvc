@@ -170,10 +170,13 @@ function addColumn(table, col, type) {
 // Track flags
 addColumn('founders', 'pipeline_tracks', "TEXT DEFAULT ''");
 
-// Resident track
+// Resident track (legacy)
 addColumn('founders', 'resident_status', 'TEXT');
 addColumn('founders', 'desks_needed', 'INTEGER');
 addColumn('founders', 'admitted_at', 'DATETIME');
+
+// Admissions pipeline (new unified track)
+addColumn('founders', 'admissions_status', 'TEXT');
 
 // Investment/deal track
 addColumn('founders', 'deal_status', 'TEXT');
@@ -194,8 +197,118 @@ addColumn('founders', 'deal_entered_at', 'DATETIME');
 addColumn('founders', 'company_one_liner', 'TEXT');
 addColumn('founders', 'next_action', 'TEXT');
 
+// Sourced founders enhancements
+addColumn('sourced_founders', 'headline', 'TEXT');
+addColumn('sourced_founders', 'location_city', 'TEXT');
+addColumn('sourced_founders', 'location_type', 'TEXT');
+addColumn('sourced_founders', 'chicago_connection', 'TEXT');
+addColumn('sourced_founders', 'tags', 'TEXT');
+addColumn('sourced_founders', 'enriched_data', 'TEXT');
+addColumn('sourced_founders', 'search_query', 'TEXT');
+addColumn('sourced_founders', 'company_one_liner', 'TEXT');
+addColumn('sourced_founders', 'pedigree_signals', 'TEXT');
+addColumn('sourced_founders', 'builder_signals', 'TEXT');
+addColumn('sourced_founders', 'github_url', 'TEXT');
+addColumn('sourced_founders', 'website_url', 'TEXT');
+
+// Airtable record IDs (for one-way Stu → Airtable sync)
+addColumn('founders', 'airtable_founder_record_id', 'TEXT');
+addColumn('founders', 'airtable_deal_record_id', 'TEXT');
+
+// Airtable sync audit log
+db.exec(`
+  CREATE TABLE IF NOT EXISTS airtable_sync_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    founder_id INTEGER,
+    table_name TEXT,
+    field_name TEXT,
+    old_value TEXT,
+    new_value TEXT,
+    airtable_record_id TEXT,
+    status TEXT DEFAULT 'pending',
+    error_message TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+`);
+
+// ── Assessment inputs (multi-file, multi-link, multi-transcript) ──
+db.exec(`
+  CREATE TABLE IF NOT EXISTS assessment_inputs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    assessment_id INTEGER NOT NULL REFERENCES opportunity_assessments(id),
+    input_type TEXT NOT NULL,
+    label TEXT,
+    content TEXT,
+    source_url TEXT,
+    file_name TEXT,
+    mime_type TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+`);
+
+// ── Assessment version tracking ──
+db.exec(`
+  CREATE TABLE IF NOT EXISTS assessment_versions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    group_id TEXT NOT NULL,
+    assessment_id INTEGER NOT NULL REFERENCES opportunity_assessments(id),
+    version_number INTEGER NOT NULL,
+    change_summary TEXT,
+    previous_assessment_id INTEGER REFERENCES opportunity_assessments(id),
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+`);
+
+// ── IC Memos ──
+db.exec(`
+  CREATE TABLE IF NOT EXISTS founder_memos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    founder_id INTEGER NOT NULL REFERENCES founders(id),
+    memo_type TEXT DEFAULT 'ic_memo',
+    content TEXT NOT NULL DEFAULT '',
+    version INTEGER DEFAULT 1,
+    data_snapshot TEXT,
+    created_by INTEGER REFERENCES users(id),
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+`);
+
+// ── Founder files/documents ──
+db.exec(`
+  CREATE TABLE IF NOT EXISTS founder_files (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    founder_id INTEGER NOT NULL REFERENCES founders(id),
+    file_name TEXT NOT NULL,
+    file_type TEXT,
+    content_text TEXT,
+    url TEXT,
+    created_by INTEGER REFERENCES users(id),
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+`);
+
+// Assessment columns for versioning, cancellation, soft delete
+addColumn('opportunity_assessments', 'group_id', 'TEXT');
+addColumn('opportunity_assessments', 'version_number', 'INTEGER DEFAULT 1');
+addColumn('opportunity_assessments', 'cancelled_at', 'DATETIME');
+addColumn('opportunity_assessments', 'is_deleted', 'INTEGER DEFAULT 0');
+
+// ── Migrate old "resident" track → "admissions" track ──
+// Move resident_status → admissions_status where not already set
+const residentMigration = db.prepare("SELECT COUNT(*) as c FROM founders WHERE pipeline_tracks LIKE '%resident%' AND (admissions_status IS NULL OR admissions_status = '')").get();
+if (residentMigration.c > 0) {
+  // Map resident_status values to admissions_status
+  db.prepare("UPDATE founders SET admissions_status = 'Active Resident' WHERE pipeline_tracks LIKE '%resident%' AND resident_status = 'Active' AND (admissions_status IS NULL OR admissions_status = '')").run();
+  db.prepare("UPDATE founders SET admissions_status = 'Admitted' WHERE pipeline_tracks LIKE '%resident%' AND resident_status = 'Admitted' AND (admissions_status IS NULL OR admissions_status = '')").run();
+  db.prepare("UPDATE founders SET admissions_status = 'Alumni' WHERE pipeline_tracks LIKE '%resident%' AND resident_status = 'Alumni' AND (admissions_status IS NULL OR admissions_status = '')").run();
+  db.prepare("UPDATE founders SET admissions_status = 'Sourced' WHERE pipeline_tracks LIKE '%resident%' AND resident_status = 'Prospect' AND (admissions_status IS NULL OR admissions_status = '')").run();
+  db.prepare("UPDATE founders SET admissions_status = 'First Call Scheduled' WHERE pipeline_tracks LIKE '%resident%' AND resident_status = 'Tour Scheduled' AND (admissions_status IS NULL OR admissions_status = '')").run();
+  // Update pipeline_tracks: resident → admissions
+  db.prepare("UPDATE founders SET pipeline_tracks = REPLACE(pipeline_tracks, 'resident', 'admissions') WHERE pipeline_tracks LIKE '%resident%'").run();
+  console.log(`[DB] Migrated ${residentMigration.c} founders from resident → admissions track`);
+}
+
 // ── Migrate old statuses into the new track model ──
-// Active Diligence, IC Ready, Invested → set investment track + deal_status, normalize status to Met
 const migrationNeeded = db.prepare("SELECT COUNT(*) as c FROM founders WHERE status IN ('Active Diligence', 'IC Ready', 'Invested') AND (deal_status IS NULL OR deal_status = '')").get();
 if (migrationNeeded.c > 0) {
   db.prepare("UPDATE founders SET deal_status = 'Active Diligence', pipeline_tracks = 'investment', status = 'Met' WHERE status = 'Active Diligence' AND (deal_status IS NULL OR deal_status = '')").run();

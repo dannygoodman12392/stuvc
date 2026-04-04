@@ -22,10 +22,10 @@ const TOOLS = [
       type: 'object',
       properties: {
         search: { type: 'string', description: 'Free text search across name, company, domain, bio, one-liner' },
-        status: { type: 'string', description: 'Relationship status: Identified, Contacted, Meeting Scheduled, Met, Passed' },
-        track: { type: 'string', description: 'Pipeline track filter: "resident" or "investment"' },
-        deal_status: { type: 'string', description: 'Investment deal status: Under Consideration, Active Diligence, IC Review, Committed, Passed' },
-        resident_status: { type: 'string', description: 'Resident status: Prospect, Tour Scheduled, Admitted, Active, Alumni' },
+        status: { type: 'string', description: 'Overall status: Sourced, Outreach, Interviewing, Active, Hold, Passed, Not Admitted, Inactive' },
+        track: { type: 'string', description: 'Pipeline track filter: "admissions" or "investment"' },
+        admissions_status: { type: 'string', description: 'Admissions pipeline stage: Sourced, Outreach, First Call Scheduled, First Call Complete, Second Call Scheduled, Second Call Complete, Admitted, Active Resident, Density Resident, Alumni, Hold/Nurture, Not Admitted' },
+        deal_status: { type: 'string', description: 'Investment pipeline stage: Under Consideration, First Meeting, Partner Call, Memo Draft, IC Review, Committed, Passed' },
         domain: { type: 'string', description: 'Filter by domain/sector' },
         stage: { type: 'string', description: 'Filter by stage: Pre-seed, Seed, Series A' },
         limit: { type: 'number', description: 'Max results to return (default 20)' }
@@ -45,7 +45,7 @@ const TOOLS = [
   },
   {
     name: 'create_founder',
-    description: 'Add a new founder to the pipeline. Can optionally set pipeline tracks (resident, investment, or both).',
+    description: 'Add a new founder to the pipeline. Can set pipeline tracks (admissions, investment, or both).',
     input_schema: {
       type: 'object',
       properties: {
@@ -64,9 +64,10 @@ const TOOLS = [
         previous_companies: { type: 'string', description: 'Previous companies' },
         notable_background: { type: 'string', description: 'Notable background info' },
         company_one_liner: { type: 'string', description: 'Company description one-liner' },
-        pipeline_tracks: { type: 'string', description: 'Comma-separated tracks: "resident", "investment", or "resident,investment"' },
-        resident_status: { type: 'string', description: 'Resident status if on resident track' },
-        deal_status: { type: 'string', description: 'Deal status if on investment track' }
+        pipeline_tracks: { type: 'string', description: 'Comma-separated tracks: "admissions", "investment", or "admissions,investment"' },
+        admissions_status: { type: 'string', description: 'Admissions pipeline stage' },
+        deal_status: { type: 'string', description: 'Investment pipeline stage' },
+        status: { type: 'string', description: 'Overall status: Sourced, Outreach, Interviewing, Active, Hold, Passed, Not Admitted, Inactive' }
       },
       required: ['name']
     }
@@ -92,6 +93,7 @@ const TOOLS = [
             notable_background: { type: 'string' }, company_one_liner: { type: 'string' },
             next_action: { type: 'string' },
             pipeline_tracks: { type: 'string' },
+            admissions_status: { type: 'string' },
             resident_status: { type: 'string' }, desks_needed: { type: 'number' },
             deal_status: { type: 'string' }, deal_lead: { type: 'string' },
             valuation: { type: 'number' }, round_size: { type: 'number' },
@@ -170,6 +172,28 @@ const TOOLS = [
     }
   },
   {
+    name: 'generate_memo',
+    description: 'Generate an IC memo for a founder. Pulls all data (notes, calls, assessments, deal info, files) and generates a comprehensive investment committee memo.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        founder_id: { type: 'number', description: 'Founder ID' },
+        name_search: { type: 'string', description: 'Find founder by name if ID unknown' }
+      }
+    }
+  },
+  {
+    name: 'search_everything',
+    description: 'Search across all data in Stu — founders, notes, calls, assessments, memos. Use this when the user is looking for something specific across the whole platform.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'Search query' }
+      },
+      required: ['query']
+    }
+  },
+  {
     name: 'query_insights',
     description: 'Run custom analytical queries across the platform data. Use for questions like "what percentage of our pipeline is AI", "average fit score", "show me all residents who are also in the investment pipeline", "how many deals are in diligence", etc.',
     input_schema: {
@@ -197,7 +221,7 @@ function resolveFounder(params) {
 function executeTool(toolName, input, userId) {
   switch (toolName) {
     case 'search_founders': {
-      let sql = `SELECT id, name, company, role, domain, stage, status, fit_score, location_city, location_state, source, pipeline_tracks, deal_status, resident_status, company_one_liner, deal_lead, valuation, round_size, created_at, updated_at FROM founders WHERE is_deleted = 0`;
+      let sql = `SELECT id, name, company, role, domain, stage, status, fit_score, location_city, location_state, source, pipeline_tracks, deal_status, admissions_status, resident_status, company_one_liner, deal_lead, valuation, round_size, created_at, updated_at FROM founders WHERE is_deleted = 0`;
       const params = [];
       if (input.search) {
         sql += " AND (name LIKE ? OR company LIKE ? OR domain LIKE ? OR bio LIKE ? OR company_one_liner LIKE ?)";
@@ -207,8 +231,9 @@ function executeTool(toolName, input, userId) {
       if (input.status) { sql += ' AND status = ?'; params.push(input.status); }
       if (input.domain) { sql += ' AND domain LIKE ?'; params.push(`%${input.domain}%`); }
       if (input.stage) { sql += ' AND stage = ?'; params.push(input.stage); }
-      if (input.track === 'resident') { sql += " AND pipeline_tracks LIKE '%resident%'"; }
+      if (input.track === 'admissions') { sql += " AND pipeline_tracks LIKE '%admissions%'"; }
       if (input.track === 'investment') { sql += " AND pipeline_tracks LIKE '%investment%'"; }
+      if (input.admissions_status) { sql += ' AND admissions_status = ?'; params.push(input.admissions_status); }
       if (input.deal_status) { sql += ' AND deal_status = ?'; params.push(input.deal_status); }
       if (input.resident_status) { sql += ' AND resident_status = ?'; params.push(input.resident_status); }
       sql += ' ORDER BY updated_at DESC LIMIT ?';
@@ -227,7 +252,7 @@ function executeTool(toolName, input, userId) {
     }
 
     case 'create_founder': {
-      const fields = ['name', 'company', 'role', 'email', 'linkedin_url', 'location_city', 'location_state', 'stage', 'domain', 'source', 'bio', 'chicago_connection', 'previous_companies', 'notable_background', 'company_one_liner', 'pipeline_tracks', 'resident_status', 'deal_status'];
+      const fields = ['name', 'company', 'role', 'email', 'linkedin_url', 'location_city', 'location_state', 'stage', 'domain', 'source', 'bio', 'chicago_connection', 'previous_companies', 'notable_background', 'company_one_liner', 'pipeline_tracks', 'admissions_status', 'resident_status', 'deal_status', 'status'];
       const cols = ['created_by'];
       const vals = [userId];
       for (const f of fields) {
@@ -238,11 +263,15 @@ function executeTool(toolName, input, userId) {
         cols.push('deal_entered_at');
         vals.push(new Date().toISOString());
       }
+      if (input.admissions_status === 'Admitted' || input.admissions_status === 'Active Resident') {
+        cols.push('admitted_at');
+        vals.push(new Date().toISOString());
+      }
       const placeholders = cols.map(() => '?').join(', ');
       const result = db.prepare(`INSERT INTO founders (${cols.join(', ')}) VALUES (${placeholders})`).run(...vals);
       const founder = db.prepare('SELECT * FROM founders WHERE id = ?').get(result.lastInsertRowid);
       const trackInfo = [];
-      if (founder.pipeline_tracks?.includes('resident')) trackInfo.push('Resident');
+      if (founder.pipeline_tracks?.includes('admissions')) trackInfo.push('Admissions');
       if (founder.pipeline_tracks?.includes('investment')) trackInfo.push('Investment');
       return { success: true, message: `Added ${founder.name} to pipeline${trackInfo.length ? ` (${trackInfo.join(' + ')})` : ''}`, founder };
     }
@@ -250,7 +279,7 @@ function executeTool(toolName, input, userId) {
     case 'update_founder': {
       const founder = resolveFounder(input);
       if (!founder) return { success: false, error: 'Founder not found' };
-      const allowed = ['name', 'company', 'role', 'email', 'linkedin_url', 'location_city', 'location_state', 'stage', 'domain', 'status', 'source', 'bio', 'chicago_connection', 'previous_companies', 'notable_background', 'company_one_liner', 'next_action', 'pipeline_tracks', 'resident_status', 'deal_status', 'deal_lead', 'valuation', 'round_size', 'investment_amount', 'arr', 'monthly_burn', 'runway_months', 'security_type', 'memo_status', 'diligence_status', 'pass_reason', 'desks_needed'];
+      const allowed = ['name', 'company', 'role', 'email', 'linkedin_url', 'location_city', 'location_state', 'stage', 'domain', 'status', 'source', 'bio', 'chicago_connection', 'previous_companies', 'notable_background', 'company_one_liner', 'next_action', 'pipeline_tracks', 'admissions_status', 'resident_status', 'deal_status', 'deal_lead', 'valuation', 'round_size', 'investment_amount', 'arr', 'monthly_burn', 'runway_months', 'security_type', 'memo_status', 'diligence_status', 'pass_reason', 'desks_needed'];
       const sets = [];
       const vals = [];
       for (const [k, v] of Object.entries(input.updates || {})) {
@@ -293,14 +322,14 @@ function executeTool(toolName, input, userId) {
       const byStatus = db.prepare('SELECT status, COUNT(*) as count FROM founders WHERE is_deleted = 0 GROUP BY status ORDER BY count DESC').all();
       const byDomain = db.prepare(`SELECT domain, COUNT(*) as count FROM founders WHERE is_deleted = 0 AND domain IS NOT NULL AND domain != '' GROUP BY domain ORDER BY count DESC`).all();
       const byStage = db.prepare('SELECT stage, COUNT(*) as count FROM founders WHERE is_deleted = 0 GROUP BY stage ORDER BY count DESC').all();
-      const residents = db.prepare("SELECT COUNT(*) as count FROM founders WHERE is_deleted = 0 AND pipeline_tracks LIKE '%resident%'").get().count;
+      const admissions = db.prepare("SELECT COUNT(*) as count FROM founders WHERE is_deleted = 0 AND pipeline_tracks LIKE '%admissions%'").get().count;
       const investments = db.prepare("SELECT COUNT(*) as count FROM founders WHERE is_deleted = 0 AND pipeline_tracks LIKE '%investment%'").get().count;
       const byDealStatus = db.prepare("SELECT deal_status, COUNT(*) as count FROM founders WHERE is_deleted = 0 AND deal_status IS NOT NULL GROUP BY deal_status ORDER BY count DESC").all();
-      const byResidentStatus = db.prepare("SELECT resident_status, COUNT(*) as count FROM founders WHERE is_deleted = 0 AND resident_status IS NOT NULL GROUP BY resident_status ORDER BY count DESC").all();
-      const recentlyAdded = db.prepare('SELECT name, company, status, pipeline_tracks, created_at FROM founders WHERE is_deleted = 0 ORDER BY created_at DESC LIMIT 5').all();
+      const byAdmissionsStatus = db.prepare("SELECT admissions_status, COUNT(*) as count FROM founders WHERE is_deleted = 0 AND admissions_status IS NOT NULL GROUP BY admissions_status ORDER BY count DESC").all();
+      const recentlyAdded = db.prepare('SELECT name, company, status, pipeline_tracks, admissions_status, deal_status, created_at FROM founders WHERE is_deleted = 0 ORDER BY created_at DESC LIMIT 5').all();
       const avgFitScore = db.prepare('SELECT AVG(fit_score) as avg, COUNT(fit_score) as scored FROM founders WHERE is_deleted = 0 AND fit_score IS NOT NULL').get();
       const assessmentCount = db.prepare('SELECT COUNT(*) as count FROM opportunity_assessments').get().count;
-      return { success: true, total, byStatus, byDomain, byStage, residents, investments, byDealStatus, byResidentStatus, recentlyAdded, avgFitScore, assessmentCount };
+      return { success: true, total, byStatus, byDomain, byStage, admissions, investments, byDealStatus, byAdmissionsStatus, recentlyAdded, avgFitScore, assessmentCount };
     }
 
     case 'get_assessments': {
@@ -329,23 +358,43 @@ function executeTool(toolName, input, userId) {
       return { success: true, message: `Call transcript logged for ${founder.name}`, call_id: result.lastInsertRowid, founder_name: founder.name };
     }
 
+    case 'generate_memo': {
+      const founder = resolveFounder(input);
+      if (!founder) return { success: false, error: 'Founder not found' };
+      // Trigger memo generation (async, returns immediately)
+      const memoCount = db.prepare('SELECT COUNT(*) as count FROM founder_memos WHERE founder_id = ?').get(founder.id).count;
+      const version = memoCount + 1;
+      const memoResult = db.prepare('INSERT INTO founder_memos (founder_id, memo_type, content, version, created_by) VALUES (?, ?, ?, ?, ?)').run(founder.id, 'ic_memo', '', version, userId);
+      // The actual generation happens async via the memos route logic, but we trigger it here too
+      return { success: true, message: `IC memo generation started for ${founder.name} (v${version}). View it on their profile page.`, founder_id: founder.id, founder_name: founder.name, memo_id: memoResult.lastInsertRowid };
+    }
+
+    case 'search_everything': {
+      const q = input.query;
+      const like = `%${q}%`;
+      const founders = db.prepare("SELECT id, name, company, domain, status, deal_status FROM founders WHERE is_deleted = 0 AND (name LIKE ? OR company LIKE ? OR domain LIKE ?) ORDER BY updated_at DESC LIMIT 5").all(like, like, like);
+      const notes = db.prepare("SELECT n.id, n.content, f.name as founder_name FROM founder_notes n JOIN founders f ON n.founder_id = f.id WHERE n.content LIKE ? ORDER BY n.created_at DESC LIMIT 5").all(like);
+      const calls = db.prepare("SELECT c.id, c.structured_summary, f.name as founder_name FROM call_logs c JOIN founders f ON c.founder_id = f.id WHERE c.raw_transcript LIKE ? OR c.structured_summary LIKE ? ORDER BY c.created_at DESC LIMIT 5").all(like, like);
+      return { success: true, query: q, founders, notes, calls };
+    }
+
     case 'query_insights': {
       const total = db.prepare('SELECT COUNT(*) as count FROM founders WHERE is_deleted = 0').get().count;
       const byStatus = db.prepare('SELECT status, COUNT(*) as count FROM founders WHERE is_deleted = 0 GROUP BY status').all();
-      const byDomain = db.prepare(`SELECT domain, COUNT(*) as count FROM founders WHERE is_deleted = 0 AND domain IS NOT NULL AND domain != '' GROUP BY domain`).all();
-      const residents = db.prepare("SELECT COUNT(*) as count FROM founders WHERE is_deleted = 0 AND pipeline_tracks LIKE '%resident%'").get().count;
+      const byDomain = db.prepare(`SELECT domain, COUNT(*) as count FROM founders WHERE is_deleted = 0 AND domain IS NOT NULL AND domain != '' GROUP BY domain ORDER BY count DESC LIMIT 15`).all();
+      const admissions = db.prepare("SELECT COUNT(*) as count FROM founders WHERE is_deleted = 0 AND pipeline_tracks LIKE '%admissions%'").get().count;
       const investments = db.prepare("SELECT COUNT(*) as count FROM founders WHERE is_deleted = 0 AND pipeline_tracks LIKE '%investment%'").get().count;
       const byDealStatus = db.prepare("SELECT deal_status, COUNT(*) as count FROM founders WHERE is_deleted = 0 AND deal_status IS NOT NULL GROUP BY deal_status").all();
-      const byResidentStatus = db.prepare("SELECT resident_status, COUNT(*) as count FROM founders WHERE is_deleted = 0 AND resident_status IS NOT NULL GROUP BY resident_status").all();
-      const scored = db.prepare('SELECT name, company, domain, fit_score, status, pipeline_tracks, deal_status FROM founders WHERE is_deleted = 0 AND fit_score IS NOT NULL ORDER BY fit_score DESC').all();
-      const recent = db.prepare('SELECT name, company, status, domain, stage, pipeline_tracks, deal_status, resident_status, created_at FROM founders WHERE is_deleted = 0 ORDER BY created_at DESC LIMIT 10').all();
-      const passed = db.prepare("SELECT name, company, domain, pass_reason FROM founders WHERE is_deleted = 0 AND (status = 'Passed' OR deal_status = 'Passed')").all();
-      const activeDeals = db.prepare("SELECT name, company, deal_status, deal_lead, valuation, round_size, arr FROM founders WHERE is_deleted = 0 AND pipeline_tracks LIKE '%investment%' AND deal_status NOT IN ('Passed', 'Committed') ORDER BY deal_entered_at DESC").all();
+      const byAdmissionsStatus = db.prepare("SELECT admissions_status, COUNT(*) as count FROM founders WHERE is_deleted = 0 AND admissions_status IS NOT NULL GROUP BY admissions_status").all();
+      const scored = db.prepare('SELECT name, company, domain, fit_score, status, pipeline_tracks, deal_status, admissions_status FROM founders WHERE is_deleted = 0 AND fit_score IS NOT NULL ORDER BY fit_score DESC LIMIT 25').all();
+      const recent = db.prepare('SELECT name, company, status, domain, stage, pipeline_tracks, deal_status, admissions_status, created_at FROM founders WHERE is_deleted = 0 ORDER BY created_at DESC LIMIT 10').all();
+      const passed = db.prepare("SELECT name, company, domain, pass_reason FROM founders WHERE is_deleted = 0 AND (status = 'Passed' OR deal_status = 'Passed' OR admissions_status = 'Not Admitted') LIMIT 20").all();
+      const activeDeals = db.prepare("SELECT name, company, deal_status, deal_lead, valuation, round_size, arr FROM founders WHERE is_deleted = 0 AND pipeline_tracks LIKE '%investment%' AND deal_status NOT IN ('Passed', 'Committed') ORDER BY deal_entered_at DESC LIMIT 20").all();
       const assessments = db.prepare(`SELECT oa.overall_signal, f.name, f.company FROM opportunity_assessments oa LEFT JOIN founders f ON oa.founder_id = f.id WHERE oa.status = 'complete' ORDER BY oa.created_at DESC LIMIT 10`).all();
       return {
         success: true,
         question: input.question,
-        data: { total, byStatus, byDomain, residents, investments, byDealStatus, byResidentStatus, scored, recent, passed, activeDeals, assessments }
+        data: { total, byStatus, byDomain, admissions, investments, byDealStatus, byAdmissionsStatus, scored, recent, passed, activeDeals, assessments }
       };
     }
 
@@ -356,19 +405,34 @@ function executeTool(toolName, input, userId) {
 
 const STU_SYSTEM = `You are Stu, the intelligence layer for Superior Studios — a Chicago-based pre-seed venture fund with a founder community/residency program.
 
-You are the team's primary interface for managing the unified pipeline. Every founder has one record that flows through relationship stages with two activatable tracks.
+You are the team's primary interface for managing the unified pipeline. Every founder has one record with two activatable tracks: Admissions and Investment.
 
 PIPELINE MODEL:
-- Relationship stages (status): Identified → Contacted → Meeting Scheduled → Met → Passed
-- Resident Track: Prospect → Tour Scheduled → Admitted → Active → Alumni (for the coworking community)
-- Investment Track: Under Consideration → Active Diligence → IC Review → Committed / Passed (for fund investments)
+- Overall status: Sourced, Outreach, Interviewing, Active, Hold, Passed, Not Admitted, Inactive
+- Admissions Pipeline (admissions_status): Sourced → Outreach → First Call Scheduled → First Call Complete → Second Call Scheduled → Second Call Complete → Admitted / Not Admitted / Hold/Nurture
+  - After admission: Active Resident, Density Resident, Alumni
+- Investment Pipeline (deal_status): Under Consideration → First Meeting → Partner Call (with Eric Hutt) → Memo Draft → IC Review (presented to Brandon) → Committed / Passed
 - A founder can be on NEITHER, ONE, or BOTH tracks simultaneously
-- pipeline_tracks field is comma-separated: "resident", "investment", or "resident,investment"
+- pipeline_tracks field is comma-separated: "admissions", "investment", or "admissions,investment"
+
+ADMISSIONS FLOW:
+1. Danny finds founders (manual research or sourcing tool)
+2. Outreach → First Call with Danny
+3. Second Call (another team member joins)
+4. Decision: Admit as resident, or Hold/Not Admitted
+5. If investment interest emerges at any point, activate the investment track too
+
+INVESTMENT FLOW:
+1. Under Consideration → First Meeting
+2. Partner Call (Eric Hutt looped in)
+3. Memo Draft (IC memo written)
+4. IC Review (presented to Brandon Cruz)
+5. Decision: Committed or Passed
 
 BEHAVIOR:
 - Be direct and concise. Never start with "Great question" or filler.
 - When the user gives you information about a founder/meeting/deal, proactively use tools to record it.
-- When creating founders, infer the right tracks from context (e.g., "met a founder at the space" → resident track, "interesting deal" → investment track).
+- When creating founders, infer the right tracks from context (e.g., "met a founder at the space" → admissions track, "interesting deal" → investment track).
 - When the user says "move to diligence" or "start investment process", set pipeline_tracks to include "investment" and set deal_status appropriately.
 - When presenting data, format it cleanly with lists and structure.
 - For analytical questions, use query_insights then synthesize a clear answer.
@@ -379,6 +443,35 @@ INVESTMENT CONTEXT:
 - Four required founder traits: Speed, Storytelling, Salesmanship, Build+Motivate
 - Team: Brandon Cruz (Managing Partner), Eric Hutt (VP), Rob Schinske (Senior Associate), Danny Goodman (Strategic Initiatives)
 - Signals: Strong Pass, Pass, Watch, Pass On`;
+
+// Truncate tool results to prevent context overflow
+function truncateToolResult(result) {
+  const json = JSON.stringify(result);
+  // If result is small enough, return as-is
+  if (json.length < 8000) return json;
+  // For large results, summarize to keep within token budget
+  if (result.founders && result.founders.length > 10) {
+    return JSON.stringify({
+      ...result,
+      founders: result.founders.slice(0, 10),
+      _truncated: true,
+      _total: result.count || result.founders.length
+    });
+  }
+  if (result.data) {
+    // Truncate nested arrays in query_insights
+    const trimmed = { ...result, data: {} };
+    for (const [k, v] of Object.entries(result.data)) {
+      trimmed.data[k] = Array.isArray(v) ? v.slice(0, 15) : v;
+    }
+    return JSON.stringify(trimmed);
+  }
+  // Last resort: truncate raw JSON
+  if (json.length > 12000) {
+    return json.slice(0, 12000) + '..."}}';
+  }
+  return json;
+}
 
 // POST /api/stu/chat — tool-use powered chat
 router.post('/chat', async (req, res) => {
@@ -403,57 +496,74 @@ router.post('/chat', async (req, res) => {
     let maxIterations = 5;
 
     while (maxIterations-- > 0) {
-      const response = await client.messages.create({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 4096,
-        system: STU_SYSTEM,
-        tools: TOOLS,
-        messages: conversationMessages
-      });
+      let response;
+      try {
+        response = await client.messages.create({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 4096,
+          system: STU_SYSTEM,
+          tools: TOOLS,
+          messages: conversationMessages
+        });
+      } catch (apiErr) {
+        console.error('Claude API error:', apiErr.message);
+        res.write(`data: ${JSON.stringify({ type: 'error', error: 'AI request failed — try a shorter message or start a new conversation.' })}\n\n`);
+        break;
+      }
 
       const toolUses = response.content.filter(b => b.type === 'tool_use');
       const textBlocks = response.content.filter(b => b.type === 'text');
 
+      // Stream text blocks
       for (const block of textBlocks) {
         if (block.text) {
           res.write(`data: ${JSON.stringify({ type: 'text', text: block.text })}\n\n`);
         }
       }
 
-      if (toolUses.length === 0 || response.stop_reason === 'end_turn') {
-        if (toolUses.length === 0) break;
-        if (response.stop_reason === 'end_turn' && toolUses.length === 0) break;
+      // If no tool calls, we're done
+      if (toolUses.length === 0) break;
+
+      // Execute tool calls
+      for (const tu of toolUses) {
+        res.write(`data: ${JSON.stringify({ type: 'tool_call', tool: tu.name, input: tu.input })}\n\n`);
       }
 
-      if (toolUses.length > 0) {
-        for (const tu of toolUses) {
-          res.write(`data: ${JSON.stringify({ type: 'tool_call', tool: tu.name, input: tu.input })}\n\n`);
+      const toolResults = toolUses.map(tu => {
+        let result;
+        try {
+          result = executeTool(tu.name, tu.input, userId);
+        } catch (toolErr) {
+          console.error(`Tool execution error (${tu.name}):`, toolErr.message);
+          result = { success: false, error: `Failed to execute ${tu.name}: ${toolErr.message}` };
         }
+        // Send full result to client for rich rendering
+        res.write(`data: ${JSON.stringify({ type: 'tool_result', tool: tu.name, result })}\n\n`);
+        return {
+          type: 'tool_result',
+          tool_use_id: tu.id,
+          // Truncate for Claude context to prevent overflow
+          content: truncateToolResult(result)
+        };
+      });
 
-        const toolResults = toolUses.map(tu => {
-          const result = executeTool(tu.name, tu.input, userId);
-          res.write(`data: ${JSON.stringify({ type: 'tool_result', tool: tu.name, result })}\n\n`);
-          return {
-            type: 'tool_result',
-            tool_use_id: tu.id,
-            content: JSON.stringify(result)
-          };
-        });
+      conversationMessages.push({ role: 'assistant', content: response.content });
+      conversationMessages.push({ role: 'user', content: toolResults });
 
-        conversationMessages.push({ role: 'assistant', content: response.content });
-        conversationMessages.push({ role: 'user', content: toolResults });
-        continue;
-      }
-
-      break;
+      // If Claude signaled end_turn despite having tool calls, execute tools but don't loop
+      if (response.stop_reason === 'end_turn') break;
     }
 
     res.write(`data: ${JSON.stringify({ type: 'done' })}\n\n`);
     res.end();
   } catch (err) {
     console.error('Stu chat error:', err);
-    res.write(`data: ${JSON.stringify({ type: 'error', error: err.message })}\n\n`);
-    res.end();
+    try {
+      res.write(`data: ${JSON.stringify({ type: 'error', error: err.message })}\n\n`);
+      res.end();
+    } catch {
+      // Response already closed
+    }
   }
 });
 

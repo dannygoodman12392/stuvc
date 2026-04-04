@@ -1,18 +1,22 @@
 export default function StuLogo({ size = 28 }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
-      {/* Rounded square container */}
-      <rect width="32" height="32" rx="8" fill="#111827" />
-      {/* Abstract "S" path that doubles as a neural/intelligence motif */}
-      <path
-        d="M10 12.5C10 10.567 11.567 9 13.5 9H16C18.761 9 21 11.239 21 14C21 15.657 20.157 17.107 18.87 17.937L13.13 21.063C11.843 21.893 11 23.343 11 25V25"
-        stroke="white"
-        strokeWidth="2.5"
-        strokeLinecap="round"
-      />
-      {/* Dot accents representing intelligence/data points */}
-      <circle cx="22" cy="22" r="2" fill="#3B82F6" />
-      <circle cx="10" cy="25" r="1.5" fill="#3B82F6" opacity="0.6" />
+    <svg width={size} height={size} viewBox="0 0 400 400" fill="none" xmlns="http://www.w3.org/2000/svg">
+      {/* Background */}
+      <rect width="400" height="400" rx="88" fill="#0D0D10" />
+      {/* Candidate dots (founders in the field) */}
+      <circle cx="142" cy="148" r="9" fill="#FFFFFF" opacity="0.40" />
+      <circle cx="200" cy="136" r="9" fill="#FFFFFF" opacity="0.65" />
+      <circle cx="258" cy="148" r="9" fill="#FFFFFF" opacity="0.40" />
+      <circle cx="162" cy="192" r="9" fill="#FFFFFF" opacity="0.55" />
+      <circle cx="238" cy="192" r="9" fill="#FFFFFF" opacity="0.55" />
+      {/* Convergence lines */}
+      <line x1="142" y1="148" x2="200" y2="264" stroke="#FFFFFF" strokeWidth="2" strokeLinecap="round" opacity="0.22" />
+      <line x1="200" y1="136" x2="200" y2="264" stroke="#FFFFFF" strokeWidth="2" strokeLinecap="round" opacity="0.32" />
+      <line x1="258" y1="148" x2="200" y2="264" stroke="#FFFFFF" strokeWidth="2" strokeLinecap="round" opacity="0.22" />
+      <line x1="162" y1="192" x2="200" y2="264" stroke="#FFFFFF" strokeWidth="2" strokeLinecap="round" opacity="0.28" />
+      <line x1="238" y1="192" x2="200" y2="264" stroke="#FFFFFF" strokeWidth="2" strokeLinecap="round" opacity="0.28" />
+      {/* The chosen one */}
+      <circle cx="200" cy="272" r="18" fill="#FFFFFF" />
     </svg>
   );
 }

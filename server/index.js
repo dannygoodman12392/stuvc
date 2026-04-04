@@ -1,5 +1,6 @@
 // Load .env in dev; Railway injects env vars directly in production
-require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') });
+// override: true ensures .env values win over empty system env vars (e.g. ANTHROPIC_API_KEY="")
+require('dotenv').config({ path: require('path').join(__dirname, '..', '.env'), override: true });
 
 const express = require('express');
 const cors = require('cors');
@@ -18,6 +19,35 @@ seedTeam();
 // Auto-import founder data on first production deploy
 const { seedIfEmpty } = require('./seed-production');
 seedIfEmpty();
+
+// One-time Airtable migration (idempotent — uses migration_flags table)
+(async () => {
+  try {
+    const db = require('./db');
+    db.exec("CREATE TABLE IF NOT EXISTS migration_flags (key TEXT PRIMARY KEY, ran_at DATETIME DEFAULT CURRENT_TIMESTAMP)");
+    const flag = db.prepare("SELECT * FROM migration_flags WHERE key = 'airtable_import_v5'").get();
+    if (!flag) {
+      console.log('[Migration] Running Airtable import v4 (fixed stage mapping)...');
+      const runMigration = require('./migrate-from-airtable');
+      await runMigration();
+      db.prepare("INSERT INTO migration_flags (key) VALUES ('airtable_import_v5')").run();
+      console.log('[Migration] Airtable import v4 complete, flag set.');
+    } else {
+      console.log(`[Migration] Airtable import v4 already ran at ${flag.ran_at}, skipping.`);
+    }
+    // Backfill Airtable record IDs (idempotent — only sets NULL IDs)
+    const backfillFlag = db.prepare("SELECT * FROM migration_flags WHERE key = 'airtable_backfill_ids_v1'").get();
+    if (!backfillFlag) {
+      console.log('[Migration] Backfilling Airtable record IDs...');
+      const backfillIds = require('./backfill-airtable-ids');
+      await backfillIds();
+      db.prepare("INSERT INTO migration_flags (key) VALUES ('airtable_backfill_ids_v1')").run();
+      console.log('[Migration] Airtable ID backfill complete.');
+    }
+  } catch (err) {
+    console.error('[Migration] Airtable import error:', err.message);
+  }
+})();
 
 // Security
 app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false }));
@@ -58,6 +88,9 @@ app.use('/api/deal-room', requireAuth, require('./routes/dealRoom'));
 app.use('/api/calls', requireAuth, require('./routes/calls'));
 app.use('/api/ai', requireAuth, require('./routes/ai'));
 app.use('/api/stu', requireAuth, require('./routes/stu'));
+app.use('/api/memos', requireAuth, require('./routes/memos'));
+app.use('/api/files', requireAuth, require('./routes/files'));
+app.use('/api/search', requireAuth, require('./routes/search'));
 
 // Serve static in production
 const clientDist = path.join(__dirname, '..', 'client', 'dist');

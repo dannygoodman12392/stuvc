@@ -71,10 +71,13 @@ export const api = {
 
   // Sourcing
   getSourcingQueue: (params) => request('/sourcing/queue?' + new URLSearchParams(params || {})),
+  getSourcingStarred: () => request('/sourcing/starred'),
   getSourcingStats: () => request('/sourcing/stats'),
   getSourcingRuns: () => request('/sourcing/runs'),
   approveSourced: (id) => request(`/sourcing/approve/${id}`, { method: 'POST' }),
   dismissSourced: (id) => request(`/sourcing/dismiss/${id}`, { method: 'POST' }),
+  starSourced: (id) => request(`/sourcing/star/${id}`, { method: 'POST' }),
+  unstarSourced: (id) => request(`/sourcing/unstar/${id}`, { method: 'POST' }),
   triggerSourcing: () => request('/sourcing/run', { method: 'POST' }),
 
   // Calls
@@ -84,13 +87,32 @@ export const api = {
   // Assessments
   getAssessments: () => request('/assessments'),
   getAssessment: (id) => request(`/assessments/${id}`),
+  getAssessmentInputs: (id) => request(`/assessments/${id}/inputs`),
+  getAssessmentGroup: (groupId) => request(`/assessments/group/${groupId}`),
   createAssessment: (data) => request('/assessments', { method: 'POST', body: JSON.stringify(data) }),
+  updateAssessment: (id, data) => request(`/assessments/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteAssessment: (id) => request(`/assessments/${id}`, { method: 'DELETE' }),
+  cancelAssessment: (id) => request(`/assessments/${id}/cancel`, { method: 'POST' }),
+  rerunAssessment: (id, data) => request(`/assessments/${id}/rerun`, { method: 'POST', body: JSON.stringify(data) }),
 
   // Deal Room
   getDeals: () => request('/deal-room'),
   getDeal: (id) => request(`/deal-room/${id}`),
   createDeal: (data) => request('/deal-room', { method: 'POST', body: JSON.stringify(data) }),
   updateDeal: (id, data) => request(`/deal-room/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+
+  // Memos
+  getMemos: (founderId) => request(`/memos/${founderId}`),
+  generateMemo: (founderId) => request(`/memos/${founderId}`, { method: 'POST' }),
+  deleteMemo: (founderId, memoId) => request(`/memos/${founderId}/${memoId}`, { method: 'DELETE' }),
+
+  // Files
+  getFiles: (founderId) => request(`/files/${founderId}`),
+  addFile: (founderId, data) => request(`/files/${founderId}`, { method: 'POST', body: JSON.stringify(data) }),
+  deleteFile: (founderId, fileId) => request(`/files/${founderId}/${fileId}`, { method: 'DELETE' }),
+
+  // Search
+  search: (q) => request(`/search?q=${encodeURIComponent(q)}`),
 
   // AI
   fitScore: (founderId) => request('/ai/fit-score', { method: 'POST', body: JSON.stringify({ founderId }) }),
@@ -103,6 +125,19 @@ export const api = {
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
       body: JSON.stringify({ messages })
     });
+
+    if (res.status === 401) {
+      setToken(null);
+      setUser(null);
+      window.location.href = '/login';
+      return;
+    }
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Request failed' }));
+      yield { type: 'error', error: err.error || `Server error (${res.status})` };
+      return;
+    }
 
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
