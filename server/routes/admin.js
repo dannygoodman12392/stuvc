@@ -115,8 +115,8 @@ router.get('/user/:id', (req, res) => {
 
   // Recent sourcing runs
   const recentRuns = db.prepare(`
-    SELECT id, started_at, founders_found, founders_added, founders_deduplicated, errors
-    FROM sourcing_runs WHERE user_id = ? ORDER BY started_at DESC LIMIT 10
+    SELECT id, run_at, founders_found, founders_added, founders_deduplicated, errors
+    FROM sourcing_runs WHERE user_id = ? ORDER BY run_at DESC LIMIT 10
   `).all(req.params.id);
 
   // Recent activity

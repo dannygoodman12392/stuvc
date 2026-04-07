@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { api } from '../utils/api';
+import { useAuth } from '../contexts/AuthContext';
 
 function StatCard({ label, value, sub }) {
   return (
@@ -51,6 +52,7 @@ function KeyBadge({ name }) {
 }
 
 export default function Admin() {
+  const { user: currentUser } = useAuth();
   const [loading, setLoading] = useState(true);
   const [dashboard, setDashboard] = useState(null);
   const [users, setUsers] = useState([]);
@@ -318,7 +320,7 @@ export default function Admin() {
                     </div>
 
                     {/* Delete button — not for your own account */}
-                    {userDetail.user.id !== 1 && (
+                    {userDetail.user.id !== currentUser?.id && (
                       <button
                         onClick={() => handleDeleteUser(userDetail.user.id, userDetail.user.name)}
                         className="mt-4 w-full flex items-center justify-center gap-2 px-3 py-2 text-xs font-medium text-red-600 bg-red-50 border border-red-100 rounded-lg hover:bg-red-100 transition-colors"
@@ -355,7 +357,7 @@ export default function Admin() {
                       <div className="space-y-2">
                         {userDetail.recentRuns.map(r => (
                           <div key={r.id} className="flex items-center justify-between text-xs">
-                            <span className="text-gray-500">{new Date(r.started_at).toLocaleDateString()}</span>
+                            <span className="text-gray-500">{new Date(r.run_at).toLocaleDateString()}</span>
                             <span className="text-gray-700">
                               {r.founders_found} found · {r.founders_added} added · {r.founders_deduplicated} deduped
                             </span>
