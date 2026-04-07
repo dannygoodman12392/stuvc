@@ -17,13 +17,13 @@ router.post('/login', (req, res) => {
 
   res.json({
     token,
-    user: { id: user.id, email: user.email, name: user.name, role: user.role, onboarding_complete: user.onboarding_complete }
+    user: { id: user.id, email: user.email, name: user.name, role: user.role, onboarding_complete: user.onboarding_complete, has_paid: user.has_paid }
   });
 });
 
 // GET /api/auth/me
 router.get('/me', requireAuth, (req, res) => {
-  const user = db.prepare('SELECT id, email, name, role, onboarding_complete, created_at, last_login FROM users WHERE id = ?').get(req.user.id);
+  const user = db.prepare('SELECT id, email, name, role, onboarding_complete, has_paid, created_at, last_login FROM users WHERE id = ?').get(req.user.id);
   if (!user) return res.status(404).json({ error: 'User not found' });
   res.json(user);
 });
@@ -80,12 +80,12 @@ router.post('/register', (req, res) => {
     'INSERT INTO users (email, name, role, password_hash, onboarding_complete) VALUES (?, ?, ?, ?, 0)'
   ).run(email.toLowerCase().trim(), name.trim(), 'member', hashPassword(password));
 
-  const user = db.prepare('SELECT id, email, name, role, onboarding_complete FROM users WHERE id = ?').get(result.lastInsertRowid);
+  const user = db.prepare('SELECT id, email, name, role, onboarding_complete, has_paid FROM users WHERE id = ?').get(result.lastInsertRowid);
   const token = generateToken(user);
 
   res.status(201).json({
     token,
-    user: { id: user.id, email: user.email, name: user.name, role: user.role, onboarding_complete: user.onboarding_complete }
+    user: { id: user.id, email: user.email, name: user.name, role: user.role, onboarding_complete: user.onboarding_complete, has_paid: user.has_paid }
   });
 });
 

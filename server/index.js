@@ -74,6 +74,10 @@ app.use(cors({
   credentials: true
 }));
 
+// Stripe webhook needs raw body for signature verification — must be before express.json()
+const payments = require('./routes/payments');
+app.post('/api/payments/webhook', express.raw({ type: 'application/json' }), payments.webhook);
+
 app.use(express.json({ limit: '50mb' }));
 
 // Rate limiting
@@ -84,6 +88,7 @@ app.use('/api/auth/register', rateLimit({ windowMs: 15 * 60 * 1000, max: 5, stan
 // Public routes
 app.get('/api/health', (req, res) => res.json({ status: 'ok', app: 'Stu', version: '2.0.0' }));
 app.use('/api/auth', require('./routes/auth'));
+app.use('/api/payments', payments.router);
 
 // Protected routes
 app.use('/api/founders', requireAuth, require('./routes/founders'));

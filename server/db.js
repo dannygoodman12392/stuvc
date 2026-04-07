@@ -334,6 +334,9 @@ db.exec(`
 addColumn('sourced_founders', 'user_id', 'INTEGER REFERENCES users(id)');
 addColumn('sourcing_runs', 'user_id', 'INTEGER REFERENCES users(id)');
 addColumn('users', 'onboarding_complete', 'INTEGER DEFAULT 0');
+addColumn('users', 'has_paid', 'INTEGER DEFAULT 0');
+addColumn('users', 'stripe_customer_id', 'TEXT');
+addColumn('users', 'payment_date', 'DATETIME');
 
 // One-time migration: assign all existing data to user_id=1 (Danny)
 const mtFlag = db.prepare("SELECT * FROM migration_flags WHERE key = 'multi_tenant_v1'").get();
@@ -351,7 +354,7 @@ if (!mtFlag) {
   db.prepare("UPDATE deal_room SET created_by = 1 WHERE created_by IS NULL").run();
   db.prepare("UPDATE founder_memos SET created_by = 1 WHERE created_by IS NULL").run();
   db.prepare("UPDATE founder_files SET created_by = 1 WHERE created_by IS NULL").run();
-  db.prepare("UPDATE users SET onboarding_complete = 1 WHERE id = 1").run();
+  db.prepare("UPDATE users SET onboarding_complete = 1, has_paid = 1 WHERE id = 1").run();
 
   db.prepare("INSERT INTO migration_flags (key) VALUES ('multi_tenant_v1')").run();
   console.log('[DB] Multi-tenant migration complete — all existing data assigned to user_id=1');

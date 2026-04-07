@@ -13,6 +13,8 @@ import AssessmentDetail from './pages/AssessmentDetail';
 import AskStu from './pages/AskStu';
 import Placeholder from './pages/Placeholder';
 import Settings from './pages/Settings';
+import Payment from './pages/Payment';
+import PaymentSuccess from './pages/PaymentSuccess';
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth();
@@ -26,6 +28,7 @@ function ProtectedRoute({ children }) {
   }
 
   if (!user) return <Navigate to="/login" replace />;
+  if (!user.has_paid) return <Navigate to="/payment" replace />;
   if (!user.onboarding_complete) return <Navigate to="/onboarding" replace />;
   return <Layout>{children}</Layout>;
 }
@@ -45,8 +48,18 @@ function AppRoutes() {
     <Routes>
       <Route path="/login" element={user ? <Navigate to="/" replace /> : <Login />} />
       <Route path="/signup" element={user ? <Navigate to="/" replace /> : <Signup />} />
+      <Route path="/payment" element={
+        !user ? <Navigate to="/login" replace /> :
+        user.has_paid ? <Navigate to="/" replace /> :
+        <Payment />
+      } />
+      <Route path="/payment/success" element={
+        !user ? <Navigate to="/login" replace /> :
+        <PaymentSuccess />
+      } />
       <Route path="/onboarding" element={
         !user ? <Navigate to="/login" replace /> :
+        !user.has_paid ? <Navigate to="/payment" replace /> :
         user.onboarding_complete ? <Navigate to="/" replace /> :
         <Onboarding />
       } />

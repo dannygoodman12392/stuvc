@@ -56,6 +56,10 @@ export const api = {
   invite: (email, name, role) => request('/auth/invite', { method: 'POST', body: JSON.stringify({ email, name, role }) }),
   team: () => request('/auth/team'),
 
+  // Payments
+  createCheckoutSession: () => request('/payments/create-checkout-session', { method: 'POST' }),
+  getPaymentStatus: () => request('/payments/status'),
+
   // Founders
   getFounders: (params) => request('/founders?' + new URLSearchParams(params || {})),
   getFounderStats: () => request('/founders/stats'),

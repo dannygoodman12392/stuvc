@@ -285,6 +285,70 @@ export default function Landing() {
         </div>
       </section>
 
+      {/* --- PRICING --- */}
+      <section
+        style={{
+          maxWidth: 520,
+          margin: '0 auto',
+          padding: '0 24px 120px',
+          textAlign: 'center',
+        }}
+      >
+        <div className="landing-divider landing-fade landing-fade-d5" style={{ marginBottom: 80 }} />
+
+        <h2
+          className="landing-fade landing-fade-d5"
+          style={{
+            fontSize: 'clamp(28px, 4vw, 40px)',
+            fontWeight: 700,
+            letterSpacing: '-0.03em',
+            marginBottom: 12,
+          }}
+        >
+          Simple pricing.
+        </h2>
+        <p
+          className="landing-fade landing-fade-d5"
+          style={{ fontSize: 16, color: 'var(--text-secondary)', marginBottom: 40 }}
+        >
+          One payment. Lifetime access. No subscriptions.
+        </p>
+
+        <div
+          className="feature-card landing-fade landing-fade-d5"
+          style={{ textAlign: 'left', padding: '32px 32px 28px' }}
+        >
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 4, marginBottom: 4 }}>
+            <span style={{ fontSize: 48, fontWeight: 700, letterSpacing: '-0.03em' }}>$100</span>
+          </div>
+          <p style={{ fontSize: 14, color: 'var(--text-secondary)', marginBottom: 24 }}>
+            Pay once, use forever. Bring your own API keys.
+          </p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 28 }}>
+            {[
+              'Unlimited founders, pipelines, and assessments',
+              'Automated AI-powered sourcing runs',
+              'Multi-agent deal evaluation',
+              'Customizable pipeline stages',
+              'All future updates included',
+            ].map((item, i) => (
+              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                  <path d="M3 8.5L6.5 12L13 4" stroke="#3B82F6" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+                <span style={{ fontSize: 14, color: 'var(--text-secondary)' }}>{item}</span>
+              </div>
+            ))}
+          </div>
+          <Link to="/signup" className="landing-cta" style={{ width: '100%', justifyContent: 'center' }}>
+            Get started
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <path d="M3 8h10m0 0L9 4m4 4L9 12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </Link>
+        </div>
+      </section>
+
       {/* --- FOOTER --- */}
       <footer
         style={{
