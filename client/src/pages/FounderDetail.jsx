@@ -17,6 +17,8 @@ export default function FounderDetail() {
   const [callingAI, setCallingAI] = useState(false);
   const [editingDeal, setEditingDeal] = useState(false);
   const [dealForm, setDealForm] = useState({});
+  const [editingProfile, setEditingProfile] = useState(false);
+  const [profileForm, setProfileForm] = useState({});
 
   // Memo state
   const [memos, setMemos] = useState([]);
@@ -60,6 +62,16 @@ export default function FounderDetail() {
         runway_months: f.runway_months || '', security_type: f.security_type || '',
         memo_status: f.memo_status || '', diligence_status: f.diligence_status || '',
         pass_reason: f.pass_reason || '',
+      });
+      setProfileForm({
+        name: f.name || '', company: f.company || '', role: f.role || '',
+        email: f.email || '', linkedin_url: f.linkedin_url || '', twitter: f.twitter || '',
+        github_url: f.github_url || '', website_url: f.website_url || '',
+        location_city: f.location_city || '', location_state: f.location_state || '',
+        domain: f.domain || '', stage: f.stage || '', bio: f.bio || '',
+        company_one_liner: f.company_one_liner || '', previous_companies: f.previous_companies || '',
+        notable_background: f.notable_background || '', next_action: f.next_action || '',
+        chicago_connection: f.chicago_connection || '',
       });
     } catch (err) { console.error(err); }
     setLoading(false);
@@ -162,6 +174,23 @@ export default function FounderDetail() {
     handleUpdate(updates);
   }
 
+  async function saveProfileFields() {
+    const updates = {};
+    for (const [k, v] of Object.entries(profileForm)) {
+      updates[k] = v || null;
+    }
+    await handleUpdate(updates);
+    setEditingProfile(false);
+  }
+
+  async function handleDeleteFounder() {
+    if (!confirm(`Delete ${founder.name}? This cannot be undone.`)) return;
+    try {
+      await api.deleteFounder(id);
+      navigate('/pipeline');
+    } catch (err) { console.error(err); }
+  }
+
   async function saveDealFields() {
     const updates = {};
     for (const [k, v] of Object.entries(dealForm)) {
@@ -245,39 +274,93 @@ export default function FounderDetail() {
         <div className="lg:col-span-2 space-y-6">
           {/* Details card */}
           <div className="card p-4">
-            <h3 className="text-sm font-semibold text-gray-700 mb-3">Details</h3>
-            <div className="grid grid-cols-2 gap-3 text-sm">
-              {founder.domain && <Detail label="Domain" value={founder.domain} />}
-              {founder.stage && <Detail label="Stage" value={founder.stage} />}
-              {founder.source && <Detail label="Source" value={founder.source} />}
-              {founder.chicago_connection && <Detail label="Chicago Connection" value={founder.chicago_connection} />}
-              {founder.previous_companies && <Detail label="Previous Companies" value={founder.previous_companies} />}
-              {founder.notable_background && <Detail label="Notable Background" value={founder.notable_background} />}
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-semibold text-gray-700">Details</h3>
+              <div className="flex items-center gap-2">
+                <button onClick={() => { setEditingProfile(!editingProfile); if (editingProfile) { /* reset form on cancel */ setProfileForm({ name: founder.name || '', company: founder.company || '', role: founder.role || '', email: founder.email || '', linkedin_url: founder.linkedin_url || '', twitter: founder.twitter || '', github_url: founder.github_url || '', website_url: founder.website_url || '', location_city: founder.location_city || '', location_state: founder.location_state || '', domain: founder.domain || '', stage: founder.stage || '', bio: founder.bio || '', company_one_liner: founder.company_one_liner || '', previous_companies: founder.previous_companies || '', notable_background: founder.notable_background || '', next_action: founder.next_action || '', chicago_connection: founder.chicago_connection || '' }); } }} className="btn-ghost text-xs px-2 py-1">
+                  {editingProfile ? 'Cancel' : 'Edit'}
+                </button>
+                {!editingProfile && (
+                  <button onClick={handleDeleteFounder} className="text-xs text-red-400 hover:text-red-600 px-2 py-1 transition-colors">Delete</button>
+                )}
+              </div>
             </div>
-            {founder.bio && (
-              <div className="mt-3 pt-3 border-t border-gray-100">
-                <p className="text-xs text-gray-500 uppercase tracking-wider mb-1">Bio</p>
-                <p className="text-sm text-gray-600">{founder.bio}</p>
+
+            {editingProfile ? (
+              <div className="space-y-3">
+                <div className="grid grid-cols-2 gap-3">
+                  <div><label className="label">Name</label><input value={profileForm.name} onChange={e => setProfileForm(f => ({ ...f, name: e.target.value }))} className="input w-full text-sm" /></div>
+                  <div><label className="label">Company</label><input value={profileForm.company} onChange={e => setProfileForm(f => ({ ...f, company: e.target.value }))} className="input w-full text-sm" /></div>
+                  <div><label className="label">Role / Title</label><input value={profileForm.role} onChange={e => setProfileForm(f => ({ ...f, role: e.target.value }))} className="input w-full text-sm" /></div>
+                  <div><label className="label">Email</label><input type="email" value={profileForm.email} onChange={e => setProfileForm(f => ({ ...f, email: e.target.value }))} className="input w-full text-sm" /></div>
+                  <div><label className="label">LinkedIn URL</label><input value={profileForm.linkedin_url} onChange={e => setProfileForm(f => ({ ...f, linkedin_url: e.target.value }))} className="input w-full text-sm" placeholder="https://linkedin.com/in/..." /></div>
+                  <div><label className="label">Twitter / X</label><input value={profileForm.twitter} onChange={e => setProfileForm(f => ({ ...f, twitter: e.target.value }))} className="input w-full text-sm" placeholder="@handle" /></div>
+                  <div><label className="label">GitHub URL</label><input value={profileForm.github_url} onChange={e => setProfileForm(f => ({ ...f, github_url: e.target.value }))} className="input w-full text-sm" /></div>
+                  <div><label className="label">Website</label><input value={profileForm.website_url} onChange={e => setProfileForm(f => ({ ...f, website_url: e.target.value }))} className="input w-full text-sm" /></div>
+                  <div><label className="label">City</label><input value={profileForm.location_city} onChange={e => setProfileForm(f => ({ ...f, location_city: e.target.value }))} className="input w-full text-sm" /></div>
+                  <div><label className="label">State / Region</label><input value={profileForm.location_state} onChange={e => setProfileForm(f => ({ ...f, location_state: e.target.value }))} className="input w-full text-sm" /></div>
+                  <div><label className="label">Domain / Sector</label><input value={profileForm.domain} onChange={e => setProfileForm(f => ({ ...f, domain: e.target.value }))} className="input w-full text-sm" placeholder="e.g. AI/ML, Fintech" /></div>
+                  <div>
+                    <label className="label">Stage</label>
+                    <select value={profileForm.stage} onChange={e => setProfileForm(f => ({ ...f, stage: e.target.value }))} className="select w-full text-sm">
+                      <option value="">Not set</option>
+                      <option>Pre-seed</option><option>Seed</option><option>Series A</option><option>Series B+</option>
+                    </select>
+                  </div>
+                </div>
+                <div><label className="label">Company One-Liner</label><input value={profileForm.company_one_liner} onChange={e => setProfileForm(f => ({ ...f, company_one_liner: e.target.value }))} className="input w-full text-sm" placeholder="What they're building" /></div>
+                <div><label className="label">Bio</label><textarea value={profileForm.bio} onChange={e => setProfileForm(f => ({ ...f, bio: e.target.value }))} className="input w-full text-sm min-h-[60px] resize-none" rows={3} /></div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div><label className="label">Previous Companies</label><input value={profileForm.previous_companies} onChange={e => setProfileForm(f => ({ ...f, previous_companies: e.target.value }))} className="input w-full text-sm" /></div>
+                  <div><label className="label">Notable Background</label><input value={profileForm.notable_background} onChange={e => setProfileForm(f => ({ ...f, notable_background: e.target.value }))} className="input w-full text-sm" /></div>
+                </div>
+                <div><label className="label">Next Action</label><input value={profileForm.next_action} onChange={e => setProfileForm(f => ({ ...f, next_action: e.target.value }))} className="input w-full text-sm" placeholder="What's the next step?" /></div>
+                <button onClick={saveProfileFields} className="btn-primary text-xs">Save Profile</button>
               </div>
+            ) : (
+              <>
+                <div className="grid grid-cols-2 gap-3 text-sm">
+                  {founder.domain && <Detail label="Domain" value={founder.domain} />}
+                  {founder.stage && <Detail label="Stage" value={founder.stage} />}
+                  {founder.source && <Detail label="Source" value={founder.source} />}
+                  {founder.email && <Detail label="Email" value={founder.email} />}
+                  {founder.location_city && <Detail label="Location" value={`${founder.location_city}${founder.location_state ? ', ' + founder.location_state : ''}`} />}
+                  {founder.chicago_connection && <Detail label="Chicago Connection" value={founder.chicago_connection} />}
+                  {founder.previous_companies && <Detail label="Previous Companies" value={founder.previous_companies} />}
+                  {founder.notable_background && <Detail label="Notable Background" value={founder.notable_background} />}
+                </div>
+                {founder.company_one_liner && (
+                  <div className="mt-3 pt-3 border-t border-gray-100">
+                    <p className="text-xs text-gray-500 uppercase tracking-wider mb-1">What They're Building</p>
+                    <p className="text-sm text-gray-600">{founder.company_one_liner}</p>
+                  </div>
+                )}
+                {founder.bio && (
+                  <div className="mt-3 pt-3 border-t border-gray-100">
+                    <p className="text-xs text-gray-500 uppercase tracking-wider mb-1">Bio</p>
+                    <p className="text-sm text-gray-600">{founder.bio}</p>
+                  </div>
+                )}
+                {founder.fit_score_rationale && (
+                  <div className="mt-3 pt-3 border-t border-gray-100">
+                    <p className="text-xs text-gray-500 uppercase tracking-wider mb-1">AI Fit Assessment</p>
+                    <p className="text-sm text-gray-600">{founder.fit_score_rationale}</p>
+                  </div>
+                )}
+                {founder.next_action && (
+                  <div className="mt-3 pt-3 border-t border-gray-100">
+                    <p className="text-xs text-gray-500 uppercase tracking-wider mb-1">Next Action</p>
+                    <p className="text-sm text-gray-600">{founder.next_action}</p>
+                  </div>
+                )}
+                <div className="flex gap-2 mt-3 pt-3 border-t border-gray-100">
+                  {founder.linkedin_url && <a href={founder.linkedin_url} target="_blank" rel="noopener" className="text-xs text-blue-600 hover:underline">LinkedIn</a>}
+                  {founder.twitter && <a href={`https://twitter.com/${founder.twitter}`} target="_blank" rel="noopener" className="text-xs text-blue-600 hover:underline">Twitter</a>}
+                  {founder.github_url && <a href={founder.github_url} target="_blank" rel="noopener" className="text-xs text-blue-600 hover:underline">GitHub</a>}
+                  {founder.website_url && <a href={founder.website_url} target="_blank" rel="noopener" className="text-xs text-blue-600 hover:underline">Website</a>}
+                </div>
+              </>
             )}
-            {founder.fit_score_rationale && (
-              <div className="mt-3 pt-3 border-t border-gray-100">
-                <p className="text-xs text-gray-500 uppercase tracking-wider mb-1">AI Fit Assessment</p>
-                <p className="text-sm text-gray-600">{founder.fit_score_rationale}</p>
-              </div>
-            )}
-            {founder.next_action && (
-              <div className="mt-3 pt-3 border-t border-gray-100">
-                <p className="text-xs text-gray-500 uppercase tracking-wider mb-1">Next Action</p>
-                <p className="text-sm text-gray-600">{founder.next_action}</p>
-              </div>
-            )}
-            <div className="flex gap-2 mt-3 pt-3 border-t border-gray-100">
-              {founder.linkedin_url && <a href={founder.linkedin_url} target="_blank" rel="noopener" className="text-xs text-blue-600 hover:underline">LinkedIn</a>}
-              {founder.twitter && <a href={`https://twitter.com/${founder.twitter}`} target="_blank" rel="noopener" className="text-xs text-blue-600 hover:underline">Twitter</a>}
-              {founder.github_url && <a href={founder.github_url} target="_blank" rel="noopener" className="text-xs text-blue-600 hover:underline">GitHub</a>}
-              {founder.website_url && <a href={founder.website_url} target="_blank" rel="noopener" className="text-xs text-blue-600 hover:underline">Website</a>}
-            </div>
           </div>
 
           {/* Admissions Pipeline Panel */}
