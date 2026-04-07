@@ -104,6 +104,7 @@ app.use('/api/files', requireAuth, require('./routes/files'));
 app.use('/api/search', requireAuth, require('./routes/search'));
 app.use('/api/settings', requireAuth, require('./routes/settings'));
 app.use('/api/admin', requireAuth, require('./routes/admin'));
+app.use('/api/import', requireAuth, require('./routes/import'));
 
 // Serve static in production
 const clientDist = path.join(__dirname, '..', 'client', 'dist');

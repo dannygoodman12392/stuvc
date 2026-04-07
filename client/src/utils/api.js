@@ -122,6 +122,25 @@ export const api = {
   addFile: (founderId, data) => request(`/files/${founderId}`, { method: 'POST', body: JSON.stringify(data) }),
   deleteFile: (founderId, fileId) => request(`/files/${founderId}/${fileId}`, { method: 'DELETE' }),
 
+  // Import
+  uploadFile: async (file) => {
+    const token = getToken();
+    const form = new FormData();
+    form.append('file', file);
+    const res = await fetch(`${API_BASE}/import/upload`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${token}` },
+      body: form,
+    });
+    if (res.status === 401) { setToken(null); setUser(null); window.location.href = '/login'; throw new Error('Session expired'); }
+    if (!res.ok) { const err = await res.json().catch(() => ({ error: 'Upload failed' })); throw new Error(err.error || 'Upload failed'); }
+    return res.json();
+  },
+  remapImport: (rows, mappings) => request('/import/remap', { method: 'POST', body: JSON.stringify({ rows, mappings }) }),
+  confirmImport: (founders, source) => request('/import/confirm', { method: 'POST', body: JSON.stringify({ founders, source }) }),
+  enrichImported: (founderIds) => request('/import/enrich', { method: 'POST', body: JSON.stringify({ founderIds }) }),
+  getImportFields: () => request('/import/fields'),
+
   // Search
   search: (q) => request(`/search?q=${encodeURIComponent(q)}`),
 

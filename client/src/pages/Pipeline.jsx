@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../utils/api';
 import KanbanBoard from '../components/KanbanBoard';
+import ImportFoundersModal from '../components/ImportFoundersModal';
 
 // Fallback defaults — used when pipeline config API is unavailable
 const DEFAULT_ADMISSIONS_STATUSES = ['All', 'Sourced', 'Outreach', 'First Call Scheduled', 'First Call Complete', 'Second Call Scheduled', 'Second Call Complete', 'Admitted', 'Active Resident', 'Density Resident', 'Alumni', 'Hold/Nurture', 'Not Admitted'];
@@ -39,6 +40,7 @@ export default function Pipeline() {
   const [loading, setLoading] = useState(true);
   const [viewMode, setViewMode] = useState(() => localStorage.getItem('pipeline_view') || 'list');
   const [sourcingRunning, setSourcingRunning] = useState(false);
+  const [showImportModal, setShowImportModal] = useState(false);
   const [pipelineConfig, setPipelineConfig] = useState(null);
 
   useEffect(() => {
@@ -235,6 +237,10 @@ export default function Pipeline() {
               </button>
             </div>
           )}
+          <button onClick={() => setShowImportModal(true)} className="btn-ghost text-xs md:text-sm border border-gray-200">
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" /></svg>
+            <span className="hidden sm:inline">Import</span>
+          </button>
           <Link to="/founders/new" className="btn-primary text-xs md:text-sm">
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
             <span className="hidden sm:inline">Add Founder</span>
@@ -330,6 +336,12 @@ export default function Pipeline() {
             </div>
           )}
         </>
+      )}
+      {showImportModal && (
+        <ImportFoundersModal
+          onClose={() => setShowImportModal(false)}
+          onImportComplete={loadData}
+        />
       )}
     </div>
   );

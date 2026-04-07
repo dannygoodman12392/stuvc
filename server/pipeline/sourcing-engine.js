@@ -1039,4 +1039,4 @@ async function runSourcingEngine({ fullSweep = false, userId = 1 } = {}) {
   return { totalFound, totalAdded, totalDeduped, totalFiltered, errors };
 }
 
-module.exports = { runSourcingEngine };
+module.exports = { runSourcingEngine, enrichWithLinkedIn };
