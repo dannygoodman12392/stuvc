@@ -6,7 +6,7 @@ import SearchPalette from './SearchPalette';
 import StuLogo from './StuLogo';
 import { api } from '../utils/api';
 
-const navItems = [
+const baseNavItems = [
   { to: '/ask', label: 'Ask Stu', accent: true },
   { to: '/', label: 'Pipeline' },
   { to: '/assess', label: 'Assess' },
@@ -17,6 +17,9 @@ const navItems = [
 
 export default function Layout({ children }) {
   const { user, logout } = useAuth();
+  const navItems = user?.role === 'admin'
+    ? [...baseNavItems, { to: '/admin', label: 'Admin' }]
+    : baseNavItems;
   const [mobileOpen, setMobileOpen] = useState(false);
   const [aiOpen, setAiOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);

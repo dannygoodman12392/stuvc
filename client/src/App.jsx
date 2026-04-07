@@ -15,6 +15,7 @@ import Placeholder from './pages/Placeholder';
 import Settings from './pages/Settings';
 import Payment from './pages/Payment';
 import PaymentSuccess from './pages/PaymentSuccess';
+import Admin from './pages/Admin';
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth();
@@ -72,6 +73,7 @@ function AppRoutes() {
       <Route path="/portfolio" element={<ProtectedRoute><Placeholder title="Portfolio" /></ProtectedRoute>} />
       <Route path="/fund" element={<ProtectedRoute><Placeholder title="Fund Analytics" /></ProtectedRoute>} />
       <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
+      <Route path="/admin" element={<ProtectedRoute><Admin /></ProtectedRoute>} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );

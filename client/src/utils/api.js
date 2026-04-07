@@ -60,6 +60,11 @@ export const api = {
   createCheckoutSession: () => request('/payments/create-checkout-session', { method: 'POST' }),
   getPaymentStatus: () => request('/payments/status'),
 
+  // Admin
+  adminDashboard: () => request('/admin/dashboard'),
+  adminUsers: () => request('/admin/users'),
+  adminUserDetail: (id) => request(`/admin/user/${id}`),
+
   // Founders
   getFounders: (params) => request('/founders?' + new URLSearchParams(params || {})),
   getFounderStats: () => request('/founders/stats'),
