@@ -128,4 +128,47 @@ router.get('/user/:id', (req, res) => {
   res.json({ user, criteria, recentRuns, recentFounders });
 });
 
+// DELETE /api/admin/user/:id — remove a user and all their data
+router.delete('/user/:id', (req, res) => {
+  const userId = parseInt(req.params.id);
+
+  // Prevent self-deletion
+  if (userId === req.user.id) return res.status(400).json({ error: 'Cannot delete your own account' });
+
+  const user = db.prepare('SELECT id, name, email FROM users WHERE id = ?').get(userId);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+
+  // Delete all user data in a transaction
+  const deleteUser = db.transaction(() => {
+    // Child records of founders
+    db.prepare('DELETE FROM founder_notes WHERE created_by = ?').run(userId);
+    db.prepare('DELETE FROM call_logs WHERE created_by = ?').run(userId);
+    db.prepare('DELETE FROM founder_memos WHERE founder_id IN (SELECT id FROM founders WHERE created_by = ?)').run(userId);
+    db.prepare('DELETE FROM founder_files WHERE founder_id IN (SELECT id FROM founders WHERE created_by = ?)').run(userId);
+    db.prepare('DELETE FROM deal_room WHERE created_by = ?').run(userId);
+
+    // Assessment data
+    db.prepare('DELETE FROM assessment_inputs WHERE assessment_id IN (SELECT id FROM opportunity_assessments WHERE created_by = ?)').run(userId);
+    db.prepare('DELETE FROM assessment_versions WHERE assessment_id IN (SELECT id FROM opportunity_assessments WHERE created_by = ?)').run(userId);
+    db.prepare('DELETE FROM opportunity_assessments WHERE created_by = ?').run(userId);
+
+    // Sourcing data
+    db.prepare('DELETE FROM sourced_founders WHERE user_id = ?').run(userId);
+    db.prepare('DELETE FROM sourcing_runs WHERE user_id = ?').run(userId);
+
+    // Founders
+    db.prepare('DELETE FROM founders WHERE created_by = ?').run(userId);
+
+    // Settings
+    db.prepare('DELETE FROM user_settings WHERE user_id = ?').run(userId);
+
+    // User account
+    db.prepare('DELETE FROM users WHERE id = ?').run(userId);
+  });
+
+  deleteUser();
+  console.log(`[Admin] User ${userId} (${user.email}) deleted by admin ${req.user.id}`);
+  res.json({ deleted: true, user: { id: userId, name: user.name, email: user.email } });
+});
+
 module.exports = router;

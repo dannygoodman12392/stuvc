@@ -64,6 +64,7 @@ export const api = {
   adminDashboard: () => request('/admin/dashboard'),
   adminUsers: () => request('/admin/users'),
   adminUserDetail: (id) => request(`/admin/user/${id}`),
+  adminDeleteUser: (id) => request(`/admin/user/${id}`, { method: 'DELETE' }),
 
   // Founders
   getFounders: (params) => request('/founders?' + new URLSearchParams(params || {})),
