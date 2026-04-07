@@ -160,9 +160,13 @@ function verifyLocation(text, headline, criteria) {
   const userLocations = (criteria.locations || []).map(l => l.toLowerCase());
   const userSchools = (criteria.schools || []).map(s => s.toLowerCase());
 
+  // No location preference → everyone passes
+  if (userLocations.length === 0 && userSchools.length === 0) {
+    return { verified: true, type: 'broad', location: 'Any' };
+  }
+
   // Check current location match against user's target locations
   for (const loc of userLocations) {
-    // Direct location mention
     if (combined.includes(loc)) {
       return { verified: true, type: 'current', location: loc.charAt(0).toUpperCase() + loc.slice(1) };
     }
@@ -612,19 +616,11 @@ function getAllSearchQueries() {
 // ── Per-user criteria loader ──
 
 function loadUserCriteria(userId) {
-  const settingsRoute = require('../routes/settings');
-  // Read directly from DB, falling back to defaults
-  const DEFAULT_SETTINGS = {
-    sourcing_locations: JSON.stringify(['chicago', 'evanston', 'naperville', 'aurora', 'joliet', 'rockford', 'schaumburg', 'palatine', 'skokie', 'oak park', 'urbana', 'champaign']),
-    sourcing_schools: JSON.stringify(['university of illinois', 'northwestern university', 'university of chicago', 'illinois institute of technology', 'loyola chicago', 'depaul university']),
-    sourcing_companies: JSON.stringify(['google', 'meta', 'apple', 'amazon', 'microsoft', 'stripe', 'openai', 'anthropic', 'palantir', 'spacex', 'coinbase', 'datadog', 'snowflake']),
-    sourcing_builder_signals: JSON.stringify(['YC Alum', 'Techstars', 'Previous Exit', 'Serial Founder', 'PhD', 'Open Source', 'Patent Holder', 'Stealth Mode']),
-    sourcing_domains: JSON.stringify(['AI/ML', 'Fintech', 'Health Tech', 'Defense Tech', 'Climate Tech', 'Developer Tools', 'Vertical SaaS', 'Cybersecurity', 'Biotech']),
-    sourcing_stage_filter: 'Pre-seed',
-    sourcing_custom_queries: JSON.stringify([]),
-  };
-
-  const keys = Object.keys(DEFAULT_SETTINGS);
+  const keys = [
+    'sourcing_locations', 'sourcing_schools', 'sourcing_companies',
+    'sourcing_builder_signals', 'sourcing_domains', 'sourcing_stage_filter',
+    'sourcing_custom_queries',
+  ];
   const rows = db.prepare(
     `SELECT setting_key, setting_value FROM user_settings WHERE user_id = ? AND setting_key IN (${keys.map(() => '?').join(',')})`
   ).all(userId, ...keys);
@@ -632,72 +628,87 @@ function loadUserCriteria(userId) {
   const userMap = {};
   for (const row of rows) userMap[row.setting_key] = row.setting_value;
 
-  function parse(val) { try { return JSON.parse(val); } catch { return val; } }
+  function parse(val, fallback) {
+    if (val === undefined || val === null) return fallback;
+    try { return JSON.parse(val); } catch { return val; }
+  }
 
+  // Respect user selections — empty arrays mean "no preference", not "use defaults"
   return {
-    locations: parse(userMap.sourcing_locations || DEFAULT_SETTINGS.sourcing_locations),
-    schools: parse(userMap.sourcing_schools || DEFAULT_SETTINGS.sourcing_schools),
-    companies: parse(userMap.sourcing_companies || DEFAULT_SETTINGS.sourcing_companies),
-    builderSignals: parse(userMap.sourcing_builder_signals || DEFAULT_SETTINGS.sourcing_builder_signals),
-    domains: parse(userMap.sourcing_domains || DEFAULT_SETTINGS.sourcing_domains),
-    stageFilter: parse(userMap.sourcing_stage_filter || DEFAULT_SETTINGS.sourcing_stage_filter),
-    customQueries: parse(userMap.sourcing_custom_queries || DEFAULT_SETTINGS.sourcing_custom_queries),
+    locations: parse(userMap.sourcing_locations, []),
+    schools: parse(userMap.sourcing_schools, []),
+    companies: parse(userMap.sourcing_companies, []),
+    builderSignals: parse(userMap.sourcing_builder_signals, []),
+    domains: parse(userMap.sourcing_domains, []),
+    stageFilter: parse(userMap.sourcing_stage_filter, 'Any'),
+    customQueries: parse(userMap.sourcing_custom_queries, []),
   };
 }
 
 function buildUserSearchQueries(criteria, fullSweep) {
-  const locs = criteria.locations.slice(0, 5); // Top 5 locations
-  const primaryLoc = locs[0] || 'Chicago';
+  const locs = criteria.locations.slice(0, 5);
   const companies = criteria.companies.slice(0, 8);
   const schools = criteria.schools.slice(0, 5);
   const domains = criteria.domains.slice(0, 6);
-  const stage = criteria.stageFilter || 'Pre-seed';
+  const stage = criteria.stageFilter || 'Any';
+  const hasLocs = locs.length > 0;
+  const stageStr = stage === 'Any' ? '' : stage;
 
   const queries = [];
 
-  // Stealth founder queries per location
-  for (const loc of locs.slice(0, 3)) {
-    queries.push({ name: `Stealth founder ${loc}`, query: `stealth mode founder ${loc} building something new just left 2025 2026` });
-    queries.push({ name: `LinkedIn stealth ${loc}`, query: `site:linkedin.com/in "stealth" "${loc}" founder building` });
-    queries.push({ name: `Building new ${loc}`, query: `site:linkedin.com/in "building something new" ${loc} founder engineer` });
+  if (hasLocs) {
+    // Location-specific stealth founder queries
+    for (const loc of locs.slice(0, 3)) {
+      queries.push({ name: `Stealth founder ${loc}`, query: `stealth mode founder ${loc} building something new just left 2025 2026` });
+      queries.push({ name: `LinkedIn stealth ${loc}`, query: `site:linkedin.com/in "stealth" "${loc}" founder building` });
+      queries.push({ name: `Building new ${loc}`, query: `site:linkedin.com/in "building something new" ${loc} founder engineer` });
+    }
+  } else {
+    // Broad stealth founder queries (no location filter)
+    queries.push({ name: 'Stealth founder broad', query: `stealth mode founder building something new just left 2025 2026 startup` });
+    queries.push({ name: 'LinkedIn stealth broad', query: `site:linkedin.com/in "stealth" founder building startup 2025` });
+    queries.push({ name: 'Building new broad', query: `site:linkedin.com/in "building something new" founder engineer startup` });
   }
 
   // Ex-company queries
+  const locSuffix = hasLocs ? ` ${locs[0]}` : '';
   for (const co of companies.slice(0, 5)) {
-    queries.push({ name: `Ex-${co} stealth ${primaryLoc}`, query: `left ${co} stealth new startup ${primaryLoc} founder ${stage} 2025` });
+    queries.push({ name: `Ex-${co} stealth`, query: `left ${co} stealth new startup${locSuffix} founder ${stageStr} 2025`.trim() });
   }
 
   // School alumni queries
   for (const school of schools.slice(0, 3)) {
-    queries.push({ name: `${school} founder stealth`, query: `site:linkedin.com/in "${school}" founder stealth building startup ${primaryLoc}` });
+    queries.push({ name: `${school} founder stealth`, query: `site:linkedin.com/in "${school}" founder stealth building startup${locSuffix}`.trim() });
   }
 
   // Domain queries
   for (const domain of domains.slice(0, 4)) {
-    queries.push({ name: `${domain} stealth ${primaryLoc}`, query: `${domain} stealth founder ${primaryLoc} new startup ${stage} 2025` });
+    queries.push({ name: `${domain} stealth`, query: `${domain} stealth founder${locSuffix} new startup ${stageStr} 2025`.trim() });
   }
 
   // Generic high-signal queries
-  queries.push({ name: `Serial founder ${primaryLoc}`, query: `serial founder exited previous company building new startup ${primaryLoc} stealth ${stage} 2025` });
-  queries.push({ name: `${stage} ${primaryLoc}`, query: `site:linkedin.com/in "${stage}" ${primaryLoc} founder building` });
-  queries.push({ name: `YC alum new ${primaryLoc}`, query: `Y Combinator YC alumni starting new company ${primaryLoc} stealth exploring` });
-  queries.push({ name: `Just quit to build ${primaryLoc}`, query: `just quit left job to start build company ${primaryLoc} founder stealth 2025 2026` });
+  queries.push({ name: 'Serial founder stealth', query: `serial founder exited previous company building new startup${locSuffix} stealth ${stageStr} 2025`.trim() });
+  if (stageStr) {
+    queries.push({ name: `${stageStr} founders`, query: `site:linkedin.com/in "${stageStr}" founder building startup${locSuffix}`.trim() });
+  }
+  queries.push({ name: 'YC alum new', query: `Y Combinator YC alumni starting new company${locSuffix} stealth exploring`.trim() });
+  queries.push({ name: 'Just quit to build', query: `just quit left job to start build company${locSuffix} founder stealth 2025 2026`.trim() });
 
   // Custom queries from user
   for (const cq of (criteria.customQueries || [])) {
     if (cq.query) queries.push({ name: cq.name || 'Custom query', query: cq.query });
   }
 
-  if (!fullSweep) return queries.slice(0, 20); // Cap daily at 20
+  if (!fullSweep) return queries.slice(0, 20);
   return queries;
 }
 
 function buildUserScoringPrompt(criteria) {
-  const locations = criteria.locations.join(', ') || 'your target geographies';
-  const schools = criteria.schools.join(', ') || 'target institutions';
+  const locations = criteria.locations.join(', ') || 'any geography';
+  const schools = criteria.schools.join(', ') || 'any strong institution';
   const companies = criteria.companies.join(', ') || 'top tech companies';
-  const domains = criteria.domains.join(', ') || 'technology sectors';
-  const stage = criteria.stageFilter || 'Pre-seed';
+  const domains = criteria.domains.join(', ') || 'any sector';
+  const stage = criteria.stageFilter || 'Any';
 
   return `You are a deal sourcing analyst for a venture fund focused on ${stage} stage investing.
 

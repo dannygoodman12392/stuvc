@@ -26,27 +26,12 @@ const DEFAULT_SETTINGS = {
     { name: 'Committed', color: 'green' },
     { name: 'Passed', color: 'red' },
   ]),
-  sourcing_locations: JSON.stringify([
-    'chicago', 'evanston', 'naperville', 'aurora', 'joliet', 'rockford',
-    'schaumburg', 'palatine', 'skokie', 'oak park', 'urbana', 'champaign'
-  ]),
-  sourcing_schools: JSON.stringify([
-    'university of illinois', 'northwestern university', 'university of chicago',
-    'illinois institute of technology', 'loyola chicago', 'depaul university'
-  ]),
-  sourcing_companies: JSON.stringify([
-    'google', 'meta', 'apple', 'amazon', 'microsoft', 'stripe', 'openai',
-    'anthropic', 'palantir', 'spacex', 'coinbase', 'datadog', 'snowflake'
-  ]),
-  sourcing_builder_signals: JSON.stringify([
-    'YC Alum', 'Techstars', 'Previous Exit', 'Serial Founder', 'PhD',
-    'Open Source', 'Patent Holder', 'Stealth Mode'
-  ]),
-  sourcing_domains: JSON.stringify([
-    'AI/ML', 'Fintech', 'Health Tech', 'Defense Tech', 'Climate Tech',
-    'Developer Tools', 'Vertical SaaS', 'Cybersecurity', 'Biotech'
-  ]),
-  sourcing_stage_filter: 'Pre-seed',
+  sourcing_locations: JSON.stringify([]),
+  sourcing_schools: JSON.stringify([]),
+  sourcing_companies: JSON.stringify([]),
+  sourcing_builder_signals: JSON.stringify([]),
+  sourcing_domains: JSON.stringify([]),
+  sourcing_stage_filter: 'Any',
   sourcing_custom_queries: JSON.stringify([]),
 };
 
@@ -125,15 +110,7 @@ router.get('/', (req, res) => {
 // POST /api/settings/complete-onboarding — mark onboarding as done
 // NOTE: Defined BEFORE /:key to prevent Express param matching
 router.post('/complete-onboarding', (req, res) => {
-  // Check user has saved at least some sourcing criteria
-  const hasCriteria = db.prepare(
-    "SELECT COUNT(*) as c FROM user_settings WHERE user_id = ? AND setting_key LIKE 'sourcing_%'"
-  ).get(req.user.id);
-
-  if (hasCriteria.c === 0) {
-    return res.status(400).json({ error: 'Please configure your sourcing criteria before continuing' });
-  }
-
+  // All criteria are optional — users configure what matters to them
   db.prepare('UPDATE users SET onboarding_complete = 1 WHERE id = ?').run(req.user.id);
   res.json({ success: true });
 });

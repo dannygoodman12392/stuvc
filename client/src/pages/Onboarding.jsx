@@ -48,22 +48,22 @@ const STEPS = [
   {
     id: 'geography',
     title: 'Where do you source?',
-    subtitle: 'Add cities, regions, or metro areas where you look for founders. Press Enter after each one.',
+    subtitle: 'Add cities, regions, or metro areas — or skip if you source everywhere.',
   },
   {
     id: 'signals',
     title: 'What signals matter?',
-    subtitle: 'Define the schools, companies, and builder signals that catch your eye.',
+    subtitle: 'Schools, companies, builder signals — add what matters to you, skip what doesn\'t.',
   },
   {
     id: 'focus',
     title: 'What do you invest in?',
-    subtitle: 'Set your sector focus and preferred stage.',
+    subtitle: 'Sector focus and preferred stage. Leave blank if you\'re thesis-agnostic.',
   },
   {
     id: 'review',
     title: 'You\'re all set',
-    subtitle: 'Here\'s a summary of your sourcing criteria. You can always adjust these in Settings.',
+    subtitle: 'Here\'s your setup. Everything can be changed in Settings anytime.',
   },
 ];
 
@@ -84,12 +84,7 @@ export default function Onboarding() {
   const addTag = useCallback((setter) => (tag) => setter(prev => [...prev, tag]), []);
   const removeTag = useCallback((setter) => (index) => setter(prev => prev.filter((_, i) => i !== index)), []);
 
-  const canProceed = () => {
-    if (step === 0) return locations.length > 0;
-    if (step === 1) return schools.length > 0 || companies.length > 0 || builderSignals.length > 0;
-    if (step === 2) return domains.length > 0;
-    return true;
-  };
+  const canProceed = () => true; // All fields optional — users configure what matters to them
 
   async function handleComplete() {
     setSaving(true);
@@ -151,14 +146,14 @@ export default function Onboarding() {
           {step === 0 && (
             <div className="space-y-4">
               <div>
-                <label className="label">Target Locations</label>
+                <label className="label">Target Locations <span className="text-gray-400 font-normal">· optional</span></label>
                 <TagInput
                   tags={locations}
                   onAdd={addTag(setLocations)}
                   onRemove={removeTag(setLocations)}
                   placeholder="e.g. Chicago, New York, San Francisco..."
                 />
-                <p className="text-xs text-gray-400 mt-1.5">Cities, metro areas, or regions where you want to find founders</p>
+                <p className="text-xs text-gray-400 mt-1.5">Leave blank to source everywhere. You can always narrow later in Settings.</p>
               </div>
             </div>
           )}
@@ -166,52 +161,50 @@ export default function Onboarding() {
           {step === 1 && (
             <div className="space-y-5">
               <div>
-                <label className="label">Target Schools</label>
+                <label className="label">Target Schools <span className="text-gray-400 font-normal">· optional</span></label>
                 <TagInput
                   tags={schools}
                   onAdd={addTag(setSchools)}
                   onRemove={removeTag(setSchools)}
                   placeholder="e.g. Stanford, MIT, University of Chicago..."
                 />
-                <p className="text-xs text-gray-400 mt-1.5">Schools whose alumni you want to track</p>
               </div>
               <div>
-                <label className="label">Target Companies</label>
+                <label className="label">Target Companies <span className="text-gray-400 font-normal">· optional</span></label>
                 <TagInput
                   tags={companies}
                   onAdd={addTag(setCompanies)}
                   onRemove={removeTag(setCompanies)}
                   placeholder="e.g. Google, Stripe, Palantir..."
                 />
-                <p className="text-xs text-gray-400 mt-1.5">Companies whose alumni signal high potential</p>
               </div>
               <div>
-                <label className="label">Builder Signals</label>
+                <label className="label">Builder Signals <span className="text-gray-400 font-normal">· optional</span></label>
                 <TagInput
                   tags={builderSignals}
                   onAdd={addTag(setBuilderSignals)}
                   onRemove={removeTag(setBuilderSignals)}
                   placeholder="e.g. YC Alum, Previous Exit, PhD..."
                 />
-                <p className="text-xs text-gray-400 mt-1.5">Founder attributes that signal strong potential</p>
               </div>
+              <p className="text-xs text-gray-400">These tune your sourcing results. Skip any that don't apply to your thesis.</p>
             </div>
           )}
 
           {step === 2 && (
             <div className="space-y-5">
               <div>
-                <label className="label">Focus Domains</label>
+                <label className="label">Focus Domains <span className="text-gray-400 font-normal">· optional</span></label>
                 <TagInput
                   tags={domains}
                   onAdd={addTag(setDomains)}
                   onRemove={removeTag(setDomains)}
                   placeholder="e.g. AI/ML, Fintech, Developer Tools..."
                 />
-                <p className="text-xs text-gray-400 mt-1.5">Industry verticals you invest in</p>
+                <p className="text-xs text-gray-400 mt-1.5">Leave blank if you're sector-agnostic</p>
               </div>
               <div>
-                <label className="label">Stage Filter</label>
+                <label className="label">Stage Filter <span className="text-gray-400 font-normal">· optional</span></label>
                 <select
                   value={stageFilter}
                   onChange={(e) => setStageFilter(e.target.value)}
@@ -219,7 +212,6 @@ export default function Onboarding() {
                 >
                   {STAGE_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
                 </select>
-                <p className="text-xs text-gray-400 mt-1.5">Preferred funding stage for sourcing</p>
               </div>
             </div>
           )}
@@ -252,10 +244,11 @@ export default function Onboarding() {
           {step < STEPS.length - 1 ? (
             <button
               onClick={() => setStep(s => s + 1)}
-              disabled={!canProceed()}
               className="btn-primary"
             >
-              Continue
+              {step === 0 && locations.length === 0 ? 'Skip' :
+               step === 1 && schools.length === 0 && companies.length === 0 && builderSignals.length === 0 ? 'Skip' :
+               step === 2 && domains.length === 0 ? 'Skip' : 'Continue'}
             </button>
           ) : (
             <button
@@ -273,17 +266,20 @@ export default function Onboarding() {
 }
 
 function SummaryRow({ label, items }) {
-  if (!items || items.length === 0) return null;
   return (
     <div className="py-2 border-b border-gray-100 last:border-0">
       <span className="text-sm font-medium text-gray-500 block mb-1.5">{label}</span>
-      <div className="flex flex-wrap gap-1.5">
-        {items.map((item, i) => (
-          <span key={i} className="inline-flex px-2 py-0.5 bg-gray-100 text-gray-700 text-xs rounded-md">
-            {item}
-          </span>
-        ))}
-      </div>
+      {items && items.length > 0 ? (
+        <div className="flex flex-wrap gap-1.5">
+          {items.map((item, i) => (
+            <span key={i} className="inline-flex px-2 py-0.5 bg-gray-100 text-gray-700 text-xs rounded-md">
+              {item}
+            </span>
+          ))}
+        </div>
+      ) : (
+        <span className="text-xs text-gray-400 italic">No preference — sourcing broadly</span>
+      )}
     </div>
   );
 }
