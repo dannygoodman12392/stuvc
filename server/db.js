@@ -360,4 +360,15 @@ if (!mtFlag) {
   console.log('[DB] Multi-tenant migration complete — all existing data assigned to user_id=1');
 }
 
+// ── Payment columns + admin bypass ──
+const payFlag = db.prepare("SELECT * FROM migration_flags WHERE key = 'payment_v1'").get();
+if (!payFlag) {
+  // Ensure Danny (user_id=1) bypasses payment gate
+  db.prepare("UPDATE users SET has_paid = 1 WHERE id = 1").run();
+  // Grant all existing users free access (pre-payment era)
+  db.prepare("UPDATE users SET has_paid = 1 WHERE has_paid = 0 OR has_paid IS NULL").run();
+  db.prepare("INSERT INTO migration_flags (key) VALUES ('payment_v1')").run();
+  console.log('[DB] Payment migration complete — existing users granted free access');
+}
+
 module.exports = db;
