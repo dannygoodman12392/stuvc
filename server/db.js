@@ -317,4 +317,44 @@ if (migrationNeeded.c > 0) {
   console.log(`[DB] Migrated ${migrationNeeded.c} founders to new track model`);
 }
 
+// ── User settings (key-value per user) ──
+db.exec(`
+  CREATE TABLE IF NOT EXISTS user_settings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    setting_key TEXT NOT NULL,
+    setting_value TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id, setting_key)
+  );
+`);
+
+// ── Multi-tenancy: add user_id columns and backfill ──
+addColumn('sourced_founders', 'user_id', 'INTEGER REFERENCES users(id)');
+addColumn('sourcing_runs', 'user_id', 'INTEGER REFERENCES users(id)');
+addColumn('users', 'onboarding_complete', 'INTEGER DEFAULT 0');
+
+// One-time migration: assign all existing data to user_id=1 (Danny)
+const mtFlag = db.prepare("SELECT * FROM migration_flags WHERE key = 'multi_tenant_v1'").get();
+if (!mtFlag) {
+  try {
+    db.exec("CREATE TABLE IF NOT EXISTS migration_flags (key TEXT PRIMARY KEY, ran_at DATETIME DEFAULT CURRENT_TIMESTAMP)");
+  } catch {}
+
+  db.prepare("UPDATE founders SET created_by = 1 WHERE created_by IS NULL").run();
+  db.prepare("UPDATE sourced_founders SET user_id = 1 WHERE user_id IS NULL").run();
+  db.prepare("UPDATE sourcing_runs SET user_id = 1 WHERE user_id IS NULL").run();
+  db.prepare("UPDATE founder_notes SET created_by = 1 WHERE created_by IS NULL").run();
+  db.prepare("UPDATE call_logs SET created_by = 1 WHERE created_by IS NULL").run();
+  db.prepare("UPDATE opportunity_assessments SET created_by = 1 WHERE created_by IS NULL").run();
+  db.prepare("UPDATE deal_room SET created_by = 1 WHERE created_by IS NULL").run();
+  db.prepare("UPDATE founder_memos SET created_by = 1 WHERE created_by IS NULL").run();
+  db.prepare("UPDATE founder_files SET created_by = 1 WHERE created_by IS NULL").run();
+  db.prepare("UPDATE users SET onboarding_complete = 1 WHERE id = 1").run();
+
+  db.prepare("INSERT INTO migration_flags (key) VALUES ('multi_tenant_v1')").run();
+  console.log('[DB] Multi-tenant migration complete — all existing data assigned to user_id=1');
+}
+
 module.exports = db;

@@ -50,6 +50,7 @@ async function request(path, options = {}) {
 export const api = {
   // Auth
   login: (email, password) => request('/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) }),
+  register: (name, email, password) => request('/auth/register', { method: 'POST', body: JSON.stringify({ name, email, password }) }),
   me: () => request('/auth/me'),
   changePassword: (currentPassword, newPassword) => request('/auth/password', { method: 'PUT', body: JSON.stringify({ currentPassword, newPassword }) }),
   invite: (email, name, role) => request('/auth/invite', { method: 'POST', body: JSON.stringify({ email, name, role }) }),
@@ -116,6 +117,13 @@ export const api = {
 
   // AI
   fitScore: (founderId) => request('/ai/fit-score', { method: 'POST', body: JSON.stringify({ founderId }) }),
+
+  // Settings
+  getSettings: () => request('/settings'),
+  updateSetting: (key, value) => request(`/settings/${key}`, { method: 'PUT', body: JSON.stringify({ value }) }),
+  getPipelineConfig: () => request('/settings/pipeline-config'),
+  getSourcingCriteria: () => request('/settings/sourcing-criteria'),
+  completeOnboarding: () => request('/settings/complete-onboarding', { method: 'POST' }),
 
   // Stu tool-use chat
   stuChat: async function* (messages) {

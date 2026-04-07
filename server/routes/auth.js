@@ -17,13 +17,13 @@ router.post('/login', (req, res) => {
 
   res.json({
     token,
-    user: { id: user.id, email: user.email, name: user.name, role: user.role }
+    user: { id: user.id, email: user.email, name: user.name, role: user.role, onboarding_complete: user.onboarding_complete }
   });
 });
 
 // GET /api/auth/me
 router.get('/me', requireAuth, (req, res) => {
-  const user = db.prepare('SELECT id, email, name, role, created_at, last_login FROM users WHERE id = ?').get(req.user.id);
+  const user = db.prepare('SELECT id, email, name, role, onboarding_complete, created_at, last_login FROM users WHERE id = ?').get(req.user.id);
   if (!user) return res.status(404).json({ error: 'User not found' });
   res.json(user);
 });
@@ -59,10 +59,34 @@ router.post('/invite', requireAuth, (req, res) => {
   res.json({ id: result.lastInsertRowid, email, name, tempPassword });
 });
 
-// GET /api/auth/team
+// GET /api/auth/team (admin only)
 router.get('/team', requireAuth, (req, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin access required' });
   const team = db.prepare('SELECT id, email, name, role, created_at, last_login FROM users ORDER BY name').all();
   res.json(team);
+});
+
+// POST /api/auth/register — self-service signup
+router.post('/register', (req, res) => {
+  const { email, password, name } = req.body;
+  if (!email || !password || !name) return res.status(400).json({ error: 'Email, password, and name are required' });
+  if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: 'Invalid email format' });
+
+  const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(email.toLowerCase().trim());
+  if (existing) return res.status(409).json({ error: 'An account with this email already exists' });
+
+  const result = db.prepare(
+    'INSERT INTO users (email, name, role, password_hash, onboarding_complete) VALUES (?, ?, ?, ?, 0)'
+  ).run(email.toLowerCase().trim(), name.trim(), 'member', hashPassword(password));
+
+  const user = db.prepare('SELECT id, email, name, role, onboarding_complete FROM users WHERE id = ?').get(result.lastInsertRowid);
+  const token = generateToken(user);
+
+  res.status(201).json({
+    token,
+    user: { id: user.id, email: user.email, name: user.name, role: user.role, onboarding_complete: user.onboarding_complete }
+  });
 });
 
 module.exports = router;

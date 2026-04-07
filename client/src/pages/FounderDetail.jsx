@@ -313,7 +313,7 @@ export default function FounderDetail() {
               {editingDeal ? (
                 <div className="space-y-3">
                   <div className="grid grid-cols-2 gap-3">
-                    <div><label className="label">Deal Lead</label><input value={dealForm.deal_lead} onChange={e => setDealForm(f => ({ ...f, deal_lead: e.target.value }))} className="input w-full text-sm" placeholder="Danny Goodman" /></div>
+                    <div><label className="label">Deal Lead</label><input value={dealForm.deal_lead} onChange={e => setDealForm(f => ({ ...f, deal_lead: e.target.value }))} className="input w-full text-sm" placeholder="Deal lead name" /></div>
                     <div><label className="label">Security Type</label><select value={dealForm.security_type} onChange={e => setDealForm(f => ({ ...f, security_type: e.target.value }))} className="select w-full text-sm"><option value="">Select...</option><option>SAFE</option><option>Convertible Note</option><option>Priced Round</option></select></div>
                     <div><label className="label">Post-Money Valuation</label><input type="number" value={dealForm.valuation} onChange={e => setDealForm(f => ({ ...f, valuation: e.target.value }))} className="input w-full text-sm" /></div>
                     <div><label className="label">Round Size</label><input type="number" value={dealForm.round_size} onChange={e => setDealForm(f => ({ ...f, round_size: e.target.value }))} className="input w-full text-sm" /></div>

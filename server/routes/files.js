@@ -4,6 +4,8 @@ const db = require('../db');
 
 // GET /api/founders/:founderId/files
 router.get('/:founderId', (req, res) => {
+  const founder = db.prepare('SELECT id FROM founders WHERE id = ? AND created_by = ? AND is_deleted = 0').get(req.params.founderId, req.user.id);
+  if (!founder) return res.status(404).json({ error: 'Founder not found' });
   const files = db.prepare(`
     SELECT f.*, u.name as uploaded_by
     FROM founder_files f
@@ -19,7 +21,7 @@ router.post('/:founderId', (req, res) => {
   const { file_name, file_type, content_text, url } = req.body;
   if (!file_name) return res.status(400).json({ error: 'File name required' });
 
-  const founder = db.prepare('SELECT id FROM founders WHERE id = ? AND is_deleted = 0').get(req.params.founderId);
+  const founder = db.prepare('SELECT id FROM founders WHERE id = ? AND created_by = ? AND is_deleted = 0').get(req.params.founderId, req.user.id);
   if (!founder) return res.status(404).json({ error: 'Founder not found' });
 
   const result = db.prepare(
@@ -32,6 +34,8 @@ router.post('/:founderId', (req, res) => {
 
 // DELETE /api/founders/:founderId/files/:id
 router.delete('/:founderId/:id', (req, res) => {
+  const founder = db.prepare('SELECT id FROM founders WHERE id = ? AND created_by = ? AND is_deleted = 0').get(req.params.founderId, req.user.id);
+  if (!founder) return res.status(404).json({ error: 'Founder not found' });
   const file = db.prepare('SELECT * FROM founder_files WHERE id = ? AND founder_id = ?').get(req.params.id, req.params.founderId);
   if (!file) return res.status(404).json({ error: 'File not found' });
   db.prepare('DELETE FROM founder_files WHERE id = ?').run(req.params.id);

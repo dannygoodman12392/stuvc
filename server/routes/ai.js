@@ -90,7 +90,7 @@ router.post('/fit-score', async (req, res) => {
   if (!client) return res.status(503).json({ error: 'AI unavailable' });
 
   const { founderId } = req.body;
-  const founder = db.prepare('SELECT * FROM founders WHERE id = ? AND is_deleted = 0').get(founderId);
+  const founder = db.prepare('SELECT * FROM founders WHERE id = ? AND is_deleted = 0 AND created_by = ?').get(founderId, req.user.id);
   if (!founder) return res.status(404).json({ error: 'Founder not found' });
 
   try {
@@ -127,7 +127,7 @@ Chicago connection: ${founder.chicago_connection || 'N/A'}`
     if (jsonMatch) {
       const result = JSON.parse(jsonMatch[0]);
       // Save score to founder
-      db.prepare('UPDATE founders SET fit_score = ?, fit_score_rationale = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(result.score, result.rationale, founderId);
+      db.prepare('UPDATE founders SET fit_score = ?, fit_score_rationale = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND created_by = ?').run(result.score, result.rationale, founderId, req.user.id);
       res.json(result);
     } else {
       res.status(500).json({ error: 'Could not parse AI response' });

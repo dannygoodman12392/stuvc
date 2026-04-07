@@ -15,6 +15,8 @@ function getAnthropicClient() {
 
 // GET /api/founders/:founderId/memos — list all memos for a founder
 router.get('/:founderId', (req, res) => {
+  const founder = db.prepare('SELECT id FROM founders WHERE id = ? AND created_by = ? AND is_deleted = 0').get(req.params.founderId, req.user.id);
+  if (!founder) return res.status(404).json({ error: 'Founder not found' });
   const memos = db.prepare('SELECT * FROM founder_memos WHERE founder_id = ? ORDER BY created_at DESC').all(req.params.founderId);
   res.json(memos);
 });
@@ -25,7 +27,7 @@ router.post('/:founderId', async (req, res) => {
   if (!client) return res.status(503).json({ error: 'AI unavailable' });
 
   const founderId = parseInt(req.params.founderId);
-  const founder = db.prepare('SELECT * FROM founders WHERE id = ? AND is_deleted = 0').get(founderId);
+  const founder = db.prepare('SELECT * FROM founders WHERE id = ? AND created_by = ? AND is_deleted = 0').get(founderId, req.user.id);
   if (!founder) return res.status(404).json({ error: 'Founder not found' });
 
   // Get existing memo count for versioning
@@ -204,6 +206,8 @@ Return the memo as clean markdown text (no JSON wrapping). Use ## headers for ea
 
 // DELETE /api/founders/:founderId/memos/:id
 router.delete('/:founderId/:id', (req, res) => {
+  const founder = db.prepare('SELECT id FROM founders WHERE id = ? AND created_by = ? AND is_deleted = 0').get(req.params.founderId, req.user.id);
+  if (!founder) return res.status(404).json({ error: 'Founder not found' });
   const memo = db.prepare('SELECT * FROM founder_memos WHERE id = ? AND founder_id = ?').get(req.params.id, req.params.founderId);
   if (!memo) return res.status(404).json({ error: 'Memo not found' });
   db.prepare('DELETE FROM founder_memos WHERE id = ?').run(req.params.id);

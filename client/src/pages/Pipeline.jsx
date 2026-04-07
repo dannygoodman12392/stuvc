@@ -1,22 +1,23 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../utils/api';
 import KanbanBoard from '../components/KanbanBoard';
 
-const ADMISSIONS_STATUSES = ['All', 'Sourced', 'Outreach', 'First Call Scheduled', 'First Call Complete', 'Second Call Scheduled', 'Second Call Complete', 'Admitted', 'Active Resident', 'Density Resident', 'Alumni', 'Hold/Nurture', 'Not Admitted'];
-const DEAL_STATUSES = ['All', 'Under Consideration', 'First Meeting', 'Partner Call', 'Memo Draft', 'IC Review', 'Committed', 'Passed'];
+// Fallback defaults — used when pipeline config API is unavailable
+const DEFAULT_ADMISSIONS_STATUSES = ['All', 'Sourced', 'Outreach', 'First Call Scheduled', 'First Call Complete', 'Second Call Scheduled', 'Second Call Complete', 'Admitted', 'Active Resident', 'Density Resident', 'Alumni', 'Hold/Nurture', 'Not Admitted'];
+const DEFAULT_DEAL_STATUSES = ['All', 'Under Consideration', 'First Meeting', 'Partner Call', 'Memo Draft', 'IC Review', 'Committed', 'Passed'];
 
-const ADMISSIONS_PIPELINE_STAGES = ['Sourced', 'Outreach', 'First Call Scheduled', 'First Call Complete', 'Second Call Scheduled', 'Second Call Complete', 'Admitted', 'Active Resident', 'Density Resident', 'Alumni', 'Hold/Nurture', 'Not Admitted'];
-const DEAL_PIPELINE_STAGES = ['Under Consideration', 'First Meeting', 'Partner Call', 'Memo Draft', 'IC Review', 'Committed', 'Passed'];
+const DEFAULT_ADMISSIONS_PIPELINE_STAGES = ['Sourced', 'Outreach', 'First Call Scheduled', 'First Call Complete', 'Second Call Scheduled', 'Second Call Complete', 'Admitted', 'Active Resident', 'Density Resident', 'Alumni', 'Hold/Nurture', 'Not Admitted'];
+const DEFAULT_DEAL_PIPELINE_STAGES = ['Under Consideration', 'First Meeting', 'Partner Call', 'Memo Draft', 'IC Review', 'Committed', 'Passed'];
 
-const ADMISSIONS_COLORS = {
+const DEFAULT_ADMISSIONS_COLORS = {
   'Sourced': 'badge-gray', 'Outreach': 'badge-blue',
   'First Call Scheduled': 'badge-blue', 'First Call Complete': 'badge-blue',
   'Second Call Scheduled': 'badge-amber', 'Second Call Complete': 'badge-amber',
   'Admitted': 'badge-green', 'Active Resident': 'badge-green', 'Density Resident': 'badge-green',
   'Alumni': 'badge-gray', 'Hold/Nurture': 'badge-amber', 'Not Admitted': 'badge-red',
 };
-const DEAL_COLORS = {
+const DEFAULT_DEAL_COLORS = {
   'Under Consideration': 'badge-blue', 'First Meeting': 'badge-blue',
   'Partner Call': 'badge-amber', 'Memo Draft': 'badge-amber',
   'IC Review': 'badge-amber', 'Committed': 'badge-green', 'Passed': 'badge-red',
@@ -38,6 +39,63 @@ export default function Pipeline() {
   const [loading, setLoading] = useState(true);
   const [viewMode, setViewMode] = useState(() => localStorage.getItem('pipeline_view') || 'list');
   const [sourcingRunning, setSourcingRunning] = useState(false);
+  const [pipelineConfig, setPipelineConfig] = useState(null);
+
+  useEffect(() => {
+    api.getPipelineConfig()
+      .then(config => setPipelineConfig(config))
+      .catch(() => {}); // silently fall back to defaults
+  }, []);
+
+  const admissionsStatuses = useMemo(() => {
+    if (pipelineConfig?.admissions_stages) {
+      return ['All', ...pipelineConfig.admissions_stages.map(s => s.name)];
+    }
+    return DEFAULT_ADMISSIONS_STATUSES;
+  }, [pipelineConfig]);
+
+  const admissionsPipelineStages = useMemo(() => {
+    if (pipelineConfig?.admissions_stages) {
+      return pipelineConfig.admissions_stages.map(s => s.name);
+    }
+    return DEFAULT_ADMISSIONS_PIPELINE_STAGES;
+  }, [pipelineConfig]);
+
+  const admissionsColors = useMemo(() => {
+    if (pipelineConfig?.admissions_stages) {
+      const colors = {};
+      pipelineConfig.admissions_stages.forEach(s => {
+        colors[s.name] = `badge-${s.color}`;
+      });
+      return colors;
+    }
+    return DEFAULT_ADMISSIONS_COLORS;
+  }, [pipelineConfig]);
+
+  const dealStatuses = useMemo(() => {
+    if (pipelineConfig?.deal_stages) {
+      return ['All', ...pipelineConfig.deal_stages.map(s => s.name)];
+    }
+    return DEFAULT_DEAL_STATUSES;
+  }, [pipelineConfig]);
+
+  const dealPipelineStages = useMemo(() => {
+    if (pipelineConfig?.deal_stages) {
+      return pipelineConfig.deal_stages.map(s => s.name);
+    }
+    return DEFAULT_DEAL_PIPELINE_STAGES;
+  }, [pipelineConfig]);
+
+  const dealColors = useMemo(() => {
+    if (pipelineConfig?.deal_stages) {
+      const colors = {};
+      pipelineConfig.deal_stages.forEach(s => {
+        colors[s.name] = `badge-${s.color}`;
+      });
+      return colors;
+    }
+    return DEFAULT_DEAL_COLORS;
+  }, [pipelineConfig]);
 
   useEffect(() => { loadData(); }, [tab, filter]);
   useEffect(() => { localStorage.setItem('pipeline_view', viewMode); }, [viewMode]);
@@ -151,7 +209,7 @@ export default function Pipeline() {
     }
   }
 
-  const statusOptions = tab === 'admissions' ? ADMISSIONS_STATUSES : tab === 'investment' ? DEAL_STATUSES : [];
+  const statusOptions = tab === 'admissions' ? admissionsStatuses : tab === 'investment' ? dealStatuses : [];
   const showKanban = viewMode === 'kanban' && (tab === 'admissions' || tab === 'investment');
 
   return (
@@ -260,7 +318,7 @@ export default function Pipeline() {
           {loading ? (
             <div className="text-center py-12 text-gray-500 text-sm">Loading...</div>
           ) : showKanban ? (
-            <KanbanBoard founders={founders} stages={tab === 'admissions' ? ADMISSIONS_PIPELINE_STAGES : DEAL_PIPELINE_STAGES} track={tab} onStageChange={handleStageChange} onAddToInvestment={handleAddToInvestment} />
+            <KanbanBoard founders={founders} stages={tab === 'admissions' ? admissionsPipelineStages : dealPipelineStages} track={tab} onStageChange={handleStageChange} onAddToInvestment={handleAddToInvestment} />
           ) : founders.length === 0 ? (
             <div className="text-center py-12">
               <p className="text-gray-500 text-sm">{tab === 'admissions' ? 'No founders in admissions pipeline yet' : 'No founders in investment pipeline yet'}</p>
@@ -268,7 +326,7 @@ export default function Pipeline() {
             </div>
           ) : (
             <div className="space-y-2">
-              {founders.map(f => <FounderRow key={f.id} founder={f} tab={tab} />)}
+              {founders.map(f => <FounderRow key={f.id} founder={f} tab={tab} admissionsColors={admissionsColors} dealColors={dealColors} />)}
             </div>
           )}
         </>
@@ -568,7 +626,7 @@ function InboxCard({ founder: f, onApprove, onDismiss, onStar, onUnstar, compact
 
 // ── Founder Row (list view for pipeline tabs) ──
 
-function FounderRow({ founder: f, tab }) {
+function FounderRow({ founder: f, tab, admissionsColors = DEFAULT_ADMISSIONS_COLORS, dealColors = DEFAULT_DEAL_COLORS }) {
   const tracks = (f.pipeline_tracks || '').split(',').filter(Boolean);
   const showDeal = tab === 'investment';
   const showAdmissions = tab === 'admissions';
@@ -604,9 +662,9 @@ function FounderRow({ founder: f, tab }) {
             <div className={`text-sm font-bold ${f.fit_score >= 8 ? 'text-emerald-600' : f.fit_score >= 6 ? 'text-amber-600' : 'text-gray-400'}`}>{f.fit_score}/10</div>
           )}
           {showDeal && f.deal_status ? (
-            <span className={`badge ${DEAL_COLORS[f.deal_status] || 'badge-gray'}`}>{f.deal_status}</span>
+            <span className={`badge ${dealColors[f.deal_status] || 'badge-gray'}`}>{f.deal_status}</span>
           ) : showAdmissions && f.admissions_status ? (
-            <span className={`badge ${ADMISSIONS_COLORS[f.admissions_status] || 'badge-gray'}`}>{f.admissions_status}</span>
+            <span className={`badge ${admissionsColors[f.admissions_status] || 'badge-gray'}`}>{f.admissions_status}</span>
           ) : (
             <span className={`badge ${STATUS_COLORS[f.status] || 'badge-gray'}`}>{f.status}</span>
           )}

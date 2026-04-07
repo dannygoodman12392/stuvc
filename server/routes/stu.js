@@ -207,13 +207,13 @@ const TOOLS = [
 ];
 
 // ── Tool execution ──
-function resolveFounder(params) {
+function resolveFounder(params, userId) {
   if (params.founder_id) {
-    return db.prepare('SELECT * FROM founders WHERE id = ? AND is_deleted = 0').get(params.founder_id);
+    return db.prepare('SELECT * FROM founders WHERE id = ? AND is_deleted = 0 AND created_by = ?').get(params.founder_id, userId);
   }
   if (params.name_search || params.name) {
     const search = params.name_search || params.name;
-    return db.prepare("SELECT * FROM founders WHERE is_deleted = 0 AND name LIKE ? ORDER BY updated_at DESC LIMIT 1").get(`%${search}%`);
+    return db.prepare("SELECT * FROM founders WHERE is_deleted = 0 AND created_by = ? AND name LIKE ? ORDER BY updated_at DESC LIMIT 1").get(userId, `%${search}%`);
   }
   return null;
 }
@@ -221,8 +221,8 @@ function resolveFounder(params) {
 function executeTool(toolName, input, userId) {
   switch (toolName) {
     case 'search_founders': {
-      let sql = `SELECT id, name, company, role, domain, stage, status, fit_score, location_city, location_state, source, pipeline_tracks, deal_status, admissions_status, resident_status, company_one_liner, deal_lead, valuation, round_size, created_at, updated_at FROM founders WHERE is_deleted = 0`;
-      const params = [];
+      let sql = `SELECT id, name, company, role, domain, stage, status, fit_score, location_city, location_state, source, pipeline_tracks, deal_status, admissions_status, resident_status, company_one_liner, deal_lead, valuation, round_size, created_at, updated_at FROM founders WHERE is_deleted = 0 AND created_by = ?`;
+      const params = [userId];
       if (input.search) {
         sql += " AND (name LIKE ? OR company LIKE ? OR domain LIKE ? OR bio LIKE ? OR company_one_liner LIKE ?)";
         const s = `%${input.search}%`;
@@ -243,7 +243,7 @@ function executeTool(toolName, input, userId) {
     }
 
     case 'get_founder_detail': {
-      const founder = resolveFounder(input);
+      const founder = resolveFounder(input, userId);
       if (!founder) return { success: false, error: 'Founder not found' };
       const notes = db.prepare('SELECT id, content, created_at FROM founder_notes WHERE founder_id = ? ORDER BY created_at DESC LIMIT 10').all(founder.id);
       const calls = db.prepare('SELECT id, structured_summary, created_at FROM call_logs WHERE founder_id = ? ORDER BY created_at DESC LIMIT 5').all(founder.id);
@@ -277,7 +277,7 @@ function executeTool(toolName, input, userId) {
     }
 
     case 'update_founder': {
-      const founder = resolveFounder(input);
+      const founder = resolveFounder(input, userId);
       if (!founder) return { success: false, error: 'Founder not found' };
       const allowed = ['name', 'company', 'role', 'email', 'linkedin_url', 'location_city', 'location_state', 'stage', 'domain', 'status', 'source', 'bio', 'chicago_connection', 'previous_companies', 'notable_background', 'company_one_liner', 'next_action', 'pipeline_tracks', 'admissions_status', 'resident_status', 'deal_status', 'deal_lead', 'valuation', 'round_size', 'investment_amount', 'arr', 'monthly_burn', 'runway_months', 'security_type', 'memo_status', 'diligence_status', 'pass_reason', 'desks_needed'];
       const sets = [];
@@ -304,31 +304,31 @@ function executeTool(toolName, input, userId) {
     }
 
     case 'delete_founder': {
-      const founder = resolveFounder(input);
+      const founder = resolveFounder(input, userId);
       if (!founder) return { success: false, error: 'Founder not found' };
       db.prepare('UPDATE founders SET is_deleted = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(founder.id);
       return { success: true, message: `Removed ${founder.name} from pipeline` };
     }
 
     case 'add_note': {
-      const founder = resolveFounder(input);
+      const founder = resolveFounder(input, userId);
       if (!founder) return { success: false, error: 'Founder not found' };
       const result = db.prepare('INSERT INTO founder_notes (founder_id, content, created_by) VALUES (?, ?, ?)').run(founder.id, input.content, userId);
       return { success: true, message: `Note added to ${founder.name}'s profile`, note_id: result.lastInsertRowid, founder_name: founder.name };
     }
 
     case 'get_pipeline_stats': {
-      const total = db.prepare('SELECT COUNT(*) as count FROM founders WHERE is_deleted = 0').get().count;
-      const byStatus = db.prepare('SELECT status, COUNT(*) as count FROM founders WHERE is_deleted = 0 GROUP BY status ORDER BY count DESC').all();
-      const byDomain = db.prepare(`SELECT domain, COUNT(*) as count FROM founders WHERE is_deleted = 0 AND domain IS NOT NULL AND domain != '' GROUP BY domain ORDER BY count DESC`).all();
-      const byStage = db.prepare('SELECT stage, COUNT(*) as count FROM founders WHERE is_deleted = 0 GROUP BY stage ORDER BY count DESC').all();
-      const admissions = db.prepare("SELECT COUNT(*) as count FROM founders WHERE is_deleted = 0 AND pipeline_tracks LIKE '%admissions%'").get().count;
-      const investments = db.prepare("SELECT COUNT(*) as count FROM founders WHERE is_deleted = 0 AND pipeline_tracks LIKE '%investment%'").get().count;
-      const byDealStatus = db.prepare("SELECT deal_status, COUNT(*) as count FROM founders WHERE is_deleted = 0 AND deal_status IS NOT NULL GROUP BY deal_status ORDER BY count DESC").all();
-      const byAdmissionsStatus = db.prepare("SELECT admissions_status, COUNT(*) as count FROM founders WHERE is_deleted = 0 AND admissions_status IS NOT NULL GROUP BY admissions_status ORDER BY count DESC").all();
-      const recentlyAdded = db.prepare('SELECT name, company, status, pipeline_tracks, admissions_status, deal_status, created_at FROM founders WHERE is_deleted = 0 ORDER BY created_at DESC LIMIT 5').all();
-      const avgFitScore = db.prepare('SELECT AVG(fit_score) as avg, COUNT(fit_score) as scored FROM founders WHERE is_deleted = 0 AND fit_score IS NOT NULL').get();
-      const assessmentCount = db.prepare('SELECT COUNT(*) as count FROM opportunity_assessments').get().count;
+      const total = db.prepare('SELECT COUNT(*) as count FROM founders WHERE is_deleted = 0 AND created_by = ?').get(userId).count;
+      const byStatus = db.prepare('SELECT status, COUNT(*) as count FROM founders WHERE is_deleted = 0 AND created_by = ? GROUP BY status ORDER BY count DESC').all(userId);
+      const byDomain = db.prepare(`SELECT domain, COUNT(*) as count FROM founders WHERE is_deleted = 0 AND created_by = ? AND domain IS NOT NULL AND domain != '' GROUP BY domain ORDER BY count DESC`).all(userId);
+      const byStage = db.prepare('SELECT stage, COUNT(*) as count FROM founders WHERE is_deleted = 0 AND created_by = ? GROUP BY stage ORDER BY count DESC').all(userId);
+      const admissions = db.prepare("SELECT COUNT(*) as count FROM founders WHERE is_deleted = 0 AND created_by = ? AND pipeline_tracks LIKE '%admissions%'").get(userId).count;
+      const investments = db.prepare("SELECT COUNT(*) as count FROM founders WHERE is_deleted = 0 AND created_by = ? AND pipeline_tracks LIKE '%investment%'").get(userId).count;
+      const byDealStatus = db.prepare("SELECT deal_status, COUNT(*) as count FROM founders WHERE is_deleted = 0 AND created_by = ? AND deal_status IS NOT NULL GROUP BY deal_status ORDER BY count DESC").all(userId);
+      const byAdmissionsStatus = db.prepare("SELECT admissions_status, COUNT(*) as count FROM founders WHERE is_deleted = 0 AND created_by = ? AND admissions_status IS NOT NULL GROUP BY admissions_status ORDER BY count DESC").all(userId);
+      const recentlyAdded = db.prepare('SELECT name, company, status, pipeline_tracks, admissions_status, deal_status, created_at FROM founders WHERE is_deleted = 0 AND created_by = ? ORDER BY created_at DESC LIMIT 5').all(userId);
+      const avgFitScore = db.prepare('SELECT AVG(fit_score) as avg, COUNT(fit_score) as scored FROM founders WHERE is_deleted = 0 AND created_by = ? AND fit_score IS NOT NULL').get(userId);
+      const assessmentCount = db.prepare('SELECT COUNT(*) as count FROM opportunity_assessments WHERE created_by = ?').get(userId).count;
       return { success: true, total, byStatus, byDomain, byStage, admissions, investments, byDealStatus, byAdmissionsStatus, recentlyAdded, avgFitScore, assessmentCount };
     }
 
@@ -336,8 +336,8 @@ function executeTool(toolName, input, userId) {
       let sql = `SELECT oa.id, oa.overall_signal, oa.status, oa.created_at,
         f.name as founder_name, f.company as founder_company
         FROM opportunity_assessments oa
-        LEFT JOIN founders f ON oa.founder_id = f.id WHERE 1=1`;
-      const params = [];
+        LEFT JOIN founders f ON oa.founder_id = f.id WHERE oa.created_by = ?`;
+      const params = [userId];
       if (input.founder_id) { sql += ' AND oa.founder_id = ?'; params.push(input.founder_id); }
       if (input.signal) { sql += ' AND oa.overall_signal = ?'; params.push(input.signal); }
       sql += ' ORDER BY oa.created_at DESC LIMIT 20';
@@ -346,20 +346,20 @@ function executeTool(toolName, input, userId) {
     }
 
     case 'run_fit_score': {
-      const founder = resolveFounder(input);
+      const founder = resolveFounder(input, userId);
       if (!founder) return { success: false, error: 'Founder not found' };
       return { success: true, message: 'Fit score will be generated', founder_id: founder.id, founder_name: founder.name, needs_ai_scoring: true };
     }
 
     case 'log_call': {
-      const founder = resolveFounder(input);
+      const founder = resolveFounder(input, userId);
       if (!founder) return { success: false, error: 'Founder not found. Please specify which founder this call was with.' };
       const result = db.prepare('INSERT INTO call_logs (founder_id, raw_transcript, created_by) VALUES (?, ?, ?)').run(founder.id, input.transcript, userId);
       return { success: true, message: `Call transcript logged for ${founder.name}`, call_id: result.lastInsertRowid, founder_name: founder.name };
     }
 
     case 'generate_memo': {
-      const founder = resolveFounder(input);
+      const founder = resolveFounder(input, userId);
       if (!founder) return { success: false, error: 'Founder not found' };
       // Trigger memo generation (async, returns immediately)
       const memoCount = db.prepare('SELECT COUNT(*) as count FROM founder_memos WHERE founder_id = ?').get(founder.id).count;
@@ -372,25 +372,25 @@ function executeTool(toolName, input, userId) {
     case 'search_everything': {
       const q = input.query;
       const like = `%${q}%`;
-      const founders = db.prepare("SELECT id, name, company, domain, status, deal_status FROM founders WHERE is_deleted = 0 AND (name LIKE ? OR company LIKE ? OR domain LIKE ?) ORDER BY updated_at DESC LIMIT 5").all(like, like, like);
-      const notes = db.prepare("SELECT n.id, n.content, f.name as founder_name FROM founder_notes n JOIN founders f ON n.founder_id = f.id WHERE n.content LIKE ? ORDER BY n.created_at DESC LIMIT 5").all(like);
-      const calls = db.prepare("SELECT c.id, c.structured_summary, f.name as founder_name FROM call_logs c JOIN founders f ON c.founder_id = f.id WHERE c.raw_transcript LIKE ? OR c.structured_summary LIKE ? ORDER BY c.created_at DESC LIMIT 5").all(like, like);
+      const founders = db.prepare("SELECT id, name, company, domain, status, deal_status FROM founders WHERE is_deleted = 0 AND created_by = ? AND (name LIKE ? OR company LIKE ? OR domain LIKE ?) ORDER BY updated_at DESC LIMIT 5").all(userId, like, like, like);
+      const notes = db.prepare("SELECT n.id, n.content, f.name as founder_name FROM founder_notes n JOIN founders f ON n.founder_id = f.id WHERE f.created_by = ? AND n.content LIKE ? ORDER BY n.created_at DESC LIMIT 5").all(userId, like);
+      const calls = db.prepare("SELECT c.id, c.structured_summary, f.name as founder_name FROM call_logs c JOIN founders f ON c.founder_id = f.id WHERE f.created_by = ? AND (c.raw_transcript LIKE ? OR c.structured_summary LIKE ?) ORDER BY c.created_at DESC LIMIT 5").all(userId, like, like);
       return { success: true, query: q, founders, notes, calls };
     }
 
     case 'query_insights': {
-      const total = db.prepare('SELECT COUNT(*) as count FROM founders WHERE is_deleted = 0').get().count;
-      const byStatus = db.prepare('SELECT status, COUNT(*) as count FROM founders WHERE is_deleted = 0 GROUP BY status').all();
-      const byDomain = db.prepare(`SELECT domain, COUNT(*) as count FROM founders WHERE is_deleted = 0 AND domain IS NOT NULL AND domain != '' GROUP BY domain ORDER BY count DESC LIMIT 15`).all();
-      const admissions = db.prepare("SELECT COUNT(*) as count FROM founders WHERE is_deleted = 0 AND pipeline_tracks LIKE '%admissions%'").get().count;
-      const investments = db.prepare("SELECT COUNT(*) as count FROM founders WHERE is_deleted = 0 AND pipeline_tracks LIKE '%investment%'").get().count;
-      const byDealStatus = db.prepare("SELECT deal_status, COUNT(*) as count FROM founders WHERE is_deleted = 0 AND deal_status IS NOT NULL GROUP BY deal_status").all();
-      const byAdmissionsStatus = db.prepare("SELECT admissions_status, COUNT(*) as count FROM founders WHERE is_deleted = 0 AND admissions_status IS NOT NULL GROUP BY admissions_status").all();
-      const scored = db.prepare('SELECT name, company, domain, fit_score, status, pipeline_tracks, deal_status, admissions_status FROM founders WHERE is_deleted = 0 AND fit_score IS NOT NULL ORDER BY fit_score DESC LIMIT 25').all();
-      const recent = db.prepare('SELECT name, company, status, domain, stage, pipeline_tracks, deal_status, admissions_status, created_at FROM founders WHERE is_deleted = 0 ORDER BY created_at DESC LIMIT 10').all();
-      const passed = db.prepare("SELECT name, company, domain, pass_reason FROM founders WHERE is_deleted = 0 AND (status = 'Passed' OR deal_status = 'Passed' OR admissions_status = 'Not Admitted') LIMIT 20").all();
-      const activeDeals = db.prepare("SELECT name, company, deal_status, deal_lead, valuation, round_size, arr FROM founders WHERE is_deleted = 0 AND pipeline_tracks LIKE '%investment%' AND deal_status NOT IN ('Passed', 'Committed') ORDER BY deal_entered_at DESC LIMIT 20").all();
-      const assessments = db.prepare(`SELECT oa.overall_signal, f.name, f.company FROM opportunity_assessments oa LEFT JOIN founders f ON oa.founder_id = f.id WHERE oa.status = 'complete' ORDER BY oa.created_at DESC LIMIT 10`).all();
+      const total = db.prepare('SELECT COUNT(*) as count FROM founders WHERE is_deleted = 0 AND created_by = ?').get(userId).count;
+      const byStatus = db.prepare('SELECT status, COUNT(*) as count FROM founders WHERE is_deleted = 0 AND created_by = ? GROUP BY status').all(userId);
+      const byDomain = db.prepare(`SELECT domain, COUNT(*) as count FROM founders WHERE is_deleted = 0 AND created_by = ? AND domain IS NOT NULL AND domain != '' GROUP BY domain ORDER BY count DESC LIMIT 15`).all(userId);
+      const admissions = db.prepare("SELECT COUNT(*) as count FROM founders WHERE is_deleted = 0 AND created_by = ? AND pipeline_tracks LIKE '%admissions%'").get(userId).count;
+      const investments = db.prepare("SELECT COUNT(*) as count FROM founders WHERE is_deleted = 0 AND created_by = ? AND pipeline_tracks LIKE '%investment%'").get(userId).count;
+      const byDealStatus = db.prepare("SELECT deal_status, COUNT(*) as count FROM founders WHERE is_deleted = 0 AND created_by = ? AND deal_status IS NOT NULL GROUP BY deal_status").all(userId);
+      const byAdmissionsStatus = db.prepare("SELECT admissions_status, COUNT(*) as count FROM founders WHERE is_deleted = 0 AND created_by = ? AND admissions_status IS NOT NULL GROUP BY admissions_status").all(userId);
+      const scored = db.prepare('SELECT name, company, domain, fit_score, status, pipeline_tracks, deal_status, admissions_status FROM founders WHERE is_deleted = 0 AND created_by = ? AND fit_score IS NOT NULL ORDER BY fit_score DESC LIMIT 25').all(userId);
+      const recent = db.prepare('SELECT name, company, status, domain, stage, pipeline_tracks, deal_status, admissions_status, created_at FROM founders WHERE is_deleted = 0 AND created_by = ? ORDER BY created_at DESC LIMIT 10').all(userId);
+      const passed = db.prepare("SELECT name, company, domain, pass_reason FROM founders WHERE is_deleted = 0 AND created_by = ? AND (status = 'Passed' OR deal_status = 'Passed' OR admissions_status = 'Not Admitted') LIMIT 20").all(userId);
+      const activeDeals = db.prepare("SELECT name, company, deal_status, deal_lead, valuation, round_size, arr FROM founders WHERE is_deleted = 0 AND created_by = ? AND pipeline_tracks LIKE '%investment%' AND deal_status NOT IN ('Passed', 'Committed') ORDER BY deal_entered_at DESC LIMIT 20").all(userId);
+      const assessments = db.prepare(`SELECT oa.overall_signal, f.name, f.company FROM opportunity_assessments oa LEFT JOIN founders f ON oa.founder_id = f.id WHERE oa.status = 'complete' AND oa.created_by = ? ORDER BY oa.created_at DESC LIMIT 10`).all(userId);
       return {
         success: true,
         question: input.question,

@@ -12,6 +12,7 @@ const navItems = [
   { to: '/assess', label: 'Assess' },
   { to: '/portfolio', label: 'Portfolio', placeholder: true },
   { to: '/fund', label: 'Fund', placeholder: true },
+  { to: '/settings', label: 'Settings' },
 ];
 
 export default function Layout({ children }) {

@@ -16,15 +16,27 @@ function getAnthropicClient() {
   }
 }
 
-// ── GET /api/assessments — list all (grouped by latest version) ──
+// ── GET /api/assessments — list all (only latest version per group) ──
 router.get('/', (req, res) => {
+  // For grouped assessments, only return the latest version
   const assessments = db.prepare(`
     SELECT a.*, f.name as founder_name, f.company as founder_company
     FROM opportunity_assessments a
     LEFT JOIN founders f ON a.founder_id = f.id
     WHERE a.is_deleted = 0
+      AND a.created_by = ?
+      AND a.id = (
+        SELECT a2.id FROM opportunity_assessments a2
+        WHERE a2.is_deleted = 0
+          AND (
+            (a2.group_id IS NOT NULL AND a2.group_id = a.group_id)
+            OR (a2.group_id IS NULL AND a2.id = a.id)
+          )
+        ORDER BY a2.version_number DESC, a2.created_at DESC
+        LIMIT 1
+      )
     ORDER BY a.created_at DESC
-  `).all();
+  `).all(req.user.id);
   res.json(assessments);
 });
 
@@ -34,9 +46,9 @@ router.get('/group/:groupId', (req, res) => {
     SELECT a.*, f.name as founder_name, f.company as founder_company
     FROM opportunity_assessments a
     LEFT JOIN founders f ON a.founder_id = f.id
-    WHERE a.group_id = ? AND a.is_deleted = 0
+    WHERE a.group_id = ? AND a.is_deleted = 0 AND a.created_by = ?
     ORDER BY a.version_number DESC
-  `).all(req.params.groupId);
+  `).all(req.params.groupId, req.user.id);
 
   // Attach change summaries from assessment_versions
   for (const v of versions) {
@@ -53,14 +65,17 @@ router.get('/:id', (req, res) => {
     SELECT a.*, f.name as founder_name, f.company as founder_company
     FROM opportunity_assessments a
     LEFT JOIN founders f ON a.founder_id = f.id
-    WHERE a.id = ? AND a.is_deleted = 0
-  `).get(req.params.id);
+    WHERE a.id = ? AND a.is_deleted = 0 AND a.created_by = ?
+  `).get(req.params.id, req.user.id);
   if (!assessment) return res.status(404).json({ error: 'Assessment not found' });
   res.json(assessment);
 });
 
 // ── GET /api/assessments/:id/inputs — all inputs for an assessment ──
 router.get('/:id/inputs', (req, res) => {
+  // Verify assessment ownership before returning inputs
+  const assessment = db.prepare('SELECT id FROM opportunity_assessments WHERE id = ? AND is_deleted = 0 AND created_by = ?').get(req.params.id, req.user.id);
+  if (!assessment) return res.status(404).json({ error: 'Assessment not found' });
   const inputs = db.prepare('SELECT * FROM assessment_inputs WHERE assessment_id = ? ORDER BY input_type, created_at').all(req.params.id);
   res.json(inputs);
 });
@@ -73,7 +88,7 @@ router.post('/', async (req, res) => {
   // Validate founder_id if provided
   const validFounderId = founder_id ? parseInt(founder_id) : null;
   if (validFounderId) {
-    const founder = db.prepare('SELECT id FROM founders WHERE id = ?').get(validFounderId);
+    const founder = db.prepare('SELECT id FROM founders WHERE id = ? AND created_by = ?').get(validFounderId, req.user.id);
     if (!founder) return res.status(400).json({ error: 'Founder not found' });
   }
 
@@ -83,8 +98,8 @@ router.post('/', async (req, res) => {
   let previousAssessmentId = null;
 
   if (gid) {
-    // Re-run: increment version
-    const latest = db.prepare('SELECT id, version_number FROM opportunity_assessments WHERE group_id = ? AND is_deleted = 0 ORDER BY version_number DESC LIMIT 1').get(gid);
+    // Re-run: increment version — scope by user to prevent cross-user group hijacking
+    const latest = db.prepare('SELECT id, version_number FROM opportunity_assessments WHERE group_id = ? AND is_deleted = 0 AND created_by = ? ORDER BY version_number DESC LIMIT 1').get(gid, req.user.id);
     if (latest) {
       versionNumber = latest.version_number + 1;
       previousAssessmentId = latest.id;
@@ -134,7 +149,7 @@ router.post('/', async (req, res) => {
 
 // ── PUT /api/assessments/:id — update metadata ──
 router.put('/:id', (req, res) => {
-  const assessment = db.prepare('SELECT * FROM opportunity_assessments WHERE id = ? AND is_deleted = 0').get(req.params.id);
+  const assessment = db.prepare('SELECT * FROM opportunity_assessments WHERE id = ? AND is_deleted = 0 AND created_by = ?').get(req.params.id, req.user.id);
   if (!assessment) return res.status(404).json({ error: 'Assessment not found' });
 
   const { founder_id, manual_notes } = req.body;
@@ -155,9 +170,57 @@ router.put('/:id', (req, res) => {
   res.json(updated);
 });
 
+// ── POST /api/assessments/:id/override — apply GP score override ──
+router.post('/:id/override', (req, res) => {
+  const assessment = db.prepare('SELECT * FROM opportunity_assessments WHERE id = ? AND is_deleted = 0 AND created_by = ?').get(req.params.id, req.user.id);
+  if (!assessment) return res.status(404).json({ error: 'Assessment not found' });
+
+  const { adjustment, justification } = req.body;
+  if (typeof adjustment !== 'number') return res.status(400).json({ error: 'adjustment (number) required' });
+  if (adjustment < -1 || adjustment > 1) return res.status(400).json({ error: 'adjustment must be between -1 and 1' });
+
+  const synthesis = JSON.parse(assessment.synthesis_output || '{}');
+  const baseScore = synthesis.overall_score || 0;
+
+  synthesis.override = { adjustment, justification: justification || '' };
+  const newScore = round1(baseScore + adjustment);
+  synthesis.overall_score = newScore;
+  synthesis.score_calculation = (synthesis.score_calculation || '') + ` → GP override ${adjustment > 0 ? '+' : ''}${adjustment} = ${newScore}`;
+  synthesis.overall_signal = newScore >= 7.0 ? 'Invest' : newScore >= 5.0 ? 'Monitor' : 'Pass';
+
+  db.prepare('UPDATE opportunity_assessments SET synthesis_output = ?, overall_signal = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+    .run(JSON.stringify(synthesis), synthesis.overall_signal, req.params.id);
+
+  res.json({ id: assessment.id, overall_score: newScore, overall_signal: synthesis.overall_signal, override: synthesis.override });
+});
+
+// ── PATCH /api/assessments/:id/synthesis — patch synthesis fields directly ──
+router.patch('/:id/synthesis', (req, res) => {
+  const assessment = db.prepare('SELECT * FROM opportunity_assessments WHERE id = ? AND is_deleted = 0 AND created_by = ?').get(req.params.id, req.user.id);
+  if (!assessment) return res.status(404).json({ error: 'Assessment not found' });
+
+  const synthesis = JSON.parse(assessment.synthesis_output || '{}');
+  const patches = req.body;
+
+  // Merge patches into synthesis
+  for (const [key, value] of Object.entries(patches)) {
+    synthesis[key] = value;
+  }
+
+  // Update overall_signal based on score if score changed
+  if (patches.overall_score !== undefined) {
+    synthesis.overall_signal = synthesis.overall_score >= 7.0 ? 'Invest' : synthesis.overall_score >= 5.0 ? 'Monitor' : 'Pass';
+  }
+
+  db.prepare('UPDATE opportunity_assessments SET synthesis_output = ?, overall_signal = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+    .run(JSON.stringify(synthesis), synthesis.overall_signal || assessment.overall_signal, req.params.id);
+
+  res.json({ id: assessment.id, synthesis });
+});
+
 // ── DELETE /api/assessments/:id — soft delete ──
 router.delete('/:id', (req, res) => {
-  const assessment = db.prepare('SELECT * FROM opportunity_assessments WHERE id = ? AND is_deleted = 0').get(req.params.id);
+  const assessment = db.prepare('SELECT * FROM opportunity_assessments WHERE id = ? AND is_deleted = 0 AND created_by = ?').get(req.params.id, req.user.id);
   if (!assessment) return res.status(404).json({ error: 'Assessment not found' });
 
   // Cancel if running
@@ -171,7 +234,7 @@ router.delete('/:id', (req, res) => {
 
 // ── POST /api/assessments/:id/cancel — cancel running assessment ──
 router.post('/:id/cancel', (req, res) => {
-  const assessment = db.prepare('SELECT * FROM opportunity_assessments WHERE id = ?').get(req.params.id);
+  const assessment = db.prepare('SELECT * FROM opportunity_assessments WHERE id = ? AND created_by = ?').get(req.params.id, req.user.id);
   if (!assessment) return res.status(404).json({ error: 'Assessment not found' });
 
   if (assessment.status !== 'running' && assessment.status !== 'synthesizing' && assessment.status !== 'processing_inputs') {
@@ -185,7 +248,7 @@ router.post('/:id/cancel', (req, res) => {
 
 // ── POST /api/assessments/:id/rerun — re-run with additional inputs ──
 router.post('/:id/rerun', async (req, res) => {
-  const assessment = db.prepare('SELECT * FROM opportunity_assessments WHERE id = ? AND is_deleted = 0').get(req.params.id);
+  const assessment = db.prepare('SELECT * FROM opportunity_assessments WHERE id = ? AND is_deleted = 0 AND created_by = ?').get(req.params.id, req.user.id);
   if (!assessment) return res.status(404).json({ error: 'Assessment not found' });
 
   const { inputs: newInputs } = req.body;
@@ -312,6 +375,10 @@ async function runAssessmentAgents(assessmentId, founderId) {
     return;
   }
 
+  // Get assessment's owner for scoped queries
+  const assessmentOwner = db.prepare('SELECT created_by FROM opportunity_assessments WHERE id = ?').get(assessmentId);
+  const ownerId = assessmentOwner?.created_by;
+
   const signal = runManager.register(assessmentId);
 
   try {
@@ -351,10 +418,10 @@ async function runAssessmentAgents(assessmentId, founderId) {
       }
     }
 
-    // Pull founder data if linked
+    // Pull founder data if linked — scoped to assessment owner
     let founderContext = '';
-    if (founderId) {
-      const founder = db.prepare('SELECT * FROM founders WHERE id = ?').get(founderId);
+    if (founderId && ownerId) {
+      const founder = db.prepare('SELECT * FROM founders WHERE id = ? AND created_by = ?').get(founderId, ownerId);
       if (founder) {
         founderContext = `\nFounder: ${founder.name}\nCompany: ${founder.company || 'Unknown'}\nRole: ${founder.role || 'Founder'}\nLocation: ${founder.location_city || ''} ${founder.location_state || ''}\nStage: ${founder.stage || 'Pre-seed'}\nDomain: ${founder.domain || 'Unknown'}\nLinkedIn: ${founder.linkedin_url || 'N/A'}\nBio: ${founder.bio || 'N/A'}\nPrevious companies: ${founder.previous_companies || 'N/A'}\nNotable background: ${founder.notable_background || 'N/A'}`;
 
@@ -488,6 +555,28 @@ function computeSimplePillarScore(subs) {
   return round1(scores.reduce((a, b) => a + b, 0) / scores.length);
 }
 
+function computeProductPillarScore(subs) {
+  if (!subs) return null;
+  // Product velocity and customer proximity carry 2x weight
+  // (mirrors team weighting: demonstrated traction matters most)
+  const weights = {
+    product_velocity: 2,
+    customer_proximity: 2,
+    focus_prioritization: 1,
+    technical_defensibility: 1,
+    product_market_intuition: 1,
+  };
+  let totalWeight = 0, totalScore = 0;
+  for (const [key, w] of Object.entries(weights)) {
+    const sub = subs[key];
+    if (sub && typeof sub.score === 'number') {
+      totalScore += sub.score * w;
+      totalWeight += w;
+    }
+  }
+  return totalWeight > 0 ? round1(totalScore / totalWeight) : null;
+}
+
 function correctPillarScores(agentOutputs) {
   // Team: weighted average (FPF and Sales 2x)
   if (agentOutputs.team && agentOutputs.team.subcategories) {
@@ -499,9 +588,9 @@ function correctPillarScores(agentOutputs) {
       }
     }
   }
-  // Product: simple average
+  // Product: weighted average (velocity and proximity 2x)
   if (agentOutputs.product && agentOutputs.product.subcategories) {
-    const computed = computeSimplePillarScore(agentOutputs.product.subcategories);
+    const computed = computeProductPillarScore(agentOutputs.product.subcategories);
     if (computed !== null) agentOutputs.product.pillar_score = computed;
   }
   // Market: simple average
@@ -509,11 +598,31 @@ function correctPillarScores(agentOutputs) {
     const computed = computeSimplePillarScore(agentOutputs.market.subcategories);
     if (computed !== null) agentOutputs.market.pillar_score = computed;
   }
-  // Bear: clamp adjustment to [0, -1.5]
+  // Bear: clamp adjustment to [0, -1.5] with traction-based ceiling
   if (agentOutputs.bear && typeof agentOutputs.bear.bear_adjustment === 'number') {
-    agentOutputs.bear.bear_adjustment = round1(
-      Math.max(-1.5, Math.min(0, agentOutputs.bear.bear_adjustment))
-    );
+    let bearAdj = Math.max(-1.5, Math.min(0, agentOutputs.bear.bear_adjustment));
+
+    // Traction-based bear ceiling: companies with demonstrated execution
+    // get a lighter bear penalty. The LLM bear agent consistently overweights
+    // theoretical risks for companies with real traction.
+    const teamPillar = agentOutputs.team?.pillar_score;
+    const prodVelocity = agentOutputs.product?.subcategories?.product_velocity?.score;
+    const prodProximity = agentOutputs.product?.subcategories?.customer_proximity?.score;
+
+    if (teamPillar >= 7.5 && prodVelocity >= 7 && prodProximity >= 7) {
+      // Strong traction: paying customers + strong team → cap bear at -0.5
+      bearAdj = Math.max(bearAdj, -0.5);
+    } else if (teamPillar >= 7.0 && (prodVelocity >= 7 || prodProximity >= 7)) {
+      // Moderate traction → cap bear at -0.8
+      bearAdj = Math.max(bearAdj, -0.8);
+    }
+
+    // Floor for pre-product/pre-revenue companies: bear should be at least -0.7
+    if (prodVelocity !== null && prodVelocity !== undefined && prodVelocity < 5) {
+      bearAdj = Math.min(bearAdj, -0.7);
+    }
+
+    agentOutputs.bear.bear_adjustment = round1(bearAdj);
   }
 }
 
@@ -560,7 +669,55 @@ function correctSynthesisScores(synthesis, agentOutputs) {
   }
 }
 
-async function runAgent(client, prompt, context, signal) {
+function robustJsonParse(text) {
+  // Try direct parse first
+  const jsonMatch = text.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) return null;
+  let raw = jsonMatch[0];
+
+  // Step 0: Replace smart quotes with regular quotes
+  raw = raw.replace(/[\u201C\u201D]/g, '"').replace(/[\u2018\u2019]/g, "'");
+
+  // Step 1: Try direct parse
+  try {
+    return JSON.parse(raw);
+  } catch (e) {
+    // Step 2: Fix trailing commas
+    let fixed = raw.replace(/,\s*([}\]])/g, '$1');
+    try {
+      return JSON.parse(fixed);
+    } catch (e2) {
+      // Step 3: Fix unescaped control characters and quotes in strings
+      // Replace literal newlines/tabs inside strings with escaped versions
+      fixed = fixed.replace(/[\x00-\x1F]/g, (ch) => {
+        if (ch === '\n') return '\\n';
+        if (ch === '\r') return '\\r';
+        if (ch === '\t') return '\\t';
+        return '';
+      });
+      try {
+        return JSON.parse(fixed);
+      } catch (e3) {
+        // Step 4: Aggressive repair - try to fix unescaped quotes in string values
+        // Find string values and escape internal quotes
+        fixed = fixed.replace(/"([^"]*?)"/g, (match, content) => {
+          // If content itself contains unescaped quotes, escape them
+          const escaped = content.replace(/(?<!\\)"/g, '\\"');
+          return `"${escaped}"`;
+        });
+        try {
+          return JSON.parse(fixed);
+        } catch (e4) {
+          console.error('[Assessment] JSON parse failed after all repair attempts:', e4.message);
+          console.error('[Assessment] First 300 chars around error:', raw.substring(0, 300));
+          return { error: e4.message };
+        }
+      }
+    }
+  }
+}
+
+async function runAgent(client, prompt, context, signal, retries = 1) {
   const response = await client.messages.create({
     model: 'claude-sonnet-4-20250514',
     max_tokens: 4096,
@@ -570,8 +727,16 @@ async function runAgent(client, prompt, context, signal) {
   });
 
   const text = response.content[0].text.trim();
-  const jsonMatch = text.match(/\{[\s\S]*\}/);
-  if (jsonMatch) return JSON.parse(jsonMatch[0]);
+  const parsed = robustJsonParse(text);
+  if (parsed && !parsed.error) return parsed;
+
+  // Retry once on parse failure
+  if (retries > 0) {
+    console.warn('[Assessment] JSON parse failed, retrying agent...');
+    return runAgent(client, prompt, context, signal, retries - 1);
+  }
+
+  if (parsed) return parsed; // Return error object
   return { raw: text, error: 'Could not parse JSON output' };
 }
 
@@ -584,8 +749,8 @@ async function runSynthesis(client, prompt, agentOutputs, context, signal) {
   });
 
   const text = response.content[0].text.trim();
-  const jsonMatch = text.match(/\{[\s\S]*\}/);
-  if (jsonMatch) return JSON.parse(jsonMatch[0]);
+  const parsed = robustJsonParse(text);
+  if (parsed) return parsed;
   return { raw: text, error: 'Could not parse synthesis' };
 }
 

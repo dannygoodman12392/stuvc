@@ -16,6 +16,9 @@ export default function Assess() {
 
   // Form state
   const [founderId, setFounderId] = useState(preselectedFounder || '');
+  const [founderSearch, setFounderSearch] = useState('');
+  const [showFounderDropdown, setShowFounderDropdown] = useState(false);
+  const [creatingFounder, setCreatingFounder] = useState(false);
   const [decks, setDecks] = useState([]);
   const [transcripts, setTranscripts] = useState([]);
   const [urls, setUrls] = useState([]);
@@ -84,6 +87,47 @@ export default function Assess() {
 
   function addNote() {
     setNotes(n => [...n, { label: `Note ${n.length + 1}`, content: '' }]);
+  }
+
+  // Set the initial search text when founders load and one is preselected
+  useEffect(() => {
+    if (founderId && founders.length > 0 && !founderSearch) {
+      const f = founders.find(f => String(f.id) === String(founderId));
+      if (f) setFounderSearch(`${f.name}${f.company ? ` (${f.company})` : ''}`);
+    }
+  }, [founderId, founders]);
+
+  const filteredFounders = founderSearch.trim()
+    ? founders.filter(f => {
+        const q = founderSearch.toLowerCase();
+        return f.name.toLowerCase().includes(q) || (f.company || '').toLowerCase().includes(q);
+      })
+    : founders;
+
+  function selectFounder(f) {
+    setFounderId(String(f.id));
+    setFounderSearch(`${f.name}${f.company ? ` (${f.company})` : ''}`);
+    setShowFounderDropdown(false);
+  }
+
+  async function createNewFounder() {
+    const input = founderSearch.trim();
+    if (!input) return;
+    setCreatingFounder(true);
+    try {
+      // Parse "Name (Company)" or just "Name"
+      const match = input.match(/^(.+?)\s*\((.+)\)$/);
+      const name = match ? match[1].trim() : input;
+      const company = match ? match[2].trim() : null;
+      const newFounder = await api.createFounder({ name, company });
+      setFounders(prev => [...prev, newFounder]);
+      setFounderId(String(newFounder.id));
+      setFounderSearch(`${newFounder.name}${newFounder.company ? ` (${newFounder.company})` : ''}`);
+      setShowFounderDropdown(false);
+    } catch (err) {
+      alert('Failed to create founder: ' + err.message);
+    }
+    setCreatingFounder(false);
   }
 
   async function handleRunAssessment() {
@@ -167,12 +211,39 @@ export default function Assess() {
             {/* Founder selector */}
             <div className="card p-4">
               <h3 className="text-sm font-semibold text-gray-700 mb-3">Link to Founder (optional)</h3>
-              <select value={founderId} onChange={e => setFounderId(e.target.value)} className="select w-full text-sm">
-                <option value="">Select founder...</option>
-                {founders.map(f => (
-                  <option key={f.id} value={f.id}>{f.name}{f.company ? ` (${f.company})` : ''}</option>
-                ))}
-              </select>
+              <div className="relative">
+                <input
+                  type="text"
+                  value={founderSearch}
+                  onChange={e => { setFounderSearch(e.target.value); setFounderId(''); setShowFounderDropdown(true); }}
+                  onFocus={() => setShowFounderDropdown(true)}
+                  onBlur={() => setTimeout(() => setShowFounderDropdown(false), 200)}
+                  placeholder="Search or type new founder name..."
+                  className="input w-full text-sm"
+                />
+                {founderId && (
+                  <button onClick={() => { setFounderId(''); setFounderSearch(''); }} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-red-500 text-xs">&times;</button>
+                )}
+                {showFounderDropdown && founderSearch.trim() && (
+                  <div className="absolute z-10 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                    {filteredFounders.slice(0, 20).map(f => (
+                      <button key={f.id} onMouseDown={() => selectFounder(f)} className="w-full text-left px-3 py-2 text-sm hover:bg-blue-50 transition-colors">
+                        {f.name}{f.company ? <span className="text-gray-400 ml-1">({f.company})</span> : ''}
+                      </button>
+                    ))}
+                    {filteredFounders.length === 0 && (
+                      <button onMouseDown={createNewFounder} disabled={creatingFounder} className="w-full text-left px-3 py-2 text-sm text-blue-600 hover:bg-blue-50 transition-colors">
+                        {creatingFounder ? 'Creating...' : `+ Create "${founderSearch.trim()}"`}
+                      </button>
+                    )}
+                    {filteredFounders.length > 0 && !filteredFounders.find(f => f.name.toLowerCase() === founderSearch.trim().toLowerCase()) && (
+                      <button onMouseDown={createNewFounder} disabled={creatingFounder} className="w-full text-left px-3 py-2 text-sm text-blue-600 hover:bg-blue-50 border-t border-gray-100 transition-colors">
+                        {creatingFounder ? 'Creating...' : `+ Create "${founderSearch.trim()}"`}
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
               {founderId && <p className="text-xs text-gray-400 mt-2">CRM notes and call history will be automatically included.</p>}
             </div>
 

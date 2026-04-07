@@ -15,6 +15,8 @@ function getAnthropicClient() {
 
 // GET /api/calls/:founderId
 router.get('/:founderId', (req, res) => {
+  const founder = db.prepare('SELECT id FROM founders WHERE id = ? AND created_by = ? AND is_deleted = 0').get(req.params.founderId, req.user.id);
+  if (!founder) return res.status(404).json({ error: 'Founder not found' });
   const calls = db.prepare('SELECT c.*, u.name as logged_by FROM call_logs c LEFT JOIN users u ON c.created_by = u.id WHERE c.founder_id = ? ORDER BY c.created_at DESC').all(req.params.founderId);
   res.json(calls);
 });
@@ -24,7 +26,7 @@ router.post('/:founderId', async (req, res) => {
   const { transcript } = req.body;
   if (!transcript) return res.status(400).json({ error: 'Transcript required' });
 
-  const founder = db.prepare('SELECT * FROM founders WHERE id = ? AND is_deleted = 0').get(req.params.founderId);
+  const founder = db.prepare('SELECT * FROM founders WHERE id = ? AND created_by = ? AND is_deleted = 0').get(req.params.founderId, req.user.id);
   if (!founder) return res.status(404).json({ error: 'Founder not found' });
 
   const client = getAnthropicClient();

@@ -1,0 +1,289 @@
+import { useState, useCallback } from 'react';
+import { useAuth } from '../contexts/AuthContext';
+import { api } from '../utils/api';
+import StuLogo from '../components/StuLogo';
+
+const STAGE_OPTIONS = ['Pre-seed', 'Seed', 'Series A', 'Any'];
+
+function TagInput({ tags, onAdd, onRemove, placeholder }) {
+  const [value, setValue] = useState('');
+
+  function handleKeyDown(e) {
+    if (e.key === 'Enter' && value.trim()) {
+      e.preventDefault();
+      const trimmed = value.trim();
+      if (!tags.includes(trimmed)) onAdd(trimmed);
+      setValue('');
+    }
+    if (e.key === 'Backspace' && !value && tags.length > 0) {
+      onRemove(tags.length - 1);
+    }
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 p-2 min-h-[42px] bg-white border border-gray-200 rounded-lg focus-within:border-blue-400 focus-within:ring-2 focus-within:ring-blue-500/10 transition-all">
+      {tags.map((tag, i) => (
+        <span key={i} className="inline-flex items-center gap-1 px-2.5 py-1 bg-gray-100 text-gray-700 text-sm rounded-md">
+          {tag}
+          <button type="button" onClick={() => onRemove(i)} className="text-gray-400 hover:text-gray-600 ml-0.5">
+            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </span>
+      ))}
+      <input
+        type="text"
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        onKeyDown={handleKeyDown}
+        placeholder={tags.length === 0 ? placeholder : 'Add...'}
+        className="flex-1 min-w-[120px] text-sm text-gray-900 placeholder-gray-400 outline-none bg-transparent py-1 px-1"
+      />
+    </div>
+  );
+}
+
+const STEPS = [
+  {
+    id: 'geography',
+    title: 'Where do you source?',
+    subtitle: 'Add cities, regions, or metro areas where you look for founders. Press Enter after each one.',
+  },
+  {
+    id: 'signals',
+    title: 'What signals matter?',
+    subtitle: 'Define the schools, companies, and builder signals that catch your eye.',
+  },
+  {
+    id: 'focus',
+    title: 'What do you invest in?',
+    subtitle: 'Set your sector focus and preferred stage.',
+  },
+  {
+    id: 'review',
+    title: 'You\'re all set',
+    subtitle: 'Here\'s a summary of your sourcing criteria. You can always adjust these in Settings.',
+  },
+];
+
+export default function Onboarding() {
+  const { refreshUser } = useAuth();
+  const [step, setStep] = useState(0);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  // Sourcing criteria state
+  const [locations, setLocations] = useState([]);
+  const [schools, setSchools] = useState([]);
+  const [companies, setCompanies] = useState([]);
+  const [builderSignals, setBuilderSignals] = useState([]);
+  const [domains, setDomains] = useState([]);
+  const [stageFilter, setStageFilter] = useState('Pre-seed');
+
+  const addTag = useCallback((setter) => (tag) => setter(prev => [...prev, tag]), []);
+  const removeTag = useCallback((setter) => (index) => setter(prev => prev.filter((_, i) => i !== index)), []);
+
+  const canProceed = () => {
+    if (step === 0) return locations.length > 0;
+    if (step === 1) return schools.length > 0 || companies.length > 0 || builderSignals.length > 0;
+    if (step === 2) return domains.length > 0;
+    return true;
+  };
+
+  async function handleComplete() {
+    setSaving(true);
+    setError('');
+    try {
+      // Save all criteria
+      await Promise.all([
+        api.updateSetting('sourcing_locations', locations),
+        api.updateSetting('sourcing_schools', schools),
+        api.updateSetting('sourcing_companies', companies),
+        api.updateSetting('sourcing_builder_signals', builderSignals),
+        api.updateSetting('sourcing_domains', domains),
+        api.updateSetting('sourcing_stage_filter', stageFilter),
+      ]);
+      // Mark onboarding complete
+      await api.completeOnboarding();
+      // Refresh user state to pick up onboarding_complete = 1
+      await refreshUser();
+    } catch (err) {
+      setError(err.message);
+      setSaving(false);
+    }
+  }
+
+  const currentStep = STEPS[step];
+
+  return (
+    <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4">
+      <div className="w-full max-w-xl">
+        {/* Progress */}
+        <div className="flex items-center justify-center gap-2 mb-10">
+          {STEPS.map((s, i) => (
+            <div
+              key={s.id}
+              className={`h-1.5 rounded-full transition-all duration-300 ${
+                i <= step ? 'bg-gray-900 w-10' : 'bg-gray-200 w-6'
+              }`}
+            />
+          ))}
+        </div>
+
+        {/* Header */}
+        <div className="text-center mb-8">
+          <div className="flex justify-center mb-4">
+            <StuLogo size={36} />
+          </div>
+          <h1 className="text-2xl font-bold text-gray-900 tracking-tight">{currentStep.title}</h1>
+          <p className="text-sm text-gray-500 mt-2 max-w-md mx-auto">{currentStep.subtitle}</p>
+        </div>
+
+        {/* Content */}
+        <div className="bg-white border border-gray-200 rounded-xl p-6 shadow-sm">
+          {error && (
+            <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-sm text-red-600 mb-4">
+              {error}
+            </div>
+          )}
+
+          {step === 0 && (
+            <div className="space-y-4">
+              <div>
+                <label className="label">Target Locations</label>
+                <TagInput
+                  tags={locations}
+                  onAdd={addTag(setLocations)}
+                  onRemove={removeTag(setLocations)}
+                  placeholder="e.g. Chicago, New York, San Francisco..."
+                />
+                <p className="text-xs text-gray-400 mt-1.5">Cities, metro areas, or regions where you want to find founders</p>
+              </div>
+            </div>
+          )}
+
+          {step === 1 && (
+            <div className="space-y-5">
+              <div>
+                <label className="label">Target Schools</label>
+                <TagInput
+                  tags={schools}
+                  onAdd={addTag(setSchools)}
+                  onRemove={removeTag(setSchools)}
+                  placeholder="e.g. Stanford, MIT, University of Chicago..."
+                />
+                <p className="text-xs text-gray-400 mt-1.5">Schools whose alumni you want to track</p>
+              </div>
+              <div>
+                <label className="label">Target Companies</label>
+                <TagInput
+                  tags={companies}
+                  onAdd={addTag(setCompanies)}
+                  onRemove={removeTag(setCompanies)}
+                  placeholder="e.g. Google, Stripe, Palantir..."
+                />
+                <p className="text-xs text-gray-400 mt-1.5">Companies whose alumni signal high potential</p>
+              </div>
+              <div>
+                <label className="label">Builder Signals</label>
+                <TagInput
+                  tags={builderSignals}
+                  onAdd={addTag(setBuilderSignals)}
+                  onRemove={removeTag(setBuilderSignals)}
+                  placeholder="e.g. YC Alum, Previous Exit, PhD..."
+                />
+                <p className="text-xs text-gray-400 mt-1.5">Founder attributes that signal strong potential</p>
+              </div>
+            </div>
+          )}
+
+          {step === 2 && (
+            <div className="space-y-5">
+              <div>
+                <label className="label">Focus Domains</label>
+                <TagInput
+                  tags={domains}
+                  onAdd={addTag(setDomains)}
+                  onRemove={removeTag(setDomains)}
+                  placeholder="e.g. AI/ML, Fintech, Developer Tools..."
+                />
+                <p className="text-xs text-gray-400 mt-1.5">Industry verticals you invest in</p>
+              </div>
+              <div>
+                <label className="label">Stage Filter</label>
+                <select
+                  value={stageFilter}
+                  onChange={(e) => setStageFilter(e.target.value)}
+                  className="select w-full"
+                >
+                  {STAGE_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+                <p className="text-xs text-gray-400 mt-1.5">Preferred funding stage for sourcing</p>
+              </div>
+            </div>
+          )}
+
+          {step === 3 && (
+            <div className="space-y-4">
+              <SummaryRow label="Locations" items={locations} />
+              <SummaryRow label="Schools" items={schools} />
+              <SummaryRow label="Companies" items={companies} />
+              <SummaryRow label="Builder Signals" items={builderSignals} />
+              <SummaryRow label="Domains" items={domains} />
+              <div className="flex items-center justify-between py-2 border-b border-gray-100 last:border-0">
+                <span className="text-sm font-medium text-gray-500">Stage</span>
+                <span className="text-sm text-gray-900">{stageFilter}</span>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Navigation */}
+        <div className="flex items-center justify-between mt-6">
+          <button
+            onClick={() => setStep(s => s - 1)}
+            disabled={step === 0}
+            className="btn-ghost disabled:opacity-0"
+          >
+            Back
+          </button>
+
+          {step < STEPS.length - 1 ? (
+            <button
+              onClick={() => setStep(s => s + 1)}
+              disabled={!canProceed()}
+              className="btn-primary"
+            >
+              Continue
+            </button>
+          ) : (
+            <button
+              onClick={handleComplete}
+              disabled={saving}
+              className="btn-accent"
+            >
+              {saving ? 'Setting up...' : 'Launch Stu'}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SummaryRow({ label, items }) {
+  if (!items || items.length === 0) return null;
+  return (
+    <div className="py-2 border-b border-gray-100 last:border-0">
+      <span className="text-sm font-medium text-gray-500 block mb-1.5">{label}</span>
+      <div className="flex flex-wrap gap-1.5">
+        {items.map((item, i) => (
+          <span key={i} className="inline-flex px-2 py-0.5 bg-gray-100 text-gray-700 text-xs rounded-md">
+            {item}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}

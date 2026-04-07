@@ -153,6 +153,41 @@ function verifyIllinois(text, headline) {
   return { verified: false, type: null, location: null };
 }
 
+// ── Generic Location Verification (uses user's target locations) ──
+
+function verifyLocation(text, headline, criteria) {
+  const combined = ((headline || '') + ' ' + (text || '')).toLowerCase();
+  const userLocations = (criteria.locations || []).map(l => l.toLowerCase());
+  const userSchools = (criteria.schools || []).map(s => s.toLowerCase());
+
+  // Check current location match against user's target locations
+  for (const loc of userLocations) {
+    // Direct location mention
+    if (combined.includes(loc)) {
+      return { verified: true, type: 'current', location: loc.charAt(0).toUpperCase() + loc.slice(1) };
+    }
+  }
+
+  // Check school alumni match against user's target schools
+  for (const school of userSchools) {
+    if (combined.includes(school)) {
+      return { verified: true, type: 'school_alumni', location: school.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ') };
+    }
+  }
+
+  // Also check against elite schools if there's any location mention
+  const hasLocationMention = userLocations.some(loc => combined.includes(loc));
+  if (hasLocationMention) {
+    for (const school of ELITE_SCHOOLS) {
+      if (combined.includes(school)) {
+        return { verified: true, type: 'school_alumni', location: school.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ') };
+      }
+    }
+  }
+
+  return { verified: false, type: null, location: null };
+}
+
 function extractSignals(text, headline) {
   const combined = ((headline || '') + ' ' + (text || '')).toLowerCase();
   const pedigree = [];
@@ -319,8 +354,8 @@ function getTodaySearchGroup() {
 
 // ── Exa AI Search ──
 
-async function searchExa(query, numResults = 25) {
-  const apiKey = process.env.EXA_API_KEY;
+async function searchExa(query, numResults = 25, exaApiKey = null) {
+  const apiKey = exaApiKey || process.env.EXA_API_KEY;
   if (!apiKey) return { results: [], error: 'No EXA_API_KEY configured' };
 
   try {
@@ -346,27 +381,31 @@ async function searchExa(query, numResults = 25) {
 
 // ── GitHub Search ──
 
-async function searchGitHub() {
+async function searchGitHub(criteria, githubToken) {
   try {
-    const token = process.env.GITHUB_TOKEN;
+    const token = githubToken || process.env.GITHUB_TOKEN;
     const headers = { 'Accept': 'application/vnd.github.v3+json', 'User-Agent': 'Stu-Sourcing' };
     if (token) headers['Authorization'] = `token ${token}`;
 
-    const queries = [
-      'location:Chicago+type:user+repos:>5+followers:>20',
-      'location:Chicago+type:user+repos:>10+followers:>50',
-      'location:Chicago+type:user+repos:>3+followers:>10+created:>2023-01-01',
-      'location:Illinois+type:user+repos:>10+followers:>50',
-      'location:Evanston+type:user+repos:>3+followers:>10',
-      'location:"Urbana-Champaign"+type:user+repos:>5+followers:>20',
-      'location:Chicago+type:user+language:python+followers:>15',
-      'location:Chicago+type:user+language:typescript+followers:>15',
-      'location:Chicago+type:user+language:rust+followers:>10',
-      'location:Chicago+type:user+language:go+followers:>10',
-    ];
+    // Build queries dynamically from user's target locations
+    const locations = (criteria.locations || []).length > 0 ? criteria.locations : ['Chicago'];
+    const queries = [];
+    for (const loc of locations.slice(0, 5)) {
+      const encodedLoc = loc.includes(' ') ? `"${loc}"` : loc;
+      queries.push(`location:${encodedLoc}+type:user+repos:>5+followers:>20`);
+      queries.push(`location:${encodedLoc}+type:user+repos:>10+followers:>50`);
+    }
+    // Add language-specific queries for top 2 locations
+    const topLocs = locations.slice(0, 2);
+    for (const loc of topLocs) {
+      const encodedLoc = loc.includes(' ') ? `"${loc}"` : loc;
+      for (const lang of ['python', 'typescript', 'rust', 'go']) {
+        queries.push(`location:${encodedLoc}+type:user+language:${lang}+followers:>15`);
+      }
+    }
 
     const allUsers = [];
-    for (const q of queries) {
+    for (const q of queries.slice(0, 15)) {
       const resp = await httpGet(`https://api.github.com/search/users?q=${q}&sort=joined&order=desc&per_page=10`, headers);
       if (resp.status === 200 && resp.data.items) {
         allUsers.push(...resp.data.items);
@@ -391,8 +430,8 @@ async function searchGitHub() {
 
 // ── EnrichLayer (LinkedIn enrichment for top scorers) ──
 
-async function enrichWithLinkedIn(linkedinUrl) {
-  const apiKey = process.env.ENRICHLAYER_API_KEY;
+async function enrichWithLinkedIn(linkedinUrl, enrichlayerApiKey) {
+  const apiKey = enrichlayerApiKey || process.env.ENRICHLAYER_API_KEY;
   if (!apiKey || !linkedinUrl) return null;
 
   try {
@@ -465,12 +504,12 @@ Return ONLY valid JSON:
   "company_one_liner": "<what they're building, or 'Stealth' or 'Exploring' if unclear>"
 }`;
 
-async function scoreFounder(client, founder) {
+async function scoreFounder(client, founder, scoringPrompt) {
   try {
     const response = await client.messages.create({
       model: 'claude-sonnet-4-20250514',
       max_tokens: 768,
-      system: SCORING_PROMPT,
+      system: scoringPrompt || SCORING_PROMPT,
       messages: [{
         role: 'user',
         content: `Score this founder candidate:\n\nName: ${founder.name}\nHeadline: ${founder.headline || 'N/A'}\nCompany: ${founder.company || 'Unknown'}\nLinkedIn: ${founder.linkedin_url || 'N/A'}\nGitHub: ${founder.github_url || 'N/A'}\nSource: ${founder.source}\n\nProfile text:\n${(founder.text || '').slice(0, 4000)}`
@@ -499,27 +538,28 @@ async function scoreFounder(client, founder) {
 
 // ── Deduplication ──
 
-function isDuplicate(founder) {
-  // Check by LinkedIn URL
+function isDuplicate(founder, userId) {
+  // Check by LinkedIn URL (scoped to user)
   if (founder.linkedin_url) {
     const normalizedUrl = founder.linkedin_url.replace(/\/$/, '').toLowerCase();
-    const existing = db.prepare('SELECT id FROM founders WHERE LOWER(linkedin_url) LIKE ? AND is_deleted = 0').get(`%${normalizedUrl.split('/in/')[1] || normalizedUrl}%`);
+    const slug = normalizedUrl.split('/in/')[1] || normalizedUrl;
+    const existing = db.prepare('SELECT id FROM founders WHERE LOWER(linkedin_url) LIKE ? AND created_by = ? AND is_deleted = 0').get(`%${slug}%`, userId);
     if (existing) return true;
-    const sourced = db.prepare("SELECT id FROM sourced_founders WHERE LOWER(linkedin_url) LIKE ? AND status != 'dismissed'").get(`%${normalizedUrl.split('/in/')[1] || normalizedUrl}%`);
+    const sourced = db.prepare("SELECT id FROM sourced_founders WHERE LOWER(linkedin_url) LIKE ? AND user_id = ? AND status != 'dismissed'").get(`%${slug}%`, userId);
     if (sourced) return true;
   }
-  // Check by email
+  // Check by email (scoped to user)
   if (founder.email) {
-    const existing = db.prepare('SELECT id FROM founders WHERE email = ? AND is_deleted = 0').get(founder.email);
+    const existing = db.prepare('SELECT id FROM founders WHERE email = ? AND created_by = ? AND is_deleted = 0').get(founder.email, userId);
     if (existing) return true;
-    const sourced = db.prepare("SELECT id FROM sourced_founders WHERE email = ? AND status != 'dismissed'").get(founder.email);
+    const sourced = db.prepare("SELECT id FROM sourced_founders WHERE email = ? AND user_id = ? AND status != 'dismissed'").get(founder.email, userId);
     if (sourced) return true;
   }
-  // Check by name + company
+  // Check by name + company (scoped to user)
   if (founder.name && founder.company) {
-    const existing = db.prepare('SELECT id FROM founders WHERE LOWER(name) = LOWER(?) AND LOWER(company) = LOWER(?) AND is_deleted = 0').get(founder.name, founder.company);
+    const existing = db.prepare('SELECT id FROM founders WHERE LOWER(name) = LOWER(?) AND LOWER(company) = LOWER(?) AND created_by = ? AND is_deleted = 0').get(founder.name, founder.company, userId);
     if (existing) return true;
-    const sourced = db.prepare("SELECT id FROM sourced_founders WHERE LOWER(name) = LOWER(?) AND LOWER(company) = LOWER(?) AND status != 'dismissed'").get(founder.name, founder.company);
+    const sourced = db.prepare("SELECT id FROM sourced_founders WHERE LOWER(name) = LOWER(?) AND LOWER(company) = LOWER(?) AND user_id = ? AND status != 'dismissed'").get(founder.name, founder.company, userId);
     if (sourced) return true;
   }
   return false;
@@ -569,10 +609,184 @@ function getAllSearchQueries() {
   return all;
 }
 
-async function runSourcingEngine({ fullSweep = false } = {}) {
-  console.log(`[Sourcing] Starting sourcing run... (mode: ${fullSweep ? 'FULL SWEEP' : 'daily rotation'})`);
+// ── Per-user criteria loader ──
 
-  const run = db.prepare('INSERT INTO sourcing_runs (sources_hit) VALUES (?)').run(JSON.stringify([]));
+function loadUserCriteria(userId) {
+  const settingsRoute = require('../routes/settings');
+  // Read directly from DB, falling back to defaults
+  const DEFAULT_SETTINGS = {
+    sourcing_locations: JSON.stringify(['chicago', 'evanston', 'naperville', 'aurora', 'joliet', 'rockford', 'schaumburg', 'palatine', 'skokie', 'oak park', 'urbana', 'champaign']),
+    sourcing_schools: JSON.stringify(['university of illinois', 'northwestern university', 'university of chicago', 'illinois institute of technology', 'loyola chicago', 'depaul university']),
+    sourcing_companies: JSON.stringify(['google', 'meta', 'apple', 'amazon', 'microsoft', 'stripe', 'openai', 'anthropic', 'palantir', 'spacex', 'coinbase', 'datadog', 'snowflake']),
+    sourcing_builder_signals: JSON.stringify(['YC Alum', 'Techstars', 'Previous Exit', 'Serial Founder', 'PhD', 'Open Source', 'Patent Holder', 'Stealth Mode']),
+    sourcing_domains: JSON.stringify(['AI/ML', 'Fintech', 'Health Tech', 'Defense Tech', 'Climate Tech', 'Developer Tools', 'Vertical SaaS', 'Cybersecurity', 'Biotech']),
+    sourcing_stage_filter: 'Pre-seed',
+    sourcing_custom_queries: JSON.stringify([]),
+  };
+
+  const keys = Object.keys(DEFAULT_SETTINGS);
+  const rows = db.prepare(
+    `SELECT setting_key, setting_value FROM user_settings WHERE user_id = ? AND setting_key IN (${keys.map(() => '?').join(',')})`
+  ).all(userId, ...keys);
+
+  const userMap = {};
+  for (const row of rows) userMap[row.setting_key] = row.setting_value;
+
+  function parse(val) { try { return JSON.parse(val); } catch { return val; } }
+
+  return {
+    locations: parse(userMap.sourcing_locations || DEFAULT_SETTINGS.sourcing_locations),
+    schools: parse(userMap.sourcing_schools || DEFAULT_SETTINGS.sourcing_schools),
+    companies: parse(userMap.sourcing_companies || DEFAULT_SETTINGS.sourcing_companies),
+    builderSignals: parse(userMap.sourcing_builder_signals || DEFAULT_SETTINGS.sourcing_builder_signals),
+    domains: parse(userMap.sourcing_domains || DEFAULT_SETTINGS.sourcing_domains),
+    stageFilter: parse(userMap.sourcing_stage_filter || DEFAULT_SETTINGS.sourcing_stage_filter),
+    customQueries: parse(userMap.sourcing_custom_queries || DEFAULT_SETTINGS.sourcing_custom_queries),
+  };
+}
+
+function buildUserSearchQueries(criteria, fullSweep) {
+  const locs = criteria.locations.slice(0, 5); // Top 5 locations
+  const primaryLoc = locs[0] || 'Chicago';
+  const companies = criteria.companies.slice(0, 8);
+  const schools = criteria.schools.slice(0, 5);
+  const domains = criteria.domains.slice(0, 6);
+  const stage = criteria.stageFilter || 'Pre-seed';
+
+  const queries = [];
+
+  // Stealth founder queries per location
+  for (const loc of locs.slice(0, 3)) {
+    queries.push({ name: `Stealth founder ${loc}`, query: `stealth mode founder ${loc} building something new just left 2025 2026` });
+    queries.push({ name: `LinkedIn stealth ${loc}`, query: `site:linkedin.com/in "stealth" "${loc}" founder building` });
+    queries.push({ name: `Building new ${loc}`, query: `site:linkedin.com/in "building something new" ${loc} founder engineer` });
+  }
+
+  // Ex-company queries
+  for (const co of companies.slice(0, 5)) {
+    queries.push({ name: `Ex-${co} stealth ${primaryLoc}`, query: `left ${co} stealth new startup ${primaryLoc} founder ${stage} 2025` });
+  }
+
+  // School alumni queries
+  for (const school of schools.slice(0, 3)) {
+    queries.push({ name: `${school} founder stealth`, query: `site:linkedin.com/in "${school}" founder stealth building startup ${primaryLoc}` });
+  }
+
+  // Domain queries
+  for (const domain of domains.slice(0, 4)) {
+    queries.push({ name: `${domain} stealth ${primaryLoc}`, query: `${domain} stealth founder ${primaryLoc} new startup ${stage} 2025` });
+  }
+
+  // Generic high-signal queries
+  queries.push({ name: `Serial founder ${primaryLoc}`, query: `serial founder exited previous company building new startup ${primaryLoc} stealth ${stage} 2025` });
+  queries.push({ name: `${stage} ${primaryLoc}`, query: `site:linkedin.com/in "${stage}" ${primaryLoc} founder building` });
+  queries.push({ name: `YC alum new ${primaryLoc}`, query: `Y Combinator YC alumni starting new company ${primaryLoc} stealth exploring` });
+  queries.push({ name: `Just quit to build ${primaryLoc}`, query: `just quit left job to start build company ${primaryLoc} founder stealth 2025 2026` });
+
+  // Custom queries from user
+  for (const cq of (criteria.customQueries || [])) {
+    if (cq.query) queries.push({ name: cq.name || 'Custom query', query: cq.query });
+  }
+
+  if (!fullSweep) return queries.slice(0, 20); // Cap daily at 20
+  return queries;
+}
+
+function buildUserScoringPrompt(criteria) {
+  const locations = criteria.locations.join(', ') || 'your target geographies';
+  const schools = criteria.schools.join(', ') || 'target institutions';
+  const companies = criteria.companies.join(', ') || 'top tech companies';
+  const domains = criteria.domains.join(', ') || 'technology sectors';
+  const stage = criteria.stageFilter || 'Pre-seed';
+
+  return `You are a deal sourcing analyst for a venture fund focused on ${stage} stage investing.
+
+Score this founder candidate 1-10 on fit. The fund invests at ${stage} stage. We are looking for:
+1. People in STEALTH MODE — just left a job, building something new, haven't raised yet
+2. Potential founders — exceptional builders at top companies who look like they're about to start something
+3. Very early-stage founders — pre-seed, maybe angel round, no institutional funding yet
+
+CRITICAL DISQUALIFIERS (auto-score 1-3):
+- Company has ALREADY RAISED Series A or later → score 1-2 (too late)
+- Company has raised a large seed ($5M+) → score 2-3 (likely too late)
+- Company is established/mature (founded 3+ years ago with meaningful revenue/team) → score 1-3
+- Person is a senior exec at an established company with no sign of leaving → score 2-3
+- The person is clearly a job-seeker, not a founder/builder → score 1-2
+
+GEOGRAPHY (25% weight):
+Target locations: ${locations}
+- 9-10: Currently building in a target location. Deep local roots.
+- 7-8: Based in or near target locations. Attended local institutions (${schools}). Previously lived/worked there.
+- 5-6: Nearby region or meaningful ties. Elite institution grad with local connection.
+- 3-4: National with no direct geographic connection but genuinely exceptional caliber.
+- 1-2: No geographic fit and not exceptional enough to overcome.
+
+FOUNDER CALIBER (35% weight):
+Target companies: ${companies}
+- 9-10: Previously exited a company. Serial founder. Product/eng leadership at target companies or equivalent. YC/TechStars alum. PhD commercializing.
+- 7-8: Staff+ engineer at notable tech company. Elite institution. First-time founder with exceptional domain expertise.
+- 5-6: Solid professional background. Good institution. Relevant industry experience.
+- 3-4: Junior or unclear background. Limited evidence of building ability.
+- 1-2: No evidence of relevant experience or building.
+
+STAGE & TIMING (25% weight):
+- 9-10: STEALTH MODE. Just left a top company to build something new. Pre-product, pre-revenue. No funding yet.
+- 7-8: Very early. Has a prototype or MVP. Pre-seed or small angel round. Founded in last 12 months.
+- 5-6: Exploring, thinking about starting something. Still employed but clearly building on the side.
+- 3-4: Has raised a seed round ($2-4M). Getting late.
+- 1-2: Series A or later. Established company.
+
+SECTOR FIT (15% weight):
+Target sectors: ${domains}
+
+Return ONLY valid JSON:
+{
+  "confidence_score": <1-10 integer>,
+  "confidence_rationale": "<2-3 sentences explaining fit>",
+  "tags": ["<domain>", "<stage>", "<geography>", "<signal>"],
+  "chicago_connection": "<one sentence: their specific geographic tie to your target locations>",
+  "pedigree_signals": ["<school or company pedigree>"],
+  "builder_signals": ["<evidence of building>"],
+  "company_one_liner": "<what they're building, or 'Stealth' or 'Exploring' if unclear>"
+}`;
+}
+
+// ── User API Key Loader ──
+
+function loadUserApiKeys(userId) {
+  const rows = db.prepare(
+    "SELECT setting_key, setting_value FROM user_settings WHERE user_id = ? AND setting_key IN ('api_key_exa', 'api_key_anthropic', 'api_key_enrichlayer', 'api_key_github')"
+  ).all(userId);
+
+  const keys = {};
+  for (const row of rows) keys[row.setting_key] = row.setting_value;
+
+  // User_id 1 (original admin) falls back to env vars for backward compat
+  return {
+    exa: keys.api_key_exa || (userId === 1 ? process.env.EXA_API_KEY : null),
+    anthropic: keys.api_key_anthropic || (userId === 1 ? process.env.ANTHROPIC_API_KEY : null),
+    enrichlayer: keys.api_key_enrichlayer || (userId === 1 ? process.env.ENRICHLAYER_API_KEY : null),
+    github: keys.api_key_github || (userId === 1 ? process.env.GITHUB_TOKEN : null),
+  };
+}
+
+async function runSourcingEngine({ fullSweep = false, userId = 1 } = {}) {
+  console.log(`[Sourcing] Starting sourcing run for user ${userId}... (mode: ${fullSweep ? 'FULL SWEEP' : 'daily rotation'})`);
+
+  // Load user-specific criteria and API keys
+  const criteria = loadUserCriteria(userId);
+  const apiKeys = loadUserApiKeys(userId);
+
+  // Require at minimum an Exa key to run sourcing
+  if (!apiKeys.exa) {
+    console.log(`[Sourcing] User ${userId} has no Exa API key configured — skipping sourcing run`);
+    return { totalFound: 0, totalAdded: 0, totalDeduped: 0, totalFiltered: 0, errors: [{ source: 'config', error: 'No Exa API key configured. Add your API key in Settings.' }] };
+  }
+
+  console.log(`[Sourcing] User ${userId} criteria: ${criteria.locations.length} locations, ${criteria.schools.length} schools, ${criteria.companies.length} companies, ${criteria.domains.length} domains`);
+  console.log(`[Sourcing] User ${userId} API keys: Exa=${apiKeys.exa ? 'yes' : 'no'}, Anthropic=${apiKeys.anthropic ? 'yes' : 'no'}, Enrich=${apiKeys.enrichlayer ? 'yes' : 'no'}, GitHub=${apiKeys.github ? 'yes' : 'no'}`);
+
+  const run = db.prepare('INSERT INTO sourcing_runs (sources_hit, user_id) VALUES (?, ?)').run(JSON.stringify([]), userId);
   const runId = run.lastInsertRowid;
 
   const sourcesHit = [];
@@ -583,13 +797,10 @@ async function runSourcingEngine({ fullSweep = false } = {}) {
   let totalFiltered = 0;
 
   // ── Phase 1: Exa AI searches ──
-  // Full sweep: run ALL queries across all days. Manual trigger or first run.
-  // Daily: just today's rotation + stealth queries.
-  const searchGroup = fullSweep
-    ? getAllSearchQueries()
-    : [...getTodaySearchGroup(), ...DAILY_STEALTH_QUERIES];
+  // Build search queries from user criteria
+  const searchGroup = buildUserSearchQueries(criteria, fullSweep);
   const dayName = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][new Date().getDay()];
-  console.log(`[Sourcing] Today is ${dayName} — running ${searchGroup.length} Exa queries${fullSweep ? ' (FULL SWEEP — all days)' : ` (${searchGroup.length - DAILY_STEALTH_QUERIES.length} themed + ${DAILY_STEALTH_QUERIES.length} stealth)`}`);
+  console.log(`[Sourcing] Today is ${dayName} — running ${searchGroup.length} Exa queries for user ${userId}${fullSweep ? ' (FULL SWEEP)' : ' (daily)'}`);
 
   const exaCandidates = [];
 
@@ -597,7 +808,7 @@ async function runSourcingEngine({ fullSweep = false } = {}) {
 
   for (const search of searchGroup) {
     console.log(`[Sourcing][Exa] ${search.name}...`);
-    const { results, error } = await searchExa(search.query, resultsPerQuery);
+    const { results, error } = await searchExa(search.query, resultsPerQuery, apiKeys.exa);
 
     if (error) {
       console.error(`[Sourcing][Exa] ${search.name} error: ${error}`);
@@ -616,8 +827,8 @@ async function runSourcingEngine({ fullSweep = false } = {}) {
       // Only interested in LinkedIn profiles or personal pages
       const isLinkedIn = url.includes('linkedin.com/in/');
 
-      // Verify Illinois connection
-      const il = verifyIllinois(text, headline);
+      // Verify location connection using user's target locations
+      const il = verifyLocation(text, headline, criteria);
       if (!il.verified) {
         totalFiltered++;
         continue;
@@ -650,20 +861,20 @@ async function runSourcingEngine({ fullSweep = false } = {}) {
       });
     }
 
-    console.log(`[Sourcing][Exa] ${search.name}: ${results.length} results → ${verified} IL-verified`);
+    console.log(`[Sourcing][Exa] ${search.name}: ${results.length} results → ${verified} location-verified`);
     totalFound += results.length;
   }
 
   // ── Phase 2: GitHub search ──
   console.log('[Sourcing][GitHub] Searching...');
-  const githubResults = await searchGitHub();
+  const githubResults = await searchGitHub(criteria, apiKeys.github);
   console.log(`[Sourcing][GitHub] Found ${githubResults.length} users`);
   sourcesHit.push('github');
   totalFound += githubResults.length;
 
   // Process GitHub results through IL verification
   for (const gh of githubResults) {
-    const il = verifyIllinois(gh.text, gh.headline);
+    const il = verifyLocation(gh.text, gh.headline, criteria);
     if (il.verified) {
       exaCandidates.push({
         ...gh,
@@ -692,7 +903,7 @@ async function runSourcingEngine({ fullSweep = false } = {}) {
     }
     seen.add(key);
 
-    if (isDuplicate(c)) {
+    if (isDuplicate(c, userId)) {
       totalDeduped++;
       continue;
     }
@@ -702,15 +913,19 @@ async function runSourcingEngine({ fullSweep = false } = {}) {
   console.log(`[Sourcing] ${uniqueCandidates.length} unique, new candidates to score`);
 
   // ── Phase 4: Claude scoring ──
-  const anthropic = getAnthropicClient();
+  const anthropic = apiKeys.anthropic ? (() => {
+    try { const Anthropic = require('@anthropic-ai/sdk'); return new Anthropic({ apiKey: apiKeys.anthropic }); } catch { return null; }
+  })() : getAnthropicClient();
+  const userScoringPrompt = buildUserScoringPrompt(criteria);
   const insertStmt = db.prepare(`
     INSERT INTO sourced_founders (
       name, company, role, linkedin_url, email, source,
       confidence_score, confidence_rationale, raw_data,
       headline, location_city, location_type, chicago_connection,
       tags, search_query, company_one_liner,
-      pedigree_signals, builder_signals, github_url, website_url
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      pedigree_signals, builder_signals, github_url, website_url,
+      user_id
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   for (const candidate of uniqueCandidates) {
@@ -732,7 +947,7 @@ async function runSourcingEngine({ fullSweep = false } = {}) {
     };
 
     if (anthropic) {
-      score = await scoreFounder(anthropic, candidate);
+      score = await scoreFounder(anthropic, candidate, userScoringPrompt);
     }
 
     // Merge extracted signals with AI signals
@@ -760,7 +975,8 @@ async function runSourcingEngine({ fullSweep = false } = {}) {
         JSON.stringify(allPedigree),
         JSON.stringify(allBuilder),
         candidate.github_url || null,
-        null
+        null,
+        userId
       );
       totalAdded++;
 
@@ -773,17 +989,17 @@ async function runSourcingEngine({ fullSweep = false } = {}) {
   }
 
   // ── Phase 5: EnrichLayer for top scorers ──
-  if (process.env.ENRICHLAYER_API_KEY) {
+  if (apiKeys.enrichlayer) {
     const topScorers = db.prepare(
-      "SELECT id, linkedin_url FROM sourced_founders WHERE status = 'pending' AND confidence_score >= 8 AND linkedin_url IS NOT NULL AND enriched_data IS NULL ORDER BY confidence_score DESC LIMIT 5"
-    ).all();
+      "SELECT id, linkedin_url FROM sourced_founders WHERE status = 'pending' AND user_id = ? AND confidence_score >= 8 AND linkedin_url IS NOT NULL AND enriched_data IS NULL ORDER BY confidence_score DESC LIMIT 5"
+    ).all(userId);
 
     if (topScorers.length > 0) {
       console.log(`[Sourcing][Enrich] Enriching ${topScorers.length} top scorers...`);
       for (const s of topScorers) {
-        const data = await enrichWithLinkedIn(s.linkedin_url);
+        const data = await enrichWithLinkedIn(s.linkedin_url, apiKeys.enrichlayer);
         if (data) {
-          db.prepare('UPDATE sourced_founders SET enriched_data = ? WHERE id = ?').run(JSON.stringify(data), s.id);
+          db.prepare('UPDATE sourced_founders SET enriched_data = ? WHERE id = ? AND user_id = ?').run(JSON.stringify(data), s.id, userId);
           console.log(`[Sourcing][Enrich] Enriched ${s.linkedin_url}`);
         }
         // Rate limit: 800ms between requests
@@ -798,11 +1014,11 @@ async function runSourcingEngine({ fullSweep = false } = {}) {
   );
 
   // ── Phase 7: Slack notification ──
-  const topPick = db.prepare("SELECT name, company, confidence_score, chicago_connection FROM sourced_founders WHERE status = 'pending' ORDER BY confidence_score DESC, created_at DESC LIMIT 1").get();
-  const pendingCount = db.prepare("SELECT COUNT(*) as c FROM sourced_founders WHERE status = 'pending'").get().c;
+  const topPick = db.prepare("SELECT name, company, confidence_score, chicago_connection FROM sourced_founders WHERE status = 'pending' AND user_id = ? ORDER BY confidence_score DESC, created_at DESC LIMIT 1").get(userId);
+  const pendingCount = db.prepare("SELECT COUNT(*) as c FROM sourced_founders WHERE status = 'pending' AND user_id = ?").get(userId).c;
 
   const slackMsg = `*Stu Sourcing Run Complete* (${dayName})\n` +
-    `${totalAdded} new founders added · ${totalDeduped} duplicates filtered · ${totalFiltered} non-IL filtered\n` +
+    `${totalAdded} new founders added · ${totalDeduped} duplicates filtered · ${totalFiltered} location-filtered\n` +
     `${pendingCount} total pending review\n` +
     (topPick ? `Top pick: *${topPick.name}*${topPick.company ? ` (${topPick.company})` : ''} — Score: ${topPick.confidence_score}/10${topPick.chicago_connection ? ` · ${topPick.chicago_connection}` : ''}` : 'No new founders found');
 

@@ -44,6 +44,9 @@ seedIfEmpty();
       db.prepare("INSERT INTO migration_flags (key) VALUES ('airtable_backfill_ids_v1')").run();
       console.log('[Migration] Airtable ID backfill complete.');
     }
+    // Incremental Airtable → Stu sync (runs every startup, imports new founders)
+    const { syncFromAirtable } = require('./services/airtable-import');
+    syncFromAirtable().catch(err => console.error('[AirtableImport] Startup sync error:', err.message));
   } catch (err) {
     console.error('[Migration] Airtable import error:', err.message);
   }
@@ -62,8 +65,10 @@ app.use(cors({
   origin: (origin, cb) => {
     // Same-origin requests (no origin header) or production domain
     if (!origin || allowedOrigins.includes(origin)) return cb(null, true);
-    // Allow stu.vc in any protocol variant
-    if (origin.includes('stu.vc')) return cb(null, true);
+    // Allow stu.vc and subdomains only
+    if (/^https?:\/\/(.*\.)?stu\.vc$/.test(origin)) return cb(null, true);
+    // Allow any localhost port in development
+    if (process.env.NODE_ENV !== 'production' && /^http:\/\/localhost:\d+$/.test(origin)) return cb(null, true);
     cb(new Error('Not allowed by CORS'));
   },
   credentials: true
@@ -74,6 +79,7 @@ app.use(express.json({ limit: '50mb' }));
 // Rate limiting
 app.use('/api', rateLimit({ windowMs: 15 * 60 * 1000, max: 200, standardHeaders: true, legacyHeaders: false }));
 app.use('/api/ai', rateLimit({ windowMs: 15 * 60 * 1000, max: 50, standardHeaders: true, legacyHeaders: false }));
+app.use('/api/auth/register', rateLimit({ windowMs: 15 * 60 * 1000, max: 5, standardHeaders: true, legacyHeaders: false }));
 
 // Public routes
 app.get('/api/health', (req, res) => res.json({ status: 'ok', app: 'Stu', version: '2.0.0' }));
@@ -91,6 +97,7 @@ app.use('/api/stu', requireAuth, require('./routes/stu'));
 app.use('/api/memos', requireAuth, require('./routes/memos'));
 app.use('/api/files', requireAuth, require('./routes/files'));
 app.use('/api/search', requireAuth, require('./routes/search'));
+app.use('/api/settings', requireAuth, require('./routes/settings'));
 
 // Serve static in production
 const clientDist = path.join(__dirname, '..', 'client', 'dist');

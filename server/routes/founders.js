@@ -12,6 +12,7 @@ router.get('/', (req, res) => {
   const { search, status, domain, stage, source, minScore, sort, order, track, deal_status, resident_status, admissions_status } = req.query;
   let where = ['f.is_deleted = 0'];
   const params = [];
+  where.push('f.created_by = ?'); params.push(req.user.id);
 
   if (search) {
     where.push("(f.name LIKE ? OR f.company LIKE ? OR f.email LIKE ? OR f.company_one_liner LIKE ?)");
@@ -45,27 +46,27 @@ router.get('/', (req, res) => {
 
 // GET /api/founders/stats
 router.get('/stats', (req, res) => {
-  const total = db.prepare('SELECT COUNT(*) as c FROM founders WHERE is_deleted = 0').get().c;
-  const byStatus = db.prepare('SELECT status, COUNT(*) as count FROM founders WHERE is_deleted = 0 GROUP BY status').all();
-  const byDomain = db.prepare('SELECT domain, COUNT(*) as count FROM founders WHERE is_deleted = 0 AND domain IS NOT NULL GROUP BY domain').all();
-  const recentlyAdded = db.prepare('SELECT id, name, company, status, fit_score, pipeline_tracks, deal_status, resident_status, created_at FROM founders WHERE is_deleted = 0 ORDER BY created_at DESC LIMIT 5').all();
-  const topScored = db.prepare('SELECT id, name, company, fit_score, status FROM founders WHERE is_deleted = 0 AND fit_score IS NOT NULL ORDER BY fit_score DESC LIMIT 5').all();
-  const sourcedPending = db.prepare('SELECT COUNT(*) as c FROM sourced_founders WHERE status = ?').get('pending').c;
+  const total = db.prepare('SELECT COUNT(*) as c FROM founders WHERE is_deleted = 0 AND created_by = ?').get(req.user.id).c;
+  const byStatus = db.prepare('SELECT status, COUNT(*) as count FROM founders WHERE is_deleted = 0 AND created_by = ? GROUP BY status').all(req.user.id);
+  const byDomain = db.prepare('SELECT domain, COUNT(*) as count FROM founders WHERE is_deleted = 0 AND created_by = ? AND domain IS NOT NULL GROUP BY domain').all(req.user.id);
+  const recentlyAdded = db.prepare('SELECT id, name, company, status, fit_score, pipeline_tracks, deal_status, resident_status, created_at FROM founders WHERE is_deleted = 0 AND created_by = ? ORDER BY created_at DESC LIMIT 5').all(req.user.id);
+  const topScored = db.prepare('SELECT id, name, company, fit_score, status FROM founders WHERE is_deleted = 0 AND created_by = ? AND fit_score IS NOT NULL ORDER BY fit_score DESC LIMIT 5').all(req.user.id);
+  const sourcedPending = db.prepare('SELECT COUNT(*) as c FROM sourced_founders WHERE status = ? AND user_id = ?').get('pending', req.user.id).c;
 
   // Track counts
-  const admissions = db.prepare("SELECT COUNT(*) as c FROM founders WHERE is_deleted = 0 AND pipeline_tracks LIKE '%admissions%'").get().c;
-  const residents = db.prepare("SELECT COUNT(*) as c FROM founders WHERE is_deleted = 0 AND (pipeline_tracks LIKE '%resident%' OR pipeline_tracks LIKE '%admissions%')").get().c;
-  const investments = db.prepare("SELECT COUNT(*) as c FROM founders WHERE is_deleted = 0 AND pipeline_tracks LIKE '%investment%'").get().c;
-  const byDealStatus = db.prepare("SELECT deal_status, COUNT(*) as count FROM founders WHERE is_deleted = 0 AND pipeline_tracks LIKE '%investment%' AND deal_status IS NOT NULL GROUP BY deal_status ORDER BY count DESC").all();
-  const byResidentStatus = db.prepare("SELECT resident_status, COUNT(*) as count FROM founders WHERE is_deleted = 0 AND (pipeline_tracks LIKE '%resident%' OR pipeline_tracks LIKE '%admissions%') AND resident_status IS NOT NULL GROUP BY resident_status ORDER BY count DESC").all();
-  const byAdmissionsStatus = db.prepare("SELECT admissions_status, COUNT(*) as count FROM founders WHERE is_deleted = 0 AND pipeline_tracks LIKE '%admissions%' AND admissions_status IS NOT NULL GROUP BY admissions_status ORDER BY count DESC").all();
+  const admissions = db.prepare("SELECT COUNT(*) as c FROM founders WHERE is_deleted = 0 AND created_by = ? AND pipeline_tracks LIKE '%admissions%'").get(req.user.id).c;
+  const residents = db.prepare("SELECT COUNT(*) as c FROM founders WHERE is_deleted = 0 AND created_by = ? AND (pipeline_tracks LIKE '%resident%' OR pipeline_tracks LIKE '%admissions%')").get(req.user.id).c;
+  const investments = db.prepare("SELECT COUNT(*) as c FROM founders WHERE is_deleted = 0 AND created_by = ? AND pipeline_tracks LIKE '%investment%'").get(req.user.id).c;
+  const byDealStatus = db.prepare("SELECT deal_status, COUNT(*) as count FROM founders WHERE is_deleted = 0 AND created_by = ? AND pipeline_tracks LIKE '%investment%' AND deal_status IS NOT NULL GROUP BY deal_status ORDER BY count DESC").all(req.user.id);
+  const byResidentStatus = db.prepare("SELECT resident_status, COUNT(*) as count FROM founders WHERE is_deleted = 0 AND created_by = ? AND (pipeline_tracks LIKE '%resident%' OR pipeline_tracks LIKE '%admissions%') AND resident_status IS NOT NULL GROUP BY resident_status ORDER BY count DESC").all(req.user.id);
+  const byAdmissionsStatus = db.prepare("SELECT admissions_status, COUNT(*) as count FROM founders WHERE is_deleted = 0 AND created_by = ? AND pipeline_tracks LIKE '%admissions%' AND admissions_status IS NOT NULL GROUP BY admissions_status ORDER BY count DESC").all(req.user.id);
 
   res.json({ total, byStatus, byDomain, recentlyAdded, topScored, sourcedPending, admissions, residents, investments, byDealStatus, byResidentStatus, byAdmissionsStatus });
 });
 
 // GET /api/founders/:id
 router.get('/:id', (req, res) => {
-  const founder = db.prepare('SELECT f.*, u.name as created_by_name FROM founders f LEFT JOIN users u ON f.created_by = u.id WHERE f.id = ? AND f.is_deleted = 0').get(req.params.id);
+  const founder = db.prepare('SELECT f.*, u.name as created_by_name FROM founders f LEFT JOIN users u ON f.created_by = u.id WHERE f.id = ? AND f.created_by = ? AND f.is_deleted = 0').get(req.params.id, req.user.id);
   if (!founder) return res.status(404).json({ error: 'Founder not found' });
 
   const notes = db.prepare('SELECT n.*, u.name as author FROM founder_notes n LEFT JOIN users u ON n.created_by = u.id WHERE n.founder_id = ? ORDER BY n.created_at DESC').all(req.params.id);
@@ -102,7 +103,7 @@ router.post('/', (req, res) => {
 
 // PUT /api/founders/:id
 router.put('/:id', (req, res) => {
-  const founder = db.prepare('SELECT * FROM founders WHERE id = ? AND is_deleted = 0').get(req.params.id);
+  const founder = db.prepare('SELECT * FROM founders WHERE id = ? AND created_by = ? AND is_deleted = 0').get(req.params.id, req.user.id);
   if (!founder) return res.status(404).json({ error: 'Founder not found' });
 
   const fields = [
@@ -138,9 +139,9 @@ router.put('/:id', (req, res) => {
   if (updates.length === 0) return res.status(400).json({ error: 'No fields to update' });
 
   updates.push('updated_at = CURRENT_TIMESTAMP');
-  params.push(req.params.id);
+  params.push(req.params.id, req.user.id);
 
-  db.prepare(`UPDATE founders SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+  db.prepare(`UPDATE founders SET ${updates.join(', ')} WHERE id = ? AND created_by = ?`).run(...params);
   const updated = db.prepare('SELECT * FROM founders WHERE id = ?').get(req.params.id);
 
   // Fire-and-forget Airtable sync on stage changes
@@ -165,11 +166,24 @@ router.put('/:id', (req, res) => {
 
 // DELETE /api/founders/:id (soft delete)
 router.delete('/:id', (req, res) => {
-  const founder = db.prepare('SELECT * FROM founders WHERE id = ? AND is_deleted = 0').get(req.params.id);
+  const founder = db.prepare('SELECT * FROM founders WHERE id = ? AND created_by = ? AND is_deleted = 0').get(req.params.id, req.user.id);
   if (!founder) return res.status(404).json({ error: 'Founder not found' });
 
-  db.prepare('UPDATE founders SET is_deleted = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(req.params.id);
+  db.prepare('UPDATE founders SET is_deleted = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND created_by = ?').run(req.params.id, req.user.id);
   res.json({ message: 'Founder removed' });
+});
+
+// POST /api/founders/sync-airtable — trigger incremental Airtable → Stu sync
+router.post('/sync-airtable', async (req, res) => {
+  if (req.user.id !== 1) return res.status(403).json({ error: 'Airtable sync is not available for your account' });
+  try {
+    const { syncFromAirtable } = require('../services/airtable-import');
+    const result = await syncFromAirtable();
+    res.json(result);
+  } catch (err) {
+    console.error('[AirtableSync] Import failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 module.exports = router;

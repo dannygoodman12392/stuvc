@@ -9,8 +9,9 @@ router.get('/', (req, res) => {
     FROM deal_room d
     LEFT JOIN founders f ON d.founder_id = f.id
     LEFT JOIN opportunity_assessments a ON d.assessment_id = a.id
+    WHERE f.created_by = ?
     ORDER BY d.created_at DESC
-  `).all();
+  `).all(req.user.id);
   res.json(deals);
 });
 
@@ -20,8 +21,8 @@ router.get('/:id', (req, res) => {
     SELECT d.*, f.name as founder_name, f.company as founder_company
     FROM deal_room d
     LEFT JOIN founders f ON d.founder_id = f.id
-    WHERE d.id = ?
-  `).get(req.params.id);
+    WHERE d.id = ? AND f.created_by = ?
+  `).get(req.params.id, req.user.id);
   if (!deal) return res.status(404).json({ error: 'Deal not found' });
   res.json(deal);
 });
@@ -31,6 +32,9 @@ router.post('/', (req, res) => {
   const { founder_id, assessment_id } = req.body;
   if (!founder_id) return res.status(400).json({ error: 'Founder ID required' });
 
+  const founder = db.prepare('SELECT id FROM founders WHERE id = ? AND created_by = ? AND is_deleted = 0').get(founder_id, req.user.id);
+  if (!founder) return res.status(404).json({ error: 'Founder not found' });
+
   const result = db.prepare('INSERT INTO deal_room (founder_id, assessment_id, created_by) VALUES (?, ?, ?)').run(founder_id, assessment_id || null, req.user.id);
   const deal = db.prepare('SELECT * FROM deal_room WHERE id = ?').get(result.lastInsertRowid);
   res.status(201).json(deal);
@@ -38,7 +42,7 @@ router.post('/', (req, res) => {
 
 // PUT /api/deal-room/:id
 router.put('/:id', (req, res) => {
-  const deal = db.prepare('SELECT * FROM deal_room WHERE id = ?').get(req.params.id);
+  const deal = db.prepare('SELECT d.* FROM deal_room d JOIN founders f ON d.founder_id = f.id WHERE d.id = ? AND f.created_by = ?').get(req.params.id, req.user.id);
   if (!deal) return res.status(404).json({ error: 'Deal not found' });
 
   const fields = ['ic_memo', 'round_terms', 'returns_model', 'decision', 'decision_rationale', 'decision_date'];
