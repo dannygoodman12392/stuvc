@@ -371,4 +371,71 @@ if (!payFlag) {
   console.log('[DB] Payment migration complete — existing users granted free access');
 }
 
+// ── One-time: restore Danny's sourcing criteria (user_id=1 only) ──
+const criteriaFlag = db.prepare("SELECT * FROM migration_flags WHERE key = 'danny_criteria_v1'").get();
+if (!criteriaFlag) {
+  const upsert = db.prepare(`
+    INSERT INTO user_settings (user_id, setting_key, setting_value, updated_at)
+    VALUES (1, ?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(user_id, setting_key)
+    DO UPDATE SET setting_value = excluded.setting_value, updated_at = CURRENT_TIMESTAMP
+  `);
+
+  const criteria = {
+    sourcing_locations: JSON.stringify([
+      'chicago','evanston','naperville','oak park','skokie','schaumburg',
+      'urbana','champaign','bloomington','rockford','aurora','joliet',
+      'palatine','deerfield','highland park','lake forest','winnetka',
+      'wilmette','hinsdale','river north','wicker park','lincoln park',
+      'west loop','loop','hyde park','pilsen'
+    ]),
+    sourcing_schools: JSON.stringify([
+      'northwestern university','university of chicago','university of illinois',
+      'illinois institute of technology','loyola university chicago','depaul university',
+      'university of illinois chicago','northwestern kellogg','booth school of business',
+      'illinois urbana-champaign','uiuc','northwestern mccormick'
+    ]),
+    sourcing_companies: JSON.stringify([
+      'google','meta','apple','amazon','microsoft','stripe','openai','anthropic',
+      'palantir','spacex','coinbase','datadog','snowflake','databricks','figma',
+      'notion','linear','vercel','scale ai','anduril','shield ai',
+      'brex','ramp','plaid','robinhood','square','block',
+      'tesla','nvidia','uber','lyft','airbnb','doordash','instacart',
+      'grubhub','groupon','avant','sprout social','tempus','relativity',
+      'enova','reverb','braintree','uptake','sertifi',
+      'mckinsey','bain','bcg','a16z','sequoia','benchmark'
+    ]),
+    sourcing_builder_signals: JSON.stringify([
+      'YC Alum','Y Combinator','South Park Commons','SPC','Founders Inc',
+      'Z Fellows','Thiel Fellow','On Deck','Entrepreneur First','TechStars',
+      'Previous Exit','Serial Founder','Second-time Founder','Exited Founder',
+      'PhD','Stanford PhD','MIT PhD',
+      'Former CTO','Former VP Engineering','Former VP Product',
+      'Staff Engineer','Principal Engineer','Founding Engineer',
+      'Head of Product','Head of Growth','Head of Engineering',
+      'Stealth Mode','Building something new','Just left',
+      'Open Source','Patent Holder','Forbes 30 Under 30'
+    ]),
+    sourcing_domains: JSON.stringify([
+      'AI/ML','Vertical AI','AI Infrastructure','Applied AI',
+      'Fintech','Defense Tech','Climate Tech','Health Tech',
+      'Developer Tools','DevOps','Cybersecurity',
+      'Vertical SaaS','Enterprise SaaS','B2B SaaS',
+      'Biotech','Proptech','Edtech','Legaltech',
+      'Robotics','Hardware','Deep Tech'
+    ]),
+    sourcing_stage_filter: 'Pre-seed',
+    sourcing_custom_queries: JSON.stringify([]),
+  };
+
+  db.transaction(() => {
+    for (const [key, value] of Object.entries(criteria)) {
+      upsert.run(key, value);
+    }
+  })();
+
+  db.prepare("INSERT INTO migration_flags (key) VALUES ('danny_criteria_v1')").run();
+  console.log('[DB] Danny sourcing criteria restored (user_id=1 only)');
+}
+
 module.exports = db;
