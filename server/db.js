@@ -467,4 +467,48 @@ if (!schoolsFlag) {
   console.log('[DB] Danny schools updated with elite institutions (user_id=1 only)');
 }
 
+// ── One-time: clean Danny's sourcing inbox — dismiss founders with no Chicago/IL connection ──
+const inboxCleanFlag = db.prepare("SELECT * FROM migration_flags WHERE key = 'danny_inbox_clean_v1'").get();
+if (!inboxCleanFlag) {
+  // Danny's criteria locations + schools
+  const locations = [
+    'chicago','evanston','naperville','oak park','skokie','schaumburg',
+    'urbana','champaign','bloomington','rockford','aurora','joliet',
+    'palatine','deerfield','highland park','lake forest','winnetka',
+    'wilmette','hinsdale','river north','wicker park','lincoln park',
+    'west loop','loop','hyde park','pilsen','illinois'
+  ];
+  const ilSchools = [
+    'northwestern','university of chicago','uchicago','booth','kellogg',
+    'university of illinois','uiuc','illinois institute','iit',
+    'loyola','depaul','mccormick'
+  ];
+
+  const pending = db.prepare(
+    "SELECT id, name, headline, raw_data, location_city, chicago_connection, pedigree_signals FROM sourced_founders WHERE user_id = 1 AND status IN ('pending','starred')"
+  ).all();
+
+  let dismissed = 0;
+  const dismiss = db.prepare("UPDATE sourced_founders SET status = 'dismissed' WHERE id = ?");
+
+  db.transaction(() => {
+    for (const f of pending) {
+      const text = ((f.headline || '') + ' ' + (f.raw_data || '') + ' ' + (f.location_city || '') + ' ' + (f.chicago_connection || '') + ' ' + (f.pedigree_signals || '')).toLowerCase();
+
+      // Check for any Chicago/IL geo connection
+      const hasGeo = locations.some(loc => text.includes(loc));
+      // Check for IL school connection
+      const hasILSchool = ilSchools.some(s => text.includes(s));
+
+      if (!hasGeo && !hasILSchool) {
+        dismiss.run(f.id);
+        dismissed++;
+      }
+    }
+  })();
+
+  db.prepare("INSERT INTO migration_flags (key) VALUES ('danny_inbox_clean_v1')").run();
+  console.log(`[DB] Inbox cleanup: ${dismissed} of ${pending.length} dismissed (no Chicago/IL connection). ${pending.length - dismissed} kept.`);
+}
+
 module.exports = db;
