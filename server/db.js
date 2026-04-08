@@ -511,4 +511,58 @@ if (!inboxCleanFlag) {
   console.log(`[DB] Inbox cleanup: ${dismissed} of ${pending.length} dismissed (no Chicago/IL connection). ${pending.length - dismissed} kept.`);
 }
 
+// ── Strict inbox cleanup: must have actual Chicago/IL tie (geo or IL school) ──
+const strictCleanFlag = db.prepare("SELECT * FROM migration_flags WHERE key = 'danny_inbox_strict_v1'").get();
+if (!strictCleanFlag) {
+  // Geographic signals — cities, neighborhoods, state
+  const geoTerms = [
+    'chicago','evanston','naperville','oak park','skokie','schaumburg',
+    'urbana','champaign','bloomington','rockford','aurora','joliet',
+    'palatine','deerfield','highland park','lake forest','winnetka',
+    'wilmette','hinsdale','river north','wicker park','lincoln park',
+    'west loop','hyde park','pilsen','lakeview','logan square',
+    'bucktown','old town','gold coast','streeterville','south loop',
+    'wrigleyville','andersonville','ravenswood','edgewater',
+    'illinois','chicagoland'
+  ];
+  // Only Illinois schools count (not Stanford/MIT/etc.)
+  const ilSchoolTerms = [
+    'northwestern','university of chicago','uchicago','booth school',
+    'kellogg school','kellogg mba',
+    'university of illinois','uiuc','u of i','illini',
+    'illinois institute','iit',
+    'loyola chicago','depaul university','mccormick school',
+    'lake forest college','wheaton college illinois',
+    'illinois state','southern illinois'
+  ];
+
+  const pending = db.prepare(
+    "SELECT id, name, headline, raw_data, location_city, location_type, chicago_connection, pedigree_signals, builder_signals FROM sourced_founders WHERE user_id = 1 AND status IN ('pending','starred')"
+  ).all();
+
+  let dismissed = 0;
+  const dismiss = db.prepare("UPDATE sourced_founders SET status = 'dismissed' WHERE id = ?");
+
+  db.transaction(() => {
+    for (const f of pending) {
+      const text = [
+        f.headline, f.raw_data, f.location_city, f.chicago_connection,
+        f.pedigree_signals, f.builder_signals
+      ].filter(Boolean).join(' ').toLowerCase();
+
+      // Must have a real Chicago/IL geographic mention OR attended an IL school
+      const hasChicagoGeo = geoTerms.some(t => text.includes(t));
+      const hasILSchool = ilSchoolTerms.some(t => text.includes(t));
+
+      if (!hasChicagoGeo && !hasILSchool) {
+        dismiss.run(f.id);
+        dismissed++;
+      }
+    }
+  })();
+
+  db.prepare("INSERT INTO migration_flags (key) VALUES ('danny_inbox_strict_v1')").run();
+  console.log(`[DB] Strict inbox cleanup: ${dismissed} of ${pending.length} dismissed. ${pending.length - dismissed} kept (verified Chicago/IL tie).`);
+}
+
 module.exports = db;
