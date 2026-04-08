@@ -438,4 +438,33 @@ if (!criteriaFlag) {
   console.log('[DB] Danny sourcing criteria restored (user_id=1 only)');
 }
 
+// ── Update Danny's schools to include elite builder institutions ──
+const schoolsFlag = db.prepare("SELECT * FROM migration_flags WHERE key = 'danny_schools_v2'").get();
+if (!schoolsFlag) {
+  const schools = JSON.stringify([
+    'northwestern university','university of chicago','university of illinois',
+    'illinois institute of technology','loyola university chicago','depaul university',
+    'university of illinois chicago','northwestern kellogg','booth school of business',
+    'illinois urbana-champaign','uiuc','northwestern mccormick',
+    'stanford university','stanford','mit','massachusetts institute of technology',
+    'harvard university','harvard','harvard business school',
+    'uc berkeley','berkeley','carnegie mellon','cmu',
+    'caltech','georgia tech','princeton university','princeton',
+    'yale university','yale','columbia university','columbia',
+    'cornell university','cornell','upenn','wharton',
+    'duke university','duke','brown university',
+    'university of michigan','umich','university of texas','ut austin',
+    'university of waterloo','waterloo',
+    'nyu','new york university','usc','ucla'
+  ]);
+  db.prepare(`
+    INSERT INTO user_settings (user_id, setting_key, setting_value, updated_at)
+    VALUES (1, 'sourcing_schools', ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(user_id, setting_key)
+    DO UPDATE SET setting_value = excluded.setting_value, updated_at = CURRENT_TIMESTAMP
+  `).run(schools);
+  db.prepare("INSERT INTO migration_flags (key) VALUES ('danny_schools_v2')").run();
+  console.log('[DB] Danny schools updated with elite institutions (user_id=1 only)');
+}
+
 module.exports = db;
