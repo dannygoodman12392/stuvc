@@ -47,6 +47,15 @@ seedIfEmpty();
     // Incremental Airtable → Stu sync (runs every startup, imports new founders)
     const { syncFromAirtable } = require('./services/airtable-import');
     syncFromAirtable().catch(err => console.error('[AirtableImport] Startup sync error:', err.message));
+
+    // One-time rubric v2 rescore (runs in background, non-blocking)
+    const rescoreFlag = db.prepare("SELECT * FROM migration_flags WHERE key = 'rescore_rubric_v2'").get();
+    if (!rescoreFlag) {
+      console.log('[Migration] Triggering rubric v2 rescore (background)...');
+      db.prepare("INSERT INTO migration_flags (key) VALUES ('rescore_rubric_v2')").run();
+      const rescoreV2 = require('./migrations/rescore-rubric-v2');
+      rescoreV2().catch(err => console.error('[Rescore] Migration error:', err.message));
+    }
   } catch (err) {
     console.error('[Migration] Airtable import error:', err.message);
   }

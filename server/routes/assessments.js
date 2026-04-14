@@ -777,4 +777,6 @@ async function runSynthesis(client, prompt, agentOutputs, context, signal) {
   return { raw: text, error: 'Could not parse synthesis' };
 }
 
+// Export router + internal functions for migrations
+router._internal = { runAssessmentAgents, processRerunInputs };
 module.exports = router;
