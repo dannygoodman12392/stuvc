@@ -95,7 +95,22 @@ app.use('/api/ai', rateLimit({ windowMs: 15 * 60 * 1000, max: 50, standardHeader
 app.use('/api/auth/register', rateLimit({ windowMs: 15 * 60 * 1000, max: 5, standardHeaders: true, legacyHeaders: false }));
 
 // Public routes
-app.get('/api/health', (req, res) => res.json({ status: 'ok', app: 'Stu', version: '2.0.0' }));
+app.get('/api/health', (req, res) => res.json({ status: 'ok', app: 'Stu', version: '2.1.0' }));
+
+// TEMPORARY debug endpoint — remove after verifying rescore
+app.get('/api/debug-assessments', (req, res) => {
+  const db = require('./db');
+  const all = db.prepare(`
+    SELECT a.id, a.founder_id, a.group_id, a.version_number, a.status, a.overall_signal, a.is_deleted, a.created_by, a.created_at,
+           f.name as founder_name, f.company as founder_company
+    FROM opportunity_assessments a
+    LEFT JOIN founders f ON a.founder_id = f.id
+    ORDER BY a.id DESC
+    LIMIT 80
+  `).all();
+  const flags = db.prepare("SELECT * FROM migration_flags").all();
+  res.json({ total: all.length, flags, assessments: all });
+});
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/payments', payments.router);
 
