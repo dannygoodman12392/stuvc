@@ -530,8 +530,12 @@ function computeTeamPillarScore(subs) {
     founder_problem_fit: 2,
     sales_capability: 2,
     velocity: 1,
-    founder_market_fit: 1,
+    storytelling_framing: 1,
     team_composition: 1,
+    competitive_precision: 1,
+    missionary_conviction: 1,
+    // Legacy names (backward compat with old assessments)
+    founder_market_fit: 1,
     idea_maze: 1,
     experience_stage_fit: 1,
   };
@@ -555,6 +559,22 @@ function computeSimplePillarScore(subs) {
   return round1(scores.reduce((a, b) => a + b, 0) / scores.length);
 }
 
+function computeMarketPillarScore(subs) {
+  if (!subs) return null;
+  // Simple average, but exclude neutral_layer_viability if N/A or empty
+  const scores = [];
+  for (const [key, sub] of Object.entries(subs)) {
+    if (!sub || typeof sub.score !== 'number') continue;
+    if (key === 'neutral_layer_viability') {
+      const ev = (sub.evidence || '').trim();
+      if (ev.toLowerCase() === 'n/a' || ev === '') continue;
+    }
+    scores.push(sub.score);
+  }
+  if (scores.length === 0) return null;
+  return round1(scores.reduce((a, b) => a + b, 0) / scores.length);
+}
+
 function computeProductPillarScore(subs) {
   if (!subs) return null;
   // Product velocity and customer proximity carry 2x weight
@@ -563,6 +583,9 @@ function computeProductPillarScore(subs) {
     product_velocity: 2,
     customer_proximity: 2,
     focus_prioritization: 1,
+    moat_architecture: 1,
+    flywheel_design: 1,
+    // Legacy names (backward compat with old assessments)
     technical_defensibility: 1,
     product_market_intuition: 1,
   };
@@ -593,9 +616,9 @@ function correctPillarScores(agentOutputs) {
     const computed = computeProductPillarScore(agentOutputs.product.subcategories);
     if (computed !== null) agentOutputs.product.pillar_score = computed;
   }
-  // Market: simple average
+  // Market: simple average (with neutral_layer_viability exclusion)
   if (agentOutputs.market && agentOutputs.market.subcategories) {
-    const computed = computeSimplePillarScore(agentOutputs.market.subcategories);
+    const computed = computeMarketPillarScore(agentOutputs.market.subcategories);
     if (computed !== null) agentOutputs.market.pillar_score = computed;
   }
   // Bear: clamp adjustment to [0, -1.5] with traction-based ceiling

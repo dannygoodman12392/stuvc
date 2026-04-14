@@ -505,8 +505,12 @@ function TeamOutput({ data }) {
               { key: 'founder_problem_fit', label: 'Founder-Problem Fit', weight: '2x' },
               { key: 'sales_capability', label: 'Sales Capability', weight: '2x' },
               { key: 'velocity', label: 'Velocity & Bias to Action' },
-              { key: 'founder_market_fit', label: 'Founder-Market Fit' },
+              { key: 'storytelling_framing', label: 'Storytelling & Framing' },
               { key: 'team_composition', label: 'Team Composition' },
+              { key: 'competitive_precision', label: 'Competitive Precision' },
+              { key: 'missionary_conviction', label: 'Missionary Conviction' },
+              // Legacy keys (old assessments)
+              { key: 'founder_market_fit', label: 'Founder-Market Fit' },
               { key: 'idea_maze', label: 'Idea Maze Navigation' },
               { key: 'experience_stage_fit', label: 'Experience & Stage Fit' },
             ].map(({ key, label, weight }) => {
@@ -617,6 +621,9 @@ function ProductOutput({ data }) {
               { key: 'product_velocity', label: 'Product Velocity' },
               { key: 'customer_proximity', label: 'Customer Proximity' },
               { key: 'focus_prioritization', label: 'Focus & Prioritization' },
+              { key: 'moat_architecture', label: 'Moat Architecture' },
+              { key: 'flywheel_design', label: 'Flywheel Design' },
+              // Legacy keys (old assessments)
               { key: 'technical_defensibility', label: 'Technical Defensibility' },
               { key: 'product_market_intuition', label: 'Product-Market Intuition' },
             ].map(({ key, label }) => {
@@ -685,10 +692,13 @@ function MarketOutput({ data }) {
             {[
               { key: 'market_timing', label: 'Market Timing' },
               { key: 'market_structure', label: 'Market Structure' },
-              { key: 'competitive_landscape', label: 'Competitive Landscape' },
+              { key: 'incumbent_conflict_mapping', label: 'Incumbent Conflict Mapping' },
               { key: 'tam_realism', label: 'TAM Realism' },
               { key: 'unit_economics_structure', label: 'Unit Economics Structure' },
               { key: 'category_momentum', label: 'Category Momentum' },
+              { key: 'neutral_layer_viability', label: 'Neutral Layer Viability' },
+              // Legacy keys (old assessments)
+              { key: 'competitive_landscape', label: 'Competitive Landscape' },
             ].map(({ key, label }) => {
               const sub = subs[key];
               if (!sub) return null;
@@ -724,6 +734,34 @@ function BearOutput({ data }) {
         <div className="card p-4 border-l-4 border-l-red-500">
           <h3 className="text-xs font-semibold text-red-600 uppercase tracking-wider mb-2">Kill Shot Risk</h3>
           <p className="text-sm text-gray-700 leading-relaxed">{data.kill_shot_risk}</p>
+        </div>
+      )}
+
+      {/* 12-Month Kill scenario */}
+      {data.twelve_month_kill && (
+        <div className="card p-4 border-l-4 border-l-orange-400">
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-xs font-semibold text-orange-600 uppercase tracking-wider">12-Month Kill Scenario</h3>
+            {data.twelve_month_kill.probability && (
+              <span className="text-xs font-bold text-orange-700 bg-orange-50 px-2 py-0.5 rounded">{data.twelve_month_kill.probability}</span>
+            )}
+          </div>
+          {data.twelve_month_kill.scenario && <p className="text-sm text-gray-700 leading-relaxed">{data.twelve_month_kill.scenario}</p>}
+          {data.twelve_month_kill.evidence && <p className="text-xs text-gray-500 mt-1">{data.twelve_month_kill.evidence}</p>}
+        </div>
+      )}
+
+      {/* Bundling Risk */}
+      {data.bundling_risk && (
+        <div className="card p-4 border-l-4 border-l-amber-400">
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-xs font-semibold text-amber-600 uppercase tracking-wider">Bundling Risk</h3>
+            {data.bundling_risk.severity && (
+              <span className="text-xs font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded">{data.bundling_risk.severity}</span>
+            )}
+          </div>
+          {data.bundling_risk.scenario && <p className="text-sm text-gray-700 leading-relaxed">{data.bundling_risk.scenario}</p>}
+          {data.bundling_risk.evidence && <p className="text-xs text-gray-500 mt-1">{data.bundling_risk.evidence}</p>}
         </div>
       )}
 
