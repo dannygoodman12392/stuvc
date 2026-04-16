@@ -232,6 +232,50 @@ router.delete('/:id', (req, res) => {
   res.json({ message: 'Assessment deleted' });
 });
 
+// ── GET /api/assessments/:id/steward-operator — latest rubric evaluation ──
+router.get('/:id/steward-operator', (req, res) => {
+  const assessment = db.prepare('SELECT id FROM opportunity_assessments WHERE id = ? AND is_deleted = 0 AND created_by = ?').get(req.params.id, req.user.id);
+  if (!assessment) return res.status(404).json({ error: 'Assessment not found' });
+
+  const evaluation = db.prepare(
+    'SELECT * FROM steward_operator_evaluations WHERE assessment_id = ? ORDER BY id DESC LIMIT 1'
+  ).get(req.params.id);
+
+  if (!evaluation) return res.json(null);
+  res.json(evaluation);
+});
+
+// ── POST /api/assessments/:id/steward-operator — trigger rubric run ──
+router.post('/:id/steward-operator', (req, res) => {
+  const assessment = db.prepare('SELECT * FROM opportunity_assessments WHERE id = ? AND is_deleted = 0 AND created_by = ?').get(req.params.id, req.user.id);
+  if (!assessment) return res.status(404).json({ error: 'Assessment not found' });
+  if (assessment.status !== 'complete' && assessment.status !== 'partial') {
+    return res.status(400).json({ error: 'Assessment must be complete before running the Steward-Operator rubric' });
+  }
+
+  // Don't stack concurrent runs
+  const existing = db.prepare(
+    "SELECT * FROM steward_operator_evaluations WHERE assessment_id = ? AND status = 'running' ORDER BY id DESC LIMIT 1"
+  ).get(req.params.id);
+  if (existing) return res.json(existing);
+
+  const result = db.prepare(
+    "INSERT INTO steward_operator_evaluations (assessment_id, status) VALUES (?, 'running')"
+  ).run(assessment.id);
+  const evaluationId = result.lastInsertRowid;
+  const record = db.prepare('SELECT * FROM steward_operator_evaluations WHERE id = ?').get(evaluationId);
+
+  res.json(record);
+
+  // Fire-and-forget background run (matches existing assessment agent pattern)
+  runStewardOperator(assessment, evaluationId).catch(err => {
+    console.error('[StewardOperator] Error:', err);
+    db.prepare(
+      "UPDATE steward_operator_evaluations SET status = 'error', error = ?, completed_at = CURRENT_TIMESTAMP WHERE id = ?"
+    ).run(err?.message || String(err), evaluationId);
+  });
+});
+
 // ── POST /api/assessments/:id/cancel — cancel running assessment ──
 router.post('/:id/cancel', (req, res) => {
   const assessment = db.prepare('SELECT * FROM opportunity_assessments WHERE id = ? AND created_by = ?').get(req.params.id, req.user.id);
@@ -761,6 +805,173 @@ async function runAgent(client, prompt, context, signal, retries = 1) {
 
   if (parsed) return parsed; // Return error object
   return { raw: text, error: 'Could not parse JSON output' };
+}
+
+// ══════════════════════════════════════════════════════════
+// Steward-Operator Rubric (post-synthesis diagnostic layer)
+// ══════════════════════════════════════════════════════════
+
+function safeParse(raw) {
+  try { return typeof raw === 'string' ? JSON.parse(raw) : raw; }
+  catch { return null; }
+}
+
+function buildContextFromInputs(assessmentId, founderId, ownerId) {
+  const allInputs = db.prepare('SELECT * FROM assessment_inputs WHERE assessment_id = ? ORDER BY input_type, id').all(assessmentId);
+
+  let context = '';
+  const inputsByType = {};
+  for (const inp of allInputs) {
+    if (!inputsByType[inp.input_type]) inputsByType[inp.input_type] = [];
+    inputsByType[inp.input_type].push(inp);
+  }
+
+  if (inputsByType.deck) {
+    for (let i = 0; i < inputsByType.deck.length; i++) {
+      const d = inputsByType.deck[i];
+      context += `\n\n--- PITCH DECK ${i + 1}: ${d.label || d.file_name || 'Untitled'} ---\n${d.content}`;
+    }
+  }
+  if (inputsByType.transcript) {
+    for (let i = 0; i < inputsByType.transcript.length; i++) {
+      const t = inputsByType.transcript[i];
+      context += `\n\n--- CALL TRANSCRIPT ${i + 1}: ${t.label || 'Meeting Notes'} ---\n${t.content}`;
+    }
+  }
+  if (inputsByType.url) {
+    for (let i = 0; i < inputsByType.url.length; i++) {
+      const u = inputsByType.url[i];
+      context += `\n\n--- WEBSITE${u.source_url ? ': ' + u.source_url : ''} ---\n${u.content}`;
+    }
+  }
+  if (inputsByType.notes) {
+    for (let i = 0; i < inputsByType.notes.length; i++) {
+      const n = inputsByType.notes[i];
+      context += `\n\n--- ANALYST NOTES ${i + 1}: ${n.label || ''} ---\n${n.content}`;
+    }
+  }
+
+  let founderContext = '';
+  if (founderId && ownerId) {
+    const founder = db.prepare('SELECT * FROM founders WHERE id = ? AND created_by = ?').get(founderId, ownerId);
+    if (founder) {
+      founderContext = `\nFounder: ${founder.name}\nCompany: ${founder.company || 'Unknown'}\nRole: ${founder.role || 'Founder'}\nLocation: ${founder.location_city || ''} ${founder.location_state || ''}\nStage: ${founder.stage || 'Pre-seed'}\nDomain: ${founder.domain || 'Unknown'}\nLinkedIn: ${founder.linkedin_url || 'N/A'}\nBio: ${founder.bio || 'N/A'}\nPrevious companies: ${founder.previous_companies || 'N/A'}\nNotable background: ${founder.notable_background || 'N/A'}`;
+
+      const calls = db.prepare('SELECT structured_summary, raw_transcript FROM call_logs WHERE founder_id = ? ORDER BY created_at DESC LIMIT 5').all(founderId);
+      if (calls.length > 0) {
+        for (let i = 0; i < calls.length; i++) {
+          const call = calls[i];
+          const text = call.structured_summary || call.raw_transcript;
+          if (text) context += `\n\n--- PREVIOUS CALL ${i + 1} (from CRM) ---\n${text}`;
+        }
+      }
+
+      const notes = db.prepare('SELECT content FROM founder_notes WHERE founder_id = ? ORDER BY created_at DESC LIMIT 10').all(founderId);
+      if (notes.length > 0) {
+        context += `\n\n--- CRM NOTES ---\n${notes.map(n => n.content).join('\n---\n')}`;
+      }
+    }
+  }
+
+  const fullContext = founderContext + context;
+  return fullContext.slice(0, 150000);
+}
+
+async function runStewardOperator(assessment, evaluationId) {
+  const client = getAnthropicClient();
+  if (!client) {
+    db.prepare(
+      "UPDATE steward_operator_evaluations SET status = 'error', error = 'No Anthropic client configured', completed_at = CURRENT_TIMESTAMP WHERE id = ?"
+    ).run(evaluationId);
+    return;
+  }
+
+  const runKey = `steward-${evaluationId}`;
+  const signal = runManager.register(runKey);
+
+  try {
+    const cappedContext = buildContextFromInputs(assessment.id, assessment.founder_id, assessment.created_by);
+
+    const agentOutputs = {
+      team: safeParse(assessment.founder_agent_output),
+      product: safeParse(assessment.market_agent_output),
+      market: safeParse(assessment.economics_agent_output),
+      bear: safeParse(assessment.bear_agent_output),
+    };
+    const synthesisOutput = safeParse(assessment.synthesis_output);
+
+    const AGENT_PROMPTS = require('../agents/prompts');
+    const prompt = AGENT_PROMPTS.stewardOperator;
+
+    const callModel = () => client.messages.create({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 4096,
+      system: prompt.system,
+      messages: [{ role: 'user', content: prompt.user(cappedContext, agentOutputs, synthesisOutput) }],
+    });
+
+    let response = await callModel();
+    if (signal.aborted) return;
+
+    let text = response.content[0].text.trim();
+    let parsed = robustJsonParse(text);
+    if (!parsed || parsed.error) {
+      console.warn('[StewardOperator] JSON parse failed, retrying...');
+      response = await callModel();
+      if (signal.aborted) return;
+      text = response.content[0].text.trim();
+      parsed = robustJsonParse(text);
+    }
+
+    if (!parsed || parsed.error) {
+      db.prepare(
+        "UPDATE steward_operator_evaluations SET status = 'error', error = ?, completed_at = CURRENT_TIMESTAMP WHERE id = ?"
+      ).run('Could not parse rubric JSON output', evaluationId);
+      return;
+    }
+
+    // Compute hits_count deterministically; don't trust LLM arithmetic
+    const traits = parsed.traits || {};
+    const traitScores = Object.values(traits)
+      .map(t => (t && typeof t.score === 'number') ? t.score : null)
+      .filter(s => s !== null);
+    const hitsCount = traitScores.filter(s => s >= 7).length;
+    parsed.hits_count = hitsCount;
+
+    // Clamp overall_score to [hits - 0.5, hits + 0.5]
+    let overall = typeof parsed.overall_score === 'number' ? parsed.overall_score : hitsCount;
+    overall = Math.max(hitsCount - 0.5, Math.min(hitsCount + 0.5, overall));
+    overall = round1(overall);
+    parsed.overall_score = overall;
+
+    // Flag rule: overall_score >= 6
+    parsed.flagged = overall >= 6;
+
+    // Threshold computed from hits_count + tiebreakers
+    const t1Passed = !!parsed.tiebreakers?.t1_names_weakness_unprompted?.passed;
+    const t2Passed = !!parsed.tiebreakers?.t2_tailors_ask_with_specificity?.passed;
+    let threshold;
+    if (hitsCount === 9 && t1Passed && t2Passed) threshold = 'Anchor-grade';
+    else if (hitsCount >= 7 && (t1Passed || t2Passed)) threshold = 'Top-quartile';
+    else if (hitsCount >= 7) threshold = 'Top-quartile';
+    else if (hitsCount >= 5) threshold = 'Monitor';
+    else if (hitsCount >= 3) threshold = 'Pass with respect';
+    else threshold = 'Pass';
+    parsed.threshold = threshold;
+
+    db.prepare(`
+      UPDATE steward_operator_evaluations
+      SET output = ?, overall_score = ?, threshold = ?, flagged = ?, status = 'complete', completed_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(JSON.stringify(parsed), overall, threshold, parsed.flagged ? 1 : 0, evaluationId);
+  } catch (err) {
+    console.error('[StewardOperator] Run error:', err);
+    db.prepare(
+      "UPDATE steward_operator_evaluations SET status = 'error', error = ?, completed_at = CURRENT_TIMESTAMP WHERE id = ?"
+    ).run(err?.message || String(err), evaluationId);
+  } finally {
+    runManager.cleanup(runKey);
+  }
 }
 
 async function runSynthesis(client, prompt, agentOutputs, context, signal) {

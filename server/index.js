@@ -114,6 +114,7 @@ app.use('/api/search', requireAuth, require('./routes/search'));
 app.use('/api/settings', requireAuth, require('./routes/settings'));
 app.use('/api/admin', requireAuth, require('./routes/admin'));
 app.use('/api/import', requireAuth, require('./routes/import'));
+app.use('/api/talent', requireAuth, require('./routes/talent'));
 
 // Serve static in production
 const clientDist = path.join(__dirname, '..', 'client', 'dist');
@@ -143,5 +144,18 @@ app.listen(PORT, () => {
     });
 
     console.log('Daily sourcing engine scheduled (6:00 AM CT)');
+
+    // Daily talent sourcing — 30 min offset so logs don't interleave
+    const { runTalentEngine } = require('./pipeline/talent-engine');
+    cron.schedule('30 12 * * *', async () => {
+      console.log('[Cron] Starting daily talent sourcing run...');
+      try {
+        const result = await runTalentEngine({ userId: 1 });
+        console.log(`[Cron] Talent sourcing complete:`, result);
+      } catch (err) {
+        console.error('[Cron] Talent sourcing failed:', err.message);
+      }
+    });
+    console.log('Daily talent sourcing engine scheduled (6:30 AM CT)');
   }
 });

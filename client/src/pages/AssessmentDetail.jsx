@@ -13,8 +13,29 @@ const AGENTS = [
 const TABS = [
   { key: 'synthesis', label: 'Synthesis' },
   ...AGENTS.map(a => ({ key: a.key, label: a.label })),
+  { key: 'rubric', label: 'Rubric' },
   { key: 'inputs', label: 'Materials' },
 ];
+
+const RUBRIC_TRAITS = [
+  { key: 'fluent_ecosystem_mapping', label: 'Fluent ecosystem mapping' },
+  { key: 'strategic_spine', label: 'Strategic spine' },
+  { key: 'confident_humble_register', label: 'Confident-humble register' },
+  { key: 'distribution_first_sequencing', label: 'Distribution-first sequencing' },
+  { key: 'customer_sourced_thesis', label: 'Customer-sourced thesis' },
+  { key: 'status_cost_inversion', label: 'Status-cost inversion' },
+  { key: 'honest_under_pressure', label: 'Honest under pressure' },
+  { key: 'buy_vs_build_discipline', label: 'Buy-vs-build discipline' },
+  { key: 'cap_table_sophistication', label: 'Cap-table sophistication' },
+];
+
+const THRESHOLD_STYLES = {
+  'Anchor-grade': { bg: 'bg-purple-50 border-purple-200', text: 'text-purple-700', badge: 'bg-purple-100 text-purple-700' },
+  'Top-quartile': { bg: 'bg-emerald-50 border-emerald-200', text: 'text-emerald-700', badge: 'bg-emerald-100 text-emerald-700' },
+  'Monitor': { bg: 'bg-amber-50 border-amber-200', text: 'text-amber-700', badge: 'bg-amber-100 text-amber-700' },
+  'Pass with respect': { bg: 'bg-gray-50 border-gray-200', text: 'text-gray-700', badge: 'bg-gray-100 text-gray-700' },
+  'Pass': { bg: 'bg-red-50 border-red-200', text: 'text-red-700', badge: 'bg-red-100 text-red-700' },
+};
 
 export default function AssessmentDetail() {
   const { id } = useParams();
@@ -25,12 +46,56 @@ export default function AssessmentDetail() {
   const [versions, setVersions] = useState([]);
   const [inputs, setInputs] = useState([]);
   const [showVersions, setShowVersions] = useState(false);
+  const [rubric, setRubric] = useState(null);
+  const [rubricLoading, setRubricLoading] = useState(false);
   const pollRef = useRef(null);
+  const rubricPollRef = useRef(null);
 
   useEffect(() => {
     loadAssessment();
-    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+    loadRubric();
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+      if (rubricPollRef.current) clearInterval(rubricPollRef.current);
+    };
   }, [id]);
+
+  async function loadRubric() {
+    try {
+      const r = await api.getStewardOperator(id);
+      setRubric(r);
+      if (r && r.status === 'running') {
+        startRubricPoll();
+      }
+    } catch {}
+  }
+
+  function startRubricPoll() {
+    if (rubricPollRef.current) return;
+    rubricPollRef.current = setInterval(async () => {
+      try {
+        const r = await api.getStewardOperator(id);
+        setRubric(r);
+        if (!r || r.status !== 'running') {
+          clearInterval(rubricPollRef.current);
+          rubricPollRef.current = null;
+        }
+      } catch {}
+    }, 3000);
+  }
+
+  async function handleRunRubric() {
+    setRubricLoading(true);
+    try {
+      const r = await api.runStewardOperator(id);
+      setRubric(r);
+      startRubricPoll();
+    } catch (err) {
+      console.error('Failed to start rubric:', err);
+    } finally {
+      setRubricLoading(false);
+    }
+  }
 
   async function loadAssessment() {
     try {
@@ -163,6 +228,7 @@ export default function AssessmentDetail() {
             >
               {tab.label}
               {tab.key === 'bear' && <span className="ml-1 text-red-500">!</span>}
+              {tab.key === 'rubric' && rubric && rubric.flagged ? <span className="ml-1 text-purple-600">*</span> : null}
             </button>
           ))}
         </div>
@@ -182,6 +248,15 @@ export default function AssessmentDetail() {
               <AgentOutput key={agent.key} data={parseOutput(assessment[agent.field])} type={agent.key} />
             )
           ))}
+
+          {activeTab === 'rubric' && (
+            <RubricView
+              rubric={rubric}
+              assessmentComplete={isComplete}
+              onRun={handleRunRubric}
+              running={rubricLoading || (rubric && rubric.status === 'running')}
+            />
+          )}
 
           {activeTab === 'inputs' && (
             <div className="space-y-3">
@@ -836,6 +911,176 @@ function BearOutput({ data }) {
       )}
 
       <QuestionsList questions={data.key_questions} />
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════
+// Steward-Operator Rubric View
+// ════════════════════════════════════════════════════════
+
+function RubricTraitRow({ label, score, evidence }) {
+  const [open, setOpen] = useState(false);
+  const s = typeof score === 'number' ? score : 5;
+  return (
+    <div className="bg-gray-50 rounded-lg p-3">
+      <div className="flex items-center justify-between mb-2">
+        <button
+          onClick={() => setOpen(!open)}
+          className="text-sm font-semibold text-gray-700 hover:text-gray-900 text-left flex-1"
+        >
+          <span className="text-gray-300 mr-1">{open ? '-' : '+'}</span>
+          {label}
+        </button>
+        <span className={`text-lg font-black ${scoreColor(s)}`}>{s}<span className="text-xs font-medium text-gray-400">/10</span></span>
+      </div>
+      <div className="w-full bg-gray-200 rounded-full h-1 mb-2">
+        <div className={`h-1 rounded-full ${scoreBg(s)}`} style={{ width: `${s * 10}%` }} />
+      </div>
+      {open && evidence && (
+        <p className="text-xs text-gray-500 leading-relaxed mt-2">{evidence}</p>
+      )}
+    </div>
+  );
+}
+
+function RubricView({ rubric, assessmentComplete, onRun, running }) {
+  if (!assessmentComplete) {
+    return (
+      <div className="text-center py-8 text-gray-500 text-sm">
+        The Steward-Operator rubric runs after the main assessment completes.
+      </div>
+    );
+  }
+
+  if (!rubric) {
+    return (
+      <div className="card p-6 text-center">
+        <h3 className="text-sm font-semibold text-gray-800 mb-1">Steward-Operator Rubric</h3>
+        <p className="text-xs text-gray-500 mb-4 max-w-md mx-auto">
+          A 9-trait diagnostic overlay that scores operating discipline under capital trust. Supplements the main assessment.
+        </p>
+        <button
+          onClick={onRun}
+          disabled={running}
+          className="inline-flex items-center px-4 py-2 rounded-md bg-gray-900 text-white text-sm font-medium hover:bg-gray-800 disabled:opacity-50"
+        >
+          {running ? 'Starting...' : 'Run Steward-Operator Rubric'}
+        </button>
+      </div>
+    );
+  }
+
+  if (rubric.status === 'running' || rubric.status === 'pending') {
+    return (
+      <div className="card p-6 text-center">
+        <p className="text-sm text-gray-600 animate-pulse">Scoring against the 9-trait rubric...</p>
+      </div>
+    );
+  }
+
+  if (rubric.status === 'error') {
+    return (
+      <div className="card p-4 bg-red-50 border-red-200">
+        <p className="text-sm text-red-700 font-semibold">Rubric run failed</p>
+        {rubric.error && <p className="text-xs text-red-600 mt-1">{rubric.error}</p>}
+        <button
+          onClick={onRun}
+          disabled={running}
+          className="mt-3 text-xs text-red-700 hover:text-red-900 underline"
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
+
+  const data = (() => {
+    try { return typeof rubric.output === 'string' ? JSON.parse(rubric.output) : rubric.output; }
+    catch { return null; }
+  })();
+
+  if (!data) {
+    return <div className="text-center py-8 text-gray-500 text-sm">Could not parse rubric output</div>;
+  }
+
+  const threshold = data.threshold || rubric.threshold || 'Pass';
+  const style = THRESHOLD_STYLES[threshold] || THRESHOLD_STYLES['Pass'];
+  const overallScore = data.overall_score ?? rubric.overall_score ?? 0;
+  const hitsCount = data.hits_count ?? 0;
+  const flagged = data.flagged ?? !!rubric.flagged;
+
+  return (
+    <div className="space-y-4">
+      {flagged && (
+        <div className="rounded-xl border-2 border-purple-400 bg-purple-50 p-4">
+          <div className="flex items-center gap-3">
+            <span className="text-xl">*</span>
+            <div>
+              <p className="text-sm font-bold text-purple-800 uppercase tracking-wider">Flagged for Review</p>
+              <p className="text-xs text-purple-700 mt-0.5">Overall score of {overallScore}/9 clears the review threshold.</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className={`rounded-xl border p-5 ${style.bg}`}>
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-3 mb-2">
+              <span className={`text-3xl font-black ${style.text}`}>
+                {overallScore}<span className="text-base font-medium text-gray-400">/9</span>
+              </span>
+              <span className={`text-xs font-bold uppercase tracking-wider px-2 py-1 rounded ${style.badge}`}>
+                {threshold}
+              </span>
+            </div>
+            <p className="text-xs text-gray-600 mt-1">{hitsCount} of 9 traits scored {'>='} 7</p>
+            {data.summary && <p className="text-sm text-gray-800 font-medium leading-snug mt-3">{data.summary}</p>}
+          </div>
+          <button
+            onClick={onRun}
+            disabled={running}
+            className="text-xs text-gray-500 hover:text-gray-700 underline shrink-0"
+          >
+            Re-run
+          </button>
+        </div>
+      </div>
+
+      <div className="card p-4">
+        <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">9 Traits</h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {RUBRIC_TRAITS.map(({ key, label }) => {
+            const t = data.traits?.[key] || {};
+            return <RubricTraitRow key={key} label={label} score={t.score} evidence={t.evidence} />;
+          })}
+        </div>
+      </div>
+
+      <div className="card p-4">
+        <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Tiebreakers</h3>
+        <div className="space-y-3">
+          {[
+            { key: 't1_names_weakness_unprompted', label: 'T1 — Names own weakness unprompted' },
+            { key: 't2_tailors_ask_with_specificity', label: 'T2 — Tailors investor ask with specificity' },
+          ].map(({ key, label }) => {
+            const tb = data.tiebreakers?.[key] || {};
+            const passed = !!tb.passed;
+            return (
+              <div key={key} className="flex items-start gap-3">
+                <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded shrink-0 mt-0.5 ${passed ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-200 text-gray-600'}`}>
+                  {passed ? 'Pass' : 'Fail'}
+                </span>
+                <div className="flex-1">
+                  <p className="text-sm font-semibold text-gray-700">{label}</p>
+                  {tb.evidence && <p className="text-xs text-gray-500 mt-0.5">{tb.evidence}</p>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
     </div>
   );
 }

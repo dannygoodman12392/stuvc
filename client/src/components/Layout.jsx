@@ -6,10 +6,11 @@ import SearchPalette from './SearchPalette';
 import StuLogo from './StuLogo';
 import { api } from '../utils/api';
 
-const baseNavItems = [
+const navConfig = [
   { to: '/ask', label: 'Ask Stu', accent: true },
   { to: '/', label: 'Pipeline' },
   { to: '/assess', label: 'Assess' },
+  { to: '/talent', label: 'Talent' },
   { to: '/portfolio', label: 'Portfolio', placeholder: true },
   { to: '/fund', label: 'Fund', placeholder: true },
   { to: '/settings', label: 'Settings' },
@@ -18,8 +19,8 @@ const baseNavItems = [
 export default function Layout({ children }) {
   const { user, logout } = useAuth();
   const navItems = user?.role === 'admin'
-    ? [...baseNavItems, { to: '/admin', label: 'Admin' }]
-    : baseNavItems;
+    ? [...navConfig, { to: '/admin', label: 'Admin' }]
+    : navConfig;
   const [mobileOpen, setMobileOpen] = useState(false);
   const [aiOpen, setAiOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -57,13 +58,9 @@ export default function Layout({ children }) {
 
       {/* Sidebar */}
       <aside className={`fixed inset-y-0 left-0 z-40 w-[220px] bg-white border-r border-gray-200 flex flex-col transform transition-transform duration-200 ease-in-out md:relative md:translate-x-0 ${mobileOpen ? 'translate-x-0' : '-translate-x-full'}`}>
-        <div className="px-4 py-4">
-          <NavLink to="/" className="flex items-center gap-2.5" onClick={() => setMobileOpen(false)}>
-            <StuLogo size={28} />
-            <div>
-              <span className="text-[15px] font-semibold text-gray-900 tracking-tight">Stu</span>
-            </div>
-          </NavLink>
+        <div className="px-4 py-4 flex items-center gap-2">
+          <StuLogo size={22} />
+          <span className="text-[15px] font-semibold text-gray-900 tracking-tight">Stu</span>
         </div>
 
         {/* Search trigger */}

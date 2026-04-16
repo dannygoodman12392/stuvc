@@ -293,6 +293,23 @@ addColumn('opportunity_assessments', 'version_number', 'INTEGER DEFAULT 1');
 addColumn('opportunity_assessments', 'cancelled_at', 'DATETIME');
 addColumn('opportunity_assessments', 'is_deleted', 'INTEGER DEFAULT 0');
 
+// ── Steward-Operator rubric evaluations (post-synthesis diagnostic) ──
+db.exec(`
+  CREATE TABLE IF NOT EXISTS steward_operator_evaluations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    assessment_id INTEGER NOT NULL REFERENCES opportunity_assessments(id),
+    output TEXT,
+    overall_score REAL,
+    threshold TEXT,
+    flagged INTEGER DEFAULT 0,
+    status TEXT,
+    error TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    completed_at DATETIME
+  );
+`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_steward_op_assessment ON steward_operator_evaluations(assessment_id);`);
+
 // ── Migrate old "resident" track → "admissions" track ──
 // Move resident_status → admissions_status where not already set
 const residentMigration = db.prepare("SELECT COUNT(*) as c FROM founders WHERE pipeline_tracks LIKE '%resident%' AND (admissions_status IS NULL OR admissions_status = '')").get();
@@ -563,6 +580,233 @@ if (!strictCleanFlag) {
 
   db.prepare("INSERT INTO migration_flags (key) VALUES ('danny_inbox_strict_v1')").run();
   console.log(`[DB] Strict inbox cleanup: ${dismissed} of ${pending.length} dismissed. ${pending.length - dismissed} kept (verified Chicago/IL tie).`);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// TALENT MODULE — portfolio hiring engine (cofounder / early-hire matching)
+// ════════════════════════════════════════════════════════════════════════════
+
+// Portfolio companies (the startups Danny is hiring for)
+db.exec(`
+  CREATE TABLE IF NOT EXISTS talent_portfolio_companies (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    name TEXT NOT NULL,
+    website_url TEXT,
+    sector TEXT,
+    stage TEXT,
+    one_liner TEXT,
+    founder_name TEXT,
+    founder_email TEXT,
+    logo_url TEXT,
+    hq_location TEXT,
+    remote_policy TEXT,
+    notes TEXT,
+    status TEXT DEFAULT 'active',
+    is_deleted INTEGER DEFAULT 0,
+    deleted_at DATETIME,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_tpc_user ON talent_portfolio_companies(user_id, is_deleted);`);
+
+// Open roles (per portfolio company)
+db.exec(`
+  CREATE TABLE IF NOT EXISTS talent_roles (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    portfolio_company_id INTEGER NOT NULL REFERENCES talent_portfolio_companies(id),
+    title TEXT NOT NULL,
+    band TEXT,
+    stack_requirements TEXT,
+    domain_requirements TEXT,
+    must_haves TEXT,
+    nice_to_haves TEXT,
+    min_years_experience INTEGER,
+    max_years_experience INTEGER,
+    comp_low INTEGER,
+    comp_high INTEGER,
+    equity_low REAL,
+    equity_high REAL,
+    remote_ok INTEGER DEFAULT 1,
+    location_pref TEXT,
+    priority TEXT DEFAULT 'normal',
+    status TEXT DEFAULT 'open',
+    filled_by_candidate_id INTEGER,
+    filled_at DATETIME,
+    jd_content TEXT,
+    notes TEXT,
+    is_deleted INTEGER DEFAULT 0,
+    deleted_at DATETIME,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_tr_user ON talent_roles(user_id, is_deleted);`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_tr_company ON talent_roles(portfolio_company_id, is_deleted);`);
+
+// Sourced candidates (engineers / operators — NOT founders)
+db.exec(`
+  CREATE TABLE IF NOT EXISTS talent_candidates (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    name TEXT NOT NULL,
+    headline TEXT,
+    linkedin_url TEXT,
+    github_url TEXT,
+    twitter_url TEXT,
+    website_url TEXT,
+    email TEXT,
+    current_company TEXT,
+    current_role TEXT,
+    tenure_months INTEGER,
+    years_experience INTEGER,
+    location_city TEXT,
+    location_state TEXT,
+    remote_ok INTEGER,
+    tech_stack TEXT,
+    pedigree_signals TEXT,
+    builder_signals TEXT,
+    leap_signals TEXT,
+    band_fit TEXT,
+    score_build_caliber INTEGER,
+    score_leap_readiness INTEGER,
+    score_domain_fit INTEGER,
+    score_geography INTEGER,
+    overall_score INTEGER,
+    score_rationale TEXT,
+    one_liner TEXT,
+    source TEXT,
+    search_query TEXT,
+    raw_data TEXT,
+    enriched_data TEXT,
+    status TEXT DEFAULT 'new',
+    starred INTEGER DEFAULT 0,
+    notes TEXT,
+    is_deleted INTEGER DEFAULT 0,
+    deleted_at DATETIME,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_tcand_user ON talent_candidates(user_id, is_deleted, status);`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_tcand_score ON talent_candidates(user_id, overall_score DESC);`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_tcand_linkedin ON talent_candidates(linkedin_url);`);
+
+// Candidate ↔ Role matches
+db.exec(`
+  CREATE TABLE IF NOT EXISTS talent_matches (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    candidate_id INTEGER NOT NULL REFERENCES talent_candidates(id),
+    role_id INTEGER NOT NULL REFERENCES talent_roles(id),
+    match_score INTEGER,
+    match_rationale TEXT,
+    strengths TEXT,
+    gaps TEXT,
+    status TEXT DEFAULT 'suggested',
+    surfaced_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    last_action_at DATETIME,
+    is_deleted INTEGER DEFAULT 0,
+    deleted_at DATETIME,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(candidate_id, role_id)
+  );
+`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_tm_user ON talent_matches(user_id, is_deleted, status);`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_tm_role ON talent_matches(role_id, match_score DESC);`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_tm_candidate ON talent_matches(candidate_id);`);
+
+// Talent criteria (sourcing config — global or per-portfolio-co)
+db.exec(`
+  CREATE TABLE IF NOT EXISTS talent_criteria (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    scope TEXT DEFAULT 'global',
+    setting_key TEXT NOT NULL,
+    setting_value TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id, scope, setting_key)
+  );
+`);
+
+// Talent sourcing run log
+db.exec(`
+  CREATE TABLE IF NOT EXISTS talent_sourcing_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    run_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    sources_hit TEXT,
+    candidates_found INTEGER DEFAULT 0,
+    candidates_added INTEGER DEFAULT 0,
+    candidates_deduplicated INTEGER DEFAULT 0,
+    matches_generated INTEGER DEFAULT 0,
+    errors TEXT
+  );
+`);
+
+// Seed Danny's default talent criteria on first run
+const talentCriteriaFlag = db.prepare("SELECT * FROM migration_flags WHERE key = 'talent_criteria_v1'").get();
+if (!talentCriteriaFlag) {
+  const upsert = db.prepare(`
+    INSERT INTO talent_criteria (user_id, scope, setting_key, setting_value, updated_at)
+    VALUES (1, 'global', ?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(user_id, scope, setting_key)
+    DO UPDATE SET setting_value = excluded.setting_value, updated_at = CURRENT_TIMESTAMP
+  `);
+
+  const defaults = {
+    talent_bands: JSON.stringify(['A', 'B', 'C']),
+    talent_locations: JSON.stringify([
+      'chicago','evanston','naperville','oak park','river north','wicker park',
+      'lincoln park','west loop','illinois','remote','san francisco','new york',
+      'boston','austin','seattle','los angeles'
+    ]),
+    talent_schools: JSON.stringify([
+      'northwestern','university of chicago','uchicago','university of illinois',
+      'uiuc','illinois institute of technology','stanford','mit','harvard',
+      'uc berkeley','carnegie mellon','cmu','princeton','caltech','georgia tech',
+      'university of michigan','university of waterloo','waterloo'
+    ]),
+    talent_companies: JSON.stringify([
+      'google','meta','apple','amazon','microsoft','stripe','openai','anthropic',
+      'palantir','spacex','anduril','coinbase','datadog','snowflake','databricks',
+      'figma','notion','linear','vercel','scale ai','shield ai','brex','ramp',
+      'plaid','robinhood','square','block','tesla','nvidia','netflix','uber',
+      'citadel','jump trading','drw','two sigma','jane street','hudson river',
+      'tempus','relativity','braintree','grubhub','groupon','sprout social'
+    ]),
+    talent_stacks: JSON.stringify([
+      'Python','TypeScript','Go','Rust','React','Next.js','Node.js',
+      'PyTorch','TensorFlow','LLM','RAG','CUDA','Kubernetes','Postgres',
+      'Distributed Systems','ML Infra','Compilers','Systems Programming',
+      'iOS','Android','Swift','Kotlin','Elixir','Ruby','Java','C++'
+    ]),
+    talent_domains: JSON.stringify([
+      'AI/ML','Vertical AI','AI Infra','Applied AI','Fintech','Healthtech',
+      'DevTools','B2B SaaS','Vertical SaaS','Defense','Climate','Biotech',
+      'Robotics','Hardware','Cybersecurity','Legaltech','Proptech','Edtech'
+    ]),
+    talent_leap_signals: JSON.stringify([
+      '2-4 year tenure','open source maintainer','side project velocity',
+      'build-in-public','PhD commercialization','post-IPO team member',
+      'post-acquisition','first-20 at growth-stage','tech lead looking for scope',
+      'advisor to startups','angel investor','cofounder match profiles'
+    ]),
+    talent_custom_queries: JSON.stringify([]),
+  };
+
+  db.transaction(() => {
+    for (const [key, value] of Object.entries(defaults)) {
+      upsert.run(key, value);
+    }
+  })();
+
+  db.prepare("INSERT INTO migration_flags (key) VALUES ('talent_criteria_v1')").run();
+  console.log('[DB] Talent default criteria seeded for user_id=1');
 }
 
 module.exports = db;

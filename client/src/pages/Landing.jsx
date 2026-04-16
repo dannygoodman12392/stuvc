@@ -285,6 +285,97 @@ export default function Landing() {
         </div>
       </section>
 
+      {/* --- FOR FOUNDERS: Stu Talent --- */}
+      <section
+        style={{
+          maxWidth: 1120,
+          margin: '0 auto',
+          padding: '0 24px 120px',
+        }}
+      >
+        <div
+          className="landing-fade landing-fade-d3"
+          style={{
+            border: '1px solid var(--border)',
+            borderRadius: 20,
+            padding: '56px 48px',
+            background: 'linear-gradient(180deg, rgba(245, 158, 11, 0.05) 0%, rgba(245, 158, 11, 0.00) 100%)',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
+            <div style={{ width: 8, height: 8, borderRadius: 8, background: '#F59E0B' }} />
+            <span style={{ fontSize: 12, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#F59E0B' }}>
+              For portfolio founders
+            </span>
+          </div>
+          <h2
+            style={{
+              fontSize: 40,
+              fontWeight: 600,
+              letterSpacing: '-0.035em',
+              lineHeight: 1.05,
+              marginBottom: 16,
+              maxWidth: 720,
+            }}
+          >
+            Stu Talent — find your cofounder and first engineers.
+          </h2>
+          <p
+            style={{
+              fontSize: 17,
+              lineHeight: 1.6,
+              color: 'var(--text-secondary)',
+              maxWidth: 680,
+              marginBottom: 28,
+            }}
+          >
+            Daily-sourced technical talent matched to the roles you post. AI-scored on build caliber, leap-readiness, domain fit, and geography — so you spend time talking to the candidates who can actually move the needle, not filtering through noise.
+          </p>
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+              gap: 20,
+              marginBottom: 32,
+            }}
+          >
+            {[
+              { band: 'Band A', label: 'Cofounders & founding engineers', detail: 'Staff-level ICs from FAANG / elite startups, OSS maintainers, ex-founders. Ready to leap.' },
+              { band: 'Band B', label: 'First-5 hires', detail: 'Senior engineers with 4–8 years at strong shops, stack-aligned, ready for earlier stage.' },
+              { band: 'Band C', label: 'Domain experts', detail: 'Vertical specialists — ML research, healthtech, fintech — tuned to your problem area.' },
+            ].map(b => (
+              <div key={b.band}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: '#F59E0B', letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 6 }}>
+                  {b.band}
+                </div>
+                <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>{b.label}</div>
+                <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.5 }}>{b.detail}</div>
+              </div>
+            ))}
+          </div>
+          <Link
+            to="/login"
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 8,
+              background: '#F59E0B',
+              color: '#111',
+              fontSize: 14,
+              fontWeight: 600,
+              padding: '10px 20px',
+              borderRadius: 10,
+              textDecoration: 'none',
+            }}
+          >
+            Access Stu Talent →
+          </Link>
+          <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 12 }}>
+            Currently invite-only for Superior Studios portfolio companies.
+          </div>
+        </div>
+      </section>
+
       {/* --- PRICING — hidden until Stripe is configured --- */}
 
       {/* --- FOOTER --- */}

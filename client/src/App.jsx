@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { ToastProvider } from './components/Toast';
 import Layout from './components/Layout';
 import Landing from './pages/Landing';
 import Login from './pages/Login';
@@ -16,6 +17,17 @@ import Settings from './pages/Settings';
 import Payment from './pages/Payment';
 import PaymentSuccess from './pages/PaymentSuccess';
 import Admin from './pages/Admin';
+import TalentLayout from './components/TalentLayout';
+import TalentHome from './pages/talent/TalentHome';
+import TalentCriteria from './pages/talent/TalentCriteria';
+import TalentPortfolio from './pages/talent/TalentPortfolio';
+import TalentPortfolioDetail from './pages/talent/TalentPortfolioDetail';
+import TalentRoles from './pages/talent/TalentRoles';
+import TalentRoleDetail from './pages/talent/TalentRoleDetail';
+import TalentCandidates from './pages/talent/TalentCandidates';
+import TalentCandidateDetail from './pages/talent/TalentCandidateDetail';
+import TalentMatches from './pages/talent/TalentMatches';
+import TalentTrash from './pages/talent/TalentTrash';
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth();
@@ -75,6 +87,18 @@ function AppRoutes() {
       <Route path="/fund" element={<ProtectedRoute><Placeholder title="Fund Analytics" /></ProtectedRoute>} />
       <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
       <Route path="/admin" element={<ProtectedRoute><Admin /></ProtectedRoute>} />
+      <Route path="/talent" element={<ProtectedRoute><TalentLayout /></ProtectedRoute>}>
+        <Route index element={<TalentHome />} />
+        <Route path="portfolio" element={<TalentPortfolio />} />
+        <Route path="portfolio/:id" element={<TalentPortfolioDetail />} />
+        <Route path="roles" element={<TalentRoles />} />
+        <Route path="roles/:id" element={<TalentRoleDetail />} />
+        <Route path="candidates" element={<TalentCandidates />} />
+        <Route path="candidates/:id" element={<TalentCandidateDetail />} />
+        <Route path="matches" element={<TalentMatches />} />
+        <Route path="criteria" element={<TalentCriteria />} />
+        <Route path="trash" element={<TalentTrash />} />
+      </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
@@ -84,7 +108,9 @@ export default function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
-        <AppRoutes />
+        <ToastProvider>
+          <AppRoutes />
+        </ToastProvider>
       </AuthProvider>
     </BrowserRouter>
   );

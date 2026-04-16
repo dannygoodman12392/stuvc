@@ -105,6 +105,8 @@ export const api = {
   deleteAssessment: (id) => request(`/assessments/${id}`, { method: 'DELETE' }),
   cancelAssessment: (id) => request(`/assessments/${id}/cancel`, { method: 'POST' }),
   rerunAssessment: (id, data) => request(`/assessments/${id}/rerun`, { method: 'POST', body: JSON.stringify(data) }),
+  getStewardOperator: (id) => request(`/assessments/${id}/steward-operator`),
+  runStewardOperator: (id) => request(`/assessments/${id}/steward-operator`, { method: 'POST' }),
 
   // Deal Room
   getDeals: () => request('/deal-room'),
@@ -198,6 +200,66 @@ export const api = {
       }
     }
   },
+
+  // Talent — Portfolio companies
+  getTalentPortfolio: () => request('/talent/portfolio'),
+  getTalentCompany: (id) => request(`/talent/portfolio/${id}`),
+  createTalentCompany: (data) => request('/talent/portfolio', { method: 'POST', body: JSON.stringify(data) }),
+  updateTalentCompany: (id, data) => request(`/talent/portfolio/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteTalentCompany: (id) => request(`/talent/portfolio/${id}`, { method: 'DELETE' }),
+  bulkDeleteTalentCompanies: (ids) => request('/talent/portfolio/bulk/delete', { method: 'POST', body: JSON.stringify({ ids }) }),
+
+  // Talent — Roles
+  getTalentRoles: (params) => request('/talent/roles?' + new URLSearchParams(params || {})),
+  getTalentRole: (id) => request(`/talent/roles/${id}`),
+  createTalentRole: (data) => request('/talent/roles', { method: 'POST', body: JSON.stringify(data) }),
+  updateTalentRole: (id, data) => request(`/talent/roles/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteTalentRole: (id) => request(`/talent/roles/${id}`, { method: 'DELETE' }),
+  bulkUpdateTalentRoles: (ids, patch) => request('/talent/roles/bulk/update', { method: 'POST', body: JSON.stringify({ ids, patch }) }),
+  bulkDeleteTalentRoles: (ids) => request('/talent/roles/bulk/delete', { method: 'POST', body: JSON.stringify({ ids }) }),
+
+  // Talent — Candidates
+  getTalentCandidates: (params) => request('/talent/candidates?' + new URLSearchParams(params || {})),
+  getTalentCandidate: (id) => request(`/talent/candidates/${id}`),
+  getTalentCandidateStats: () => request('/talent/candidates/stats'),
+  createTalentCandidate: (data) => request('/talent/candidates', { method: 'POST', body: JSON.stringify(data) }),
+  updateTalentCandidate: (id, data) => request(`/talent/candidates/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteTalentCandidate: (id) => request(`/talent/candidates/${id}`, { method: 'DELETE' }),
+  starTalentCandidate: (id) => request(`/talent/candidates/${id}/star`, { method: 'POST' }),
+  unstarTalentCandidate: (id) => request(`/talent/candidates/${id}/unstar`, { method: 'POST' }),
+  dismissTalentCandidate: (id) => request(`/talent/candidates/${id}/dismiss`, { method: 'POST' }),
+  shortlistTalentCandidate: (id) => request(`/talent/candidates/${id}/shortlist`, { method: 'POST' }),
+  bulkUpdateTalentCandidates: (ids, patch) => request('/talent/candidates/bulk/update', { method: 'POST', body: JSON.stringify({ ids, patch }) }),
+  bulkDeleteTalentCandidates: (ids) => request('/talent/candidates/bulk/delete', { method: 'POST', body: JSON.stringify({ ids }) }),
+
+  // Talent — Matches
+  getTalentMatches: (params) => request('/talent/matches?' + new URLSearchParams(params || {})),
+  getTalentMatch: (id) => request(`/talent/matches/${id}`),
+  getTalentMatchStats: () => request('/talent/matches/stats'),
+  updateTalentMatch: (id, data) => request(`/talent/matches/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteTalentMatch: (id) => request(`/talent/matches/${id}`, { method: 'DELETE' }),
+  bulkUpdateTalentMatches: (ids, patch) => request('/talent/matches/bulk/update', { method: 'POST', body: JSON.stringify({ ids, patch }) }),
+
+  // Talent — Criteria
+  getTalentCriteria: (scope = 'global') => request(`/talent/criteria?scope=${scope}`),
+  updateTalentCriteria: (key, value, scope = 'global') => request(`/talent/criteria/${key}?scope=${scope}`, { method: 'PUT', body: JSON.stringify({ value }) }),
+  resetTalentCriteria: (key, scope = 'global') => request(`/talent/criteria/${key}?scope=${scope}`, { method: 'DELETE' }),
+
+  // Talent — Sourcing
+  getTalentSourcingStats: () => request('/talent/sourcing/stats'),
+  getTalentSourcingRuns: () => request('/talent/sourcing/runs'),
+  triggerTalentSourcing: (opts = {}) => {
+    // Back-compat: old call was triggerTalentSourcing(true) for fullSweep
+    const body = typeof opts === 'boolean' ? { fullSweep: opts } : opts;
+    return request('/talent/sourcing/run', { method: 'POST', body: JSON.stringify(body) });
+  },
+  triggerTalentMatching: (params = {}) => request('/talent/sourcing/match', { method: 'POST', body: JSON.stringify(params) }),
+
+  // Talent — Trash
+  getTalentTrash: () => request('/talent/trash'),
+  restoreTalentTrash: (type, ids) => request('/talent/trash/restore', { method: 'POST', body: JSON.stringify({ type, ids }) }),
+  purgeTalentTrash: (type, ids) => request('/talent/trash/purge', { method: 'POST', body: JSON.stringify({ type, ids }) }),
+  emptyTalentTrash: () => request('/talent/trash/empty', { method: 'POST' }),
 
   // Streaming chat (sidebar)
   chat: async function* (messages, context) {
