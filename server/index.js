@@ -157,5 +157,19 @@ app.listen(PORT, () => {
       }
     });
     console.log('Daily talent sourcing engine scheduled (6:30 AM CT)');
+
+    // R2: Daily SEC Form D IL filings pull — 11 AM UTC (pre-sourcing run so any
+    // new filings are available for matching when sourcing runs at 12 UTC).
+    const { runFilingsSource } = require('./pipeline/filings-source');
+    cron.schedule('0 11 * * *', async () => {
+      console.log('[Cron] Starting SEC Form D filings pull...');
+      try {
+        const result = await runFilingsSource({ userId: 1, days: 30 });
+        console.log('[Cron] Filings pull complete:', result);
+      } catch (err) {
+        console.error('[Cron] Filings pull failed:', err.message);
+      }
+    });
+    console.log('Daily SEC filings pull scheduled (5:00 AM CT)');
   }
 });

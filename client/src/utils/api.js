@@ -87,6 +87,7 @@ export const api = {
   getSourcingRuns: () => request('/sourcing/runs'),
   approveSourced: (id) => request(`/sourcing/approve/${id}`, { method: 'POST' }),
   dismissSourced: (id) => request(`/sourcing/dismiss/${id}`, { method: 'POST' }),
+  hideForeverSourced: (id) => request(`/sourcing/hide-forever/${id}`, { method: 'POST' }),
   starSourced: (id) => request(`/sourcing/star/${id}`, { method: 'POST' }),
   unstarSourced: (id) => request(`/sourcing/unstar/${id}`, { method: 'POST' }),
   triggerSourcing: () => request('/sourcing/run', { method: 'POST' }),

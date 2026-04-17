@@ -350,6 +350,46 @@ db.exec(`
 // ── Multi-tenancy: add user_id columns and backfill ──
 addColumn('sourced_founders', 'user_id', 'INTEGER REFERENCES users(id)');
 addColumn('sourcing_runs', 'user_id', 'INTEGER REFERENCES users(id)');
+
+// ── Sourcing audit v2 (R3/R5/R7/R8/R10) ──
+// R3: recency-of-departure signal extracted by Claude
+addColumn('sourced_founders', 'departure_recency_months', 'INTEGER');  // e.g., 3 = left 3mo ago; null = N/A
+addColumn('sourced_founders', 'signal_captured_at', 'DATETIME');        // when we first picked up the signal
+// R7: permanent do-not-resurface flag (separate from per-run dismissal)
+addColumn('sourced_founders', 'do_not_resurface', 'INTEGER DEFAULT 0');
+// R10: tiered school pedigree (JSON arrays)
+addColumn('sourced_founders', 'anchor_schools_il', 'TEXT');             // JSON
+addColumn('sourced_founders', 'elite_schools_national', 'TEXT');        // JSON
+// R5: co-founder pair detection
+addColumn('sourced_founders', 'previous_company_norm', 'TEXT');         // normalized prev-co for pairing
+addColumn('sourced_founders', 'pair_candidate_ids', 'TEXT');            // JSON — ids of suspected co-founder peers
+// R8: GitHub activity depth
+addColumn('sourced_founders', 'github_activity_score', 'INTEGER');      // 0-10
+addColumn('sourced_founders', 'github_activity_data', 'TEXT');          // JSON — commit/org/repo details
+// R4: extract-then-score evidence map
+addColumn('sourced_founders', 'evidence_map', 'TEXT');                  // JSON from new Claude extraction prompt
+addColumn('sourced_founders', 'red_flags', 'TEXT');                     // JSON
+
+// R2: entity filings source (new)
+db.exec(`
+  CREATE TABLE IF NOT EXISTS entity_filings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source TEXT NOT NULL,              -- 'sec_form_d' | 'il_sos'
+    filing_type TEXT,                   -- 'Form D' | 'LLC' | 'C-Corp'
+    filing_id TEXT,                     -- SEC CIK / accession or IL file number
+    entity_name TEXT,
+    officer_names TEXT,                 -- JSON array
+    state TEXT,
+    city TEXT,
+    filed_at DATETIME,
+    raw_data TEXT,                      -- JSON blob
+    matched_to_candidate_id INTEGER,    -- sourced_founders.id if matched
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(source, filing_id)
+  );
+`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_filings_filed_at ON entity_filings(filed_at DESC);`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_filings_state ON entity_filings(state);`);
 addColumn('users', 'onboarding_complete', 'INTEGER DEFAULT 0');
 addColumn('users', 'has_paid', 'INTEGER DEFAULT 0');
 addColumn('users', 'stripe_customer_id', 'TEXT');

@@ -108,6 +108,14 @@ router.post('/dismiss/:id', (req, res) => {
   res.json({ message: 'Dismissed' });
 });
 
+// R7: POST /api/sourcing/hide-forever/:id — dismiss AND mark do_not_resurface=1
+router.post('/hide-forever/:id', (req, res) => {
+  const sourced = db.prepare("SELECT * FROM sourced_founders WHERE id = ? AND user_id = ?").get(req.params.id, req.user.id);
+  if (!sourced) return res.status(404).json({ error: 'Sourced founder not found' });
+  db.prepare("UPDATE sourced_founders SET status = 'dismissed', do_not_resurface = 1 WHERE id = ? AND user_id = ?").run(req.params.id, req.user.id);
+  res.json({ message: 'Hidden permanently' });
+});
+
 // POST /api/sourcing/star/:id — save for later
 router.post('/star/:id', (req, res) => {
   const sourced = db.prepare("SELECT * FROM sourced_founders WHERE id = ? AND user_id = ? AND status = 'pending'").get(req.params.id, req.user.id);

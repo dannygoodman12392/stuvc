@@ -108,10 +108,13 @@ const HYPERSCALE_COMPANIES = [
   'grubhub', 'groupon', 'avant', 'braintree', 'paypal'
 ];
 
+// R1: Elite national schools are a PEDIGREE signal, NEVER a standalone IL tie.
+// Tie must come from: (a) current location, (b) strict work-context, (c) Illinois school,
+// (d) grew up / from / raised in IL, (e) worked at Chicago-HQ company.
 function verifyIllinois(text, headline) {
   const combined = ((headline || '') + ' ' + (text || '')).toLowerCase();
 
-  // Current location
+  // (a) Current location — "City, Illinois" or "City, IL" patterns
   for (const loc of ILLINOIS_LOCATIONS) {
     if (combined.includes(`${loc}, illinois`) || combined.includes(`${loc}, il`)) {
       return { verified: true, type: 'current', location: loc.charAt(0).toUpperCase() + loc.slice(1) };
@@ -121,74 +124,107 @@ function verifyIllinois(text, headline) {
     return { verified: true, type: 'current', location: 'Chicago Area' };
   }
 
-  // Work context
+  // (b) Work context — tighter regex with explicit work verbs
   const workPatterns = [
-    /based in (chicago|illinois|evanston)/,
-    /located in (chicago|illinois)/,
-    /(building|working).{0,40}chicago/,
-    /(moved|relocated|moving).{0,30}(to\s+)?chicago/,
-    /chicago.{0,40}(engineer|founder|cto|vp|director|head of|ceo)/,
+    /\bbased in (chicago|illinois|evanston|greater chicago)/,
+    /\blocated in (chicago|illinois)/,
+    /\b(currently|now) (building|working|living) (in|out of) (chicago|illinois)/,
+    /\b(moved|relocated|moving)\s+(to\s+)?chicago/,
+    /\b(founder|ceo|cto|cofounder|co-founder|engineer)\s+(at|@|in|of)\s+[a-z0-9\s]{0,40}(chicago|illinois|evanston)/,
   ];
   for (const p of workPatterns) {
     if (p.test(combined)) return { verified: true, type: 'working', location: 'Chicago' };
   }
 
-  // Illinois school alumni
+  // (c) Illinois school alumni — local-anchor schools satisfy both tie + pedigree per ICP
   for (const school of ILLINOIS_SCHOOLS) {
     if (combined.includes(school)) {
       return { verified: true, type: 'school_alumni', location: school.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ') };
     }
   }
 
-  // Elite school + any Chicago mention (weaker but valid)
-  const hasChicagoMention = combined.includes('chicago') || combined.includes('illinois');
-  if (hasChicagoMention) {
-    for (const school of ELITE_SCHOOLS) {
-      if (combined.includes(school)) {
-        return { verified: true, type: 'school_alumni', location: school.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ') };
-      }
+  // (d) Hometown / grew up in IL
+  const hometownPatterns = [
+    /\b(from|grew up in|born in|raised in|native of)\s+(chicago|illinois|evanston|naperville|oak park)/,
+    /\b(chicago|illinois)\s+(native|local|born)/,
+  ];
+  for (const p of hometownPatterns) {
+    if (p.test(combined)) return { verified: true, type: 'hometown', location: 'Illinois (hometown)' };
+  }
+
+  // (e) Worked at Chicago-HQ company (strict: company name + Chicago office context)
+  const chicagoHqCompanies = ['grubhub', 'groupon', 'avant', 'braintree', 'tempus', 'sprout social', 'cameo', 'outcome health'];
+  for (const co of chicagoHqCompanies) {
+    if (combined.includes(co) && (combined.includes('chicago') || combined.includes('illinois'))) {
+      return { verified: true, type: 'chicago_company', location: `Ex-${co.charAt(0).toUpperCase() + co.slice(1)}` };
     }
   }
 
+  // NOTE: Elite-school-only path intentionally removed — see R1 of sourcing audit.
+  // National elite schools (Stanford, Harvard, MIT, etc.) are pedigree multipliers,
+  // NEVER a standalone IL tie. They must pair with one of the above tie types.
   return { verified: false, type: null, location: null };
 }
 
 // ── Generic Location Verification (uses user's target locations) ──
 
+// R1: Tie verification — elite schools never establish tie on their own.
+// Tie requires one of:
+//   (a) location keyword in structured form (", IL" / ", Illinois" / "based in")
+//   (b) user-target school attendance
+//   (c) hometown / grew up in target location
+//   (d) worked at target-location-HQ company with location context
+// Raw substring match on a user location is rejected unless it has structural
+// context (comma pattern, "based in", etc.) — too many false positives like
+// "Chicago Bears fan" or "Illinois tax law".
 function verifyLocation(text, headline, criteria) {
   const combined = ((headline || '') + ' ' + (text || '')).toLowerCase();
   const userLocations = (criteria.locations || []).map(l => l.toLowerCase());
   const userSchools = (criteria.schools || []).map(s => s.toLowerCase());
 
-  // No location preference → everyone passes
+  // No location preference → everyone passes (intentional — broad search mode)
   if (userLocations.length === 0 && userSchools.length === 0) {
     return { verified: true, type: 'broad', location: 'Any' };
   }
 
-  // Check current location match against user's target locations
+  // (a) Structured current-location mention of user's target locations
   for (const loc of userLocations) {
-    if (combined.includes(loc)) {
+    // "chicago, il" / "chicago, illinois" / "based in chicago" / "located in chicago"
+    const patterns = [
+      new RegExp(`\\b${loc.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*,\\s*(il\\b|illinois\\b)`, 'i'),
+      new RegExp(`\\bbased in\\s+${loc.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'i'),
+      new RegExp(`\\blocated in\\s+${loc.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'i'),
+      new RegExp(`\\bgreater\\s+${loc.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s+area\\b`, 'i'),
+      new RegExp(`\\b${loc.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s+(metropolitan|area|metro)\\b`, 'i'),
+    ];
+    if (patterns.some(p => p.test(combined))) {
       return { verified: true, type: 'current', location: loc.charAt(0).toUpperCase() + loc.slice(1) };
+    }
+    // Work-role + location co-occurrence (stricter than previous 40-char window)
+    const workRole = new RegExp(`\\b(founder|ceo|cto|cofounder|co-founder|head of|vp of|director of)\\b[^.]{0,30}\\b${loc.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
+    if (workRole.test(combined)) {
+      return { verified: true, type: 'working', location: loc.charAt(0).toUpperCase() + loc.slice(1) };
     }
   }
 
-  // Check school alumni match against user's target schools
+  // (b) User-target school attendance
   for (const school of userSchools) {
     if (combined.includes(school)) {
       return { verified: true, type: 'school_alumni', location: school.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ') };
     }
   }
 
-  // Also check against elite schools if there's any location mention
-  const hasLocationMention = userLocations.some(loc => combined.includes(loc));
-  if (hasLocationMention) {
-    for (const school of ELITE_SCHOOLS) {
-      if (combined.includes(school)) {
-        return { verified: true, type: 'school_alumni', location: school.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ') };
-      }
+  // (c) Hometown / from-ties to target location
+  for (const loc of userLocations) {
+    const hometown = new RegExp(`\\b(from|grew up in|born in|raised in|native of)\\s+${loc.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
+    const nativeOf = new RegExp(`\\b${loc.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s+(native|local|born)\\b`, 'i');
+    if (hometown.test(combined) || nativeOf.test(combined)) {
+      return { verified: true, type: 'hometown', location: `${loc.charAt(0).toUpperCase() + loc.slice(1)} (hometown)` };
     }
   }
 
+  // NOTE: Elite-school-only path intentionally removed — see R1 of sourcing audit.
+  // National elite schools are pedigree, not location ties.
   return { verified: false, type: null, location: null };
 }
 
@@ -196,11 +232,22 @@ function extractSignals(text, headline) {
   const combined = ((headline || '') + ' ' + (text || '')).toLowerCase();
   const pedigree = [];
   const builder = [];
+  // R10: separate tiers — anchor schools (IL tie + pedigree) vs national elites (pedigree only)
+  const anchorSchoolsIl = [];
+  const eliteSchoolsNational = [];
 
-  // School pedigree
-  for (const school of [...ILLINOIS_SCHOOLS, ...ELITE_SCHOOLS]) {
+  for (const school of ILLINOIS_SCHOOLS) {
     if (combined.includes(school)) {
-      pedigree.push(school.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' '));
+      const display = school.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+      pedigree.push(display);
+      anchorSchoolsIl.push(display);
+    }
+  }
+  for (const school of ELITE_SCHOOLS) {
+    if (combined.includes(school)) {
+      const display = school.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+      pedigree.push(display);
+      eliteSchoolsNational.push(display);
     }
   }
 
@@ -236,26 +283,94 @@ function extractSignals(text, headline) {
   if (/\bformer (cto|ceo|vp|head of)\b/.test(combined)) builder.push('Former Executive');
   if (/\b(next chapter|what['']?s next|new venture)\b/.test(combined)) builder.push('Starting New Venture');
 
-  return { pedigree: [...new Set(pedigree)], builder: [...new Set(builder)] };
+  return {
+    pedigree: [...new Set(pedigree)],
+    builder: [...new Set(builder)],
+    anchor_schools_il: [...new Set(anchorSchoolsIl)],
+    elite_schools_national: [...new Set(eliteSchoolsNational)],
+  };
 }
 
-// ── Stage Pre-filter: Skip founders who are clearly too far along ──
-
+// ── R6: Stage Pre-filter — body text + seniority + funding patterns ──
+// Returns { disqualified: bool, reason: string | null }
+// Disqualifies candidates whose own company is clearly past pre-seed.
+// Prior version only checked headline for "IPO/unicorn/500+ employees" — caught ~5%.
+// This version scans body for funding-round language + named top-tier investors
+// bounded to the candidate's OWN company (heuristic: "raised by X", "our Series B",
+// "we raised", or funding language within 80 chars of a first-person signal).
 function isTooFarAlong(text, headline) {
   const h = (headline || '').toLowerCase();
+  const t = (text || '').toLowerCase();
 
-  // Only filter on HEADLINE signals — these are self-descriptions.
-  // Profile text mentions of "Series A" are often about past employers, not own company.
-  const tooLateHeadlinePatterns = [
-    /\bipo\b/,
-    /\bunicorn\b/,
-    /\b\d{3,}\+?\s*employees\b/,                  // "500+ employees" in headline
+  // HEADLINE disqualifiers — strong, unambiguous
+  const headlinePatterns = [
+    { p: /\bipo\b/, reason: 'IPO in headline' },
+    { p: /\bunicorn\b/, reason: 'Unicorn in headline' },
+    { p: /\b\d{3,}\+?\s*employees\b/, reason: 'Headcount in headline' },
+    { p: /\bceo\s+(of|@)\s+.{1,50}(public|nasdaq|nyse)/i, reason: 'CEO of public co' },
+    { p: /\bpost[- ]ipo\b/, reason: 'Post-IPO' },
+    { p: /\bseries\s+[b-z]\b/i, reason: 'Series B+ in headline' },
+  ];
+  for (const { p, reason } of headlinePatterns) {
+    if (p.test(h)) return { disqualified: true, reason };
+  }
+
+  // BODY disqualifiers — need to distinguish "our Series B" (disqualify) from
+  // "previously at a Series B startup" (past employer, pass).
+  // Present-tense self-reference = strong signal. Past-tense or "previously/ex-/former"
+  // near the funding signal negates the disqualification.
+  const presentSelfRef = new RegExp([
+    "\\bwe(['’]re| are| have| just| recently| raised| closed| launched| are building)\\b",
+    "\\bour (current |company|startup|co|seed|series|round|funding|team)\\b",
+    "\\bi (just |recently |have )?(raised|closed|launched|incorporated|founded|am building|am raising|led|lead)\\b",
+    "\\bmy (company|startup|co|business|venture|new)\\b",
+    "\\bthe company (has|is|just|raised|we|our)\\b",
+    "\\bhere at\\b",
+    "\\bfounder of\\b",
+    "\\b(ceo|cto|coo) of\\b",
+  ].join("|"), "i");
+  const pastEmployerSignal = /\b(previously|formerly|ex-|former|prior to|used to|was at|was a|joined\s+\w+\s+as|worked at|worked for|during my time|left\s+to|before (starting|founding|co-founding)|back when|while at|stint at)\b/i;
+
+  const bodyFundingPatterns = [
+    { p: /\bseries\s+[b-z]\b/i, reason: 'Series B+ in body (own co)' },
+    { p: /\braised\s+\$\s?\d+(\.\d+)?\s*[mb]\b/i, reason: 'Raised $N[mb] (own co)' },
+    { p: /\$\d+(\.\d+)?\s*[mb]\s+(seed|round|raise|funding)\b/i, reason: 'Funding round amount (own co)' },
+    { p: /\bfunding\s+led\s+by\s+(sequoia|a16z|andreessen|benchmark|accel|greylock|founders fund|khosla|redpoint|nea|lightspeed|insight|general catalyst|thrive|spark|ribbit|iconiq)/i, reason: 'Named tier-1 lead' },
+    { p: /\bbacked\s+by\s+(sequoia|a16z|andreessen|benchmark|accel|greylock|founders fund|khosla|redpoint|nea|lightspeed|insight|general catalyst|thrive|spark|ribbit|iconiq)/i, reason: 'Backed by tier-1' },
   ];
 
-  for (const p of tooLateHeadlinePatterns) {
-    if (p.test(h)) return true;
+  for (const { p, reason } of bodyFundingPatterns) {
+    const match = t.match(p);
+    if (match) {
+      const idx = match.index;
+      const windowStart = Math.max(0, idx - 150);
+      const windowEnd = Math.min(t.length, idx + match[0].length + 50);
+      const window = t.slice(windowStart, windowEnd);
+      // If past-employer signal is within window, this is noise about a previous job
+      if (pastEmployerSignal.test(window)) continue;
+      // Require explicit present-tense self-reference
+      if (presentSelfRef.test(window)) {
+        return { disqualified: true, reason };
+      }
+    }
   }
-  return false;
+
+  // Established-company seniority without departure signal
+  const seniorityTitle = /\b(vp|vice president|director|head of|principal|staff|cto|ceo|chief)\s+(of\s+)?(engineering|product|design|data|ml|ai|growth|marketing|sales|technology|executive|operations|technical officer)?\b/i;
+  const departureSignal = /\b(ex-|formerly|previously|just left|left\s+\w+\s+(to|for)|departed|exiting|stealth|founder|cofounder|co-founder|building (something|a new)|new venture)\b/i;
+  if (seniorityTitle.test(h) && !departureSignal.test(h) && !departureSignal.test(t.slice(0, 600))) {
+    // Check if body mentions their current co is mature, with present-tense self-ref nearby
+    const matureMatch = t.slice(0, 1500).match(/\b(series [a-z]|\$\d+[mb] raised|\d{3,}\+\s*employees|publicly traded|nasdaq|nyse|post-?ipo)\b/i);
+    if (matureMatch) {
+      const idx = matureMatch.index;
+      const window = t.slice(Math.max(0, idx - 150), idx + matureMatch[0].length + 50);
+      if (presentSelfRef.test(window) && !pastEmployerSignal.test(window)) {
+        return { disqualified: true, reason: 'Senior title at mature company, no departure signal' };
+      }
+    }
+  }
+
+  return { disqualified: false, reason: null };
 }
 
 function extractCompanyInfo(text, headline) {
@@ -279,73 +394,78 @@ function extractCompanyInfo(text, headline) {
 
 // ── Search Queries (ported from Claude Funnel v3, organized by daily theme) ──
 
+// R9: Tighter queries using site: operators, exact-phrase quotes, and negative filters.
+// Target LinkedIn profiles directly ("site:linkedin.com/in"), exclude recruiter/hiring noise,
+// and rely on structured tokens (quoted phrases) instead of keyword soup.
+const NEG = '-"recruiter" -"hiring" -"we are hiring" -"join our team" -"looking for" -"open to work"';
+
 const SEARCH_GROUPS = {
   monday: [
-    { name: 'Stealth founder Chicago', query: 'stealth mode founder Chicago Illinois building something new just left 2025 2026' },
-    { name: 'SF to Chicago stealth', query: 'founder moved San Francisco to Chicago stealth building new company pre-seed' },
-    { name: 'NYC to Chicago stealth', query: 'founder moved New York to Chicago stealth startup building new pre-launch' },
-    { name: 'Bay Area to Illinois stealth', query: 'Bay Area Silicon Valley moved Chicago Illinois engineer stealth building new startup' },
-    { name: 'Returned to Chicago new co', query: 'returned moved back Chicago Illinois building new startup stealth after Google Meta Stripe 2025' },
-    { name: 'Just quit to build Chicago', query: 'just quit left job to start build company Chicago Illinois founder stealth 2025 2026' },
-    { name: 'YC alum starting new Chicago', query: 'Y Combinator YC alumni starting new company Chicago Illinois stealth exploring' },
-    { name: 'Techstars alum new venture Chicago', query: 'Techstars alumni starting new venture Chicago Illinois stealth pre-seed' },
+    { name: 'LinkedIn stealth Chicago', query: `site:linkedin.com/in "stealth" ("Chicago" OR "Evanston" OR "Oak Park" OR "Wicker Park") ("founder" OR "co-founder") ${NEG}` },
+    { name: 'LinkedIn ex-SF moved Chicago', query: `site:linkedin.com/in ("formerly San Francisco" OR "formerly Bay Area" OR "moved to Chicago") "founder" ${NEG}` },
+    { name: 'LinkedIn just left to build Chicago', query: `site:linkedin.com/in ("just left" OR "recently left") ("Chicago" OR "Illinois") "building" ${NEG}` },
+    { name: 'LinkedIn YC Chicago founder', query: `site:linkedin.com/in ("Y Combinator" OR "YC W25" OR "YC S25" OR "YC W26") ("Chicago" OR "Evanston") "founder" ${NEG}` },
+    { name: 'LinkedIn Techstars Chicago', query: `site:linkedin.com/in "Techstars" ("Chicago" OR "Illinois") "founder" ${NEG}` },
+    { name: 'LinkedIn SPC Chicago', query: `site:linkedin.com/in "South Park Commons" ("Chicago" OR "Illinois") ${NEG}` },
+    { name: 'LinkedIn On Deck Chicago', query: `site:linkedin.com/in ("On Deck" OR "ODF") ("Chicago" OR "Illinois") "founder" ${NEG}` },
+    { name: 'LinkedIn pre-seed Chicago', query: `site:linkedin.com/in "pre-seed" ("Chicago" OR "Evanston") "founder" ${NEG}` },
   ],
   tuesday: [
-    { name: 'Ex-OpenAI stealth Chicago', query: 'left OpenAI stealth building new startup Chicago Illinois AI pre-seed 2025' },
-    { name: 'Ex-Google stealth Chicago', query: 'left Google engineer stealth new startup Chicago Illinois founding pre-launch 2025' },
-    { name: 'Ex-Stripe stealth Chicago', query: 'left Stripe stealth new company fintech payments Chicago Illinois pre-seed' },
-    { name: 'Ex-Meta stealth Chicago', query: 'Meta Facebook engineer left stealth new startup Chicago Illinois pre-seed 2025' },
-    { name: 'Ex-Anthropic stealth', query: 'ex Anthropic AI left stealth new startup Chicago Illinois pre-seed' },
-    { name: 'Ex-SpaceX defense stealth', query: 'SpaceX Anduril Palantir engineer left stealth Chicago Illinois founder new company' },
-    { name: 'Ex-hyperscale stealth Chicago', query: 'left Apple Amazon Microsoft engineer stealth Chicago Illinois founder new startup pre-seed' },
-    { name: 'Eng leader starting company', query: 'head of engineering VP engineering left starting new company stealth Chicago Illinois pre-seed 2025' },
+    { name: 'LinkedIn ex-OpenAI Chicago', query: `site:linkedin.com/in ("ex-OpenAI" OR "formerly OpenAI") ("Chicago" OR "Illinois") ${NEG}` },
+    { name: 'LinkedIn ex-Google Chicago', query: `site:linkedin.com/in ("ex-Google" OR "formerly Google" OR "previously Google") ("Chicago" OR "Evanston" OR "Oak Park") "founder" ${NEG}` },
+    { name: 'LinkedIn ex-Stripe Chicago', query: `site:linkedin.com/in ("ex-Stripe" OR "formerly Stripe") ("Chicago" OR "Illinois") "founder" ${NEG}` },
+    { name: 'LinkedIn ex-Meta Chicago', query: `site:linkedin.com/in ("ex-Meta" OR "formerly Meta" OR "formerly Facebook") ("Chicago" OR "Illinois") ${NEG}` },
+    { name: 'LinkedIn ex-Anthropic Chicago', query: `site:linkedin.com/in ("ex-Anthropic" OR "formerly Anthropic") ("Chicago" OR "Illinois") ${NEG}` },
+    { name: 'LinkedIn ex-Ramp/Brex Chicago', query: `site:linkedin.com/in ("ex-Ramp" OR "ex-Brex" OR "ex-Plaid") ("Chicago" OR "Illinois") "founder" ${NEG}` },
+    { name: 'LinkedIn ex-Anduril Chicago', query: `site:linkedin.com/in ("ex-Anduril" OR "ex-Palantir" OR "ex-SpaceX") ("Chicago" OR "Illinois") ${NEG}` },
+    { name: 'LinkedIn eng leader departed Chicago', query: `site:linkedin.com/in ("Head of Engineering" OR "VP Engineering") ("just left" OR "recently departed") ("Chicago" OR "Illinois") ${NEG}` },
   ],
   wednesday: [
-    { name: 'AI stealth Chicago 2025', query: 'AI stealth founder Chicago Illinois 2025 2026 building new machine learning pre-seed' },
-    { name: 'LLM AI agent stealth Chicago', query: 'LLM AI agent stealth builder founder Chicago Illinois new startup pre-launch' },
-    { name: 'AI infra early stage Chicago', query: 'AI infrastructure ML ops stealth pre-seed Chicago Illinois founder building' },
-    { name: 'ML PhD starting co Chicago', query: 'machine learning PhD starting company stealth Chicago Illinois pre-seed commercialize' },
-    { name: 'Defense tech stealth Chicago', query: 'defense technology stealth founder Chicago Illinois new company pre-seed' },
-    { name: 'Argonne Fermilab spinout', query: 'Argonne National Laboratory Fermilab researcher starting company spinout Illinois Chicago new' },
-    { name: 'UIUC research spinout', query: 'UIUC research professor PhD startup founder commercialize new company Illinois stealth' },
-    { name: 'Climate stealth Chicago', query: 'climate technology clean energy stealth founder Chicago Illinois new startup pre-seed' },
+    { name: 'LinkedIn AI founder Chicago', query: `site:linkedin.com/in ("AI founder" OR "ML founder") ("Chicago" OR "Illinois") ("stealth" OR "building") ${NEG}` },
+    { name: 'LinkedIn LLM agent Chicago', query: `site:linkedin.com/in ("LLM" OR "AI agent") ("founder" OR "co-founder") ("Chicago" OR "Evanston") ${NEG}` },
+    { name: 'LinkedIn PhD commercializing Chicago', query: `site:linkedin.com/in "PhD" ("commercializing" OR "spinout") ("Chicago" OR "UIUC" OR "University of Chicago") "founder" ${NEG}` },
+    { name: 'LinkedIn Argonne Fermilab spinout', query: `site:linkedin.com/in ("Argonne National Laboratory" OR "Fermilab") ("founder" OR "spinout" OR "CEO") ${NEG}` },
+    { name: 'LinkedIn UIUC research spinout', query: `site:linkedin.com/in "University of Illinois" ("PhD" OR "research scientist") "founder" "Chicago" ${NEG}` },
+    { name: 'LinkedIn defense founder Chicago', query: `site:linkedin.com/in ("defense tech" OR "dual-use") ("Chicago" OR "Illinois") "founder" ${NEG}` },
+    { name: 'LinkedIn climate founder Chicago', query: `site:linkedin.com/in ("climate tech" OR "clean energy") ("Chicago" OR "Illinois") ("founder" OR "stealth") ${NEG}` },
+    { name: 'LinkedIn robotics Chicago', query: `site:linkedin.com/in ("robotics" OR "autonomy") ("founder" OR "CEO") ("Chicago" OR "Illinois") ${NEG}` },
   ],
   thursday: [
-    { name: 'Fintech stealth Chicago', query: 'fintech stealth founder Chicago Illinois payments banking new startup pre-seed 2025' },
-    { name: 'Ex-Citadel starting co', query: 'Citadel Jump Trading DRW left starting new company stealth Chicago pre-seed' },
-    { name: 'Health tech stealth Chicago', query: 'health technology digital health stealth founder Chicago Illinois new startup pre-seed' },
-    { name: 'Biotech early stage Chicago', query: 'biotech pharmaceutical new company stealth founder Chicago Illinois pre-seed early' },
-    { name: 'Vertical SaaS stealth Chicago', query: 'vertical SaaS stealth founder Chicago Illinois new company pre-seed construction logistics' },
-    { name: 'Proptech stealth Chicago', query: 'proptech real estate technology stealth founder Chicago Illinois new startup pre-seed' },
-    { name: 'Cybersecurity stealth Chicago', query: 'cybersecurity stealth founder Chicago Illinois new startup pre-seed early stage' },
-    { name: 'Insurance stealth Chicago', query: 'insurtech insurance technology stealth Chicago Illinois founder new startup pre-seed' },
+    { name: 'LinkedIn fintech founder Chicago', query: `site:linkedin.com/in ("fintech" OR "payments" OR "banking") ("Chicago" OR "Illinois") ("founder" OR "stealth") ${NEG}` },
+    { name: 'LinkedIn ex-Citadel founder', query: `site:linkedin.com/in ("ex-Citadel" OR "ex-Jump Trading" OR "ex-DRW") ("founder" OR "stealth") ("Chicago" OR "Illinois") ${NEG}` },
+    { name: 'LinkedIn healthtech Chicago', query: `site:linkedin.com/in ("healthtech" OR "digital health") ("Chicago" OR "Illinois") ("founder" OR "co-founder") ${NEG}` },
+    { name: 'LinkedIn biotech Chicago', query: `site:linkedin.com/in ("biotech" OR "life sciences") ("Chicago" OR "Illinois") ("founder" OR "CEO") ${NEG}` },
+    { name: 'LinkedIn vertical SaaS Chicago', query: `site:linkedin.com/in "vertical SaaS" ("Chicago" OR "Illinois") "founder" ${NEG}` },
+    { name: 'LinkedIn construction/logistics Chicago', query: `site:linkedin.com/in ("construction tech" OR "logistics tech" OR "supply chain") ("Chicago" OR "Illinois") "founder" ${NEG}` },
+    { name: 'LinkedIn cybersec Chicago', query: `site:linkedin.com/in ("cybersecurity" OR "infosec") ("Chicago" OR "Illinois") ("founder" OR "stealth") ${NEG}` },
+    { name: 'LinkedIn insurtech Chicago', query: `site:linkedin.com/in "insurtech" ("Chicago" OR "Illinois") "founder" ${NEG}` },
   ],
   friday: [
-    { name: 'Serial founder new co Chicago', query: 'serial founder exited previous company building new startup Chicago Illinois stealth pre-seed 2025' },
-    { name: 'Post-exit building new Chicago', query: 'sold company acquired exited building new startup stealth Chicago Illinois pre-seed 2025' },
-    { name: 'Post-acquisition new co Chicago', query: 'post acquisition founder building new company stealth Chicago Illinois pre-seed' },
-    { name: 'Early employee going solo', query: 'early employee first engineer startup Chicago Illinois exploring starting own company founding stealth' },
-    { name: 'Staff eng side project Chicago', query: 'staff engineer principal engineer side project exploring starting Chicago Illinois stealth pre-seed' },
-    { name: 'SPC On Deck exploring Chicago', query: 'South Park Commons On Deck member Chicago Illinois exploring stealth building pre-seed' },
-    { name: 'Devtools stealth Chicago', query: 'developer tools devtools stealth founder Chicago Illinois new startup pre-seed open source' },
-    { name: 'OSS creator starting co Chicago', query: 'open source creator maintainer starting company stealth Chicago Illinois pre-seed' },
+    { name: 'LinkedIn serial founder Chicago', query: `site:linkedin.com/in ("serial founder" OR "second-time founder" OR "repeat founder") ("Chicago" OR "Illinois") ${NEG}` },
+    { name: 'LinkedIn post-exit building Chicago', query: `site:linkedin.com/in ("post-exit" OR "after acquisition" OR "previously exited") ("Chicago" OR "Illinois") "founder" ${NEG}` },
+    { name: 'LinkedIn sold company Chicago', query: `site:linkedin.com/in ("sold my company" OR "acquired by") ("Chicago" OR "Illinois") "founder" ${NEG}` },
+    { name: 'LinkedIn first engineer solo Chicago', query: `site:linkedin.com/in ("first engineer" OR "founding engineer") ("Chicago" OR "Illinois") ("starting" OR "founder") ${NEG}` },
+    { name: 'LinkedIn staff eng exploring Chicago', query: `site:linkedin.com/in ("staff engineer" OR "principal engineer") ("exploring" OR "what's next") ("Chicago" OR "Illinois") ${NEG}` },
+    { name: 'LinkedIn Kellogg/Booth founder', query: `site:linkedin.com/in ("Kellogg" OR "Chicago Booth") "founder" ("stealth" OR "building") ${NEG}` },
+    { name: 'LinkedIn devtools OSS Chicago', query: `site:linkedin.com/in ("open source maintainer" OR "devtools") ("Chicago" OR "Illinois") "founder" ${NEG}` },
+    { name: 'LinkedIn new venture Chicago', query: `site:linkedin.com/in ("new venture" OR "next chapter" OR "building something new") ("Chicago" OR "Illinois") ${NEG}` },
   ],
 };
 
-// These run EVERY day alongside the daily rotation — they target LinkedIn stealth profiles
+// Evergreen daily — tightest ICP signals, always run
 const DAILY_STEALTH_QUERIES = [
-  { name: 'LinkedIn stealth Chicago', query: 'site:linkedin.com/in "stealth" "Chicago" founder building' },
-  { name: 'LinkedIn building something new Chicago', query: 'site:linkedin.com/in "building something new" Chicago Illinois founder engineer' },
-  { name: 'LinkedIn stealth mode Illinois', query: 'site:linkedin.com/in "stealth mode" Illinois founder co-founder CEO' },
-  { name: 'LinkedIn exploring next Chicago', query: 'site:linkedin.com/in "exploring" "what\'s next" Chicago Illinois engineer founder' },
-  { name: 'LinkedIn stealth startup Chicago', query: 'site:linkedin.com/in "stealth startup" Chicago Illinois co-founder' },
-  { name: 'LinkedIn building Chicago founder', query: 'site:linkedin.com/in "building" founder CEO co-founder Chicago 2025' },
-  { name: 'LinkedIn ex-Google Chicago stealth', query: 'site:linkedin.com/in "ex-Google" OR "formerly Google" Chicago stealth founder' },
-  { name: 'LinkedIn Northwestern founder stealth', query: 'site:linkedin.com/in Northwestern founder stealth building Chicago' },
-  { name: 'LinkedIn UChicago founder building', query: 'site:linkedin.com/in "University of Chicago" founder building startup stealth' },
-  { name: 'LinkedIn UIUC founder stealth', query: 'site:linkedin.com/in "University of Illinois" founder stealth building startup Chicago' },
-  { name: 'LinkedIn new venture Chicago', query: 'site:linkedin.com/in "new venture" OR "next chapter" Chicago Illinois founder' },
-  { name: 'LinkedIn pre-seed Chicago', query: 'site:linkedin.com/in "pre-seed" Chicago Illinois founder building' },
+  { name: 'LinkedIn stealth Chicago strict', query: `site:linkedin.com/in "stealth mode" ("Chicago" OR "Evanston" OR "Oak Park") "founder" ${NEG}` },
+  { name: 'LinkedIn building something new Chicago', query: `site:linkedin.com/in "building something new" ("Chicago" OR "Illinois") ("founder" OR "co-founder") ${NEG}` },
+  { name: 'LinkedIn just left Google Chicago', query: `site:linkedin.com/in "just left Google" ("Chicago" OR "Illinois") ${NEG}` },
+  { name: 'LinkedIn just left Stripe Chicago', query: `site:linkedin.com/in "just left Stripe" ("Chicago" OR "Illinois") ${NEG}` },
+  { name: 'LinkedIn just left OpenAI Chicago', query: `site:linkedin.com/in "just left OpenAI" ("Chicago" OR "Illinois") ${NEG}` },
+  { name: 'LinkedIn UChicago founder stealth', query: `site:linkedin.com/in "University of Chicago" ("founder" OR "co-founder") ("stealth" OR "building") ${NEG}` },
+  { name: 'LinkedIn Northwestern founder stealth', query: `site:linkedin.com/in "Northwestern" ("founder" OR "co-founder") ("stealth" OR "building") ${NEG}` },
+  { name: 'LinkedIn UIUC founder stealth', query: `site:linkedin.com/in "University of Illinois" ("founder" OR "co-founder") ("stealth" OR "building") ${NEG}` },
+  { name: 'LinkedIn Kellogg founder', query: `site:linkedin.com/in "Kellogg" ("founder" OR "co-founder") ("stealth" OR "building") ${NEG}` },
+  { name: 'LinkedIn Booth founder', query: `site:linkedin.com/in "Chicago Booth" ("founder" OR "co-founder") ("stealth" OR "building") ${NEG}` },
+  { name: 'LinkedIn pre-seed Chicago founder', query: `site:linkedin.com/in "pre-seed" ("Chicago" OR "Illinois") "founder" ${NEG}` },
+  { name: 'LinkedIn repeat founder Chicago', query: `site:linkedin.com/in ("repeat founder" OR "second-time founder" OR "serial founder") ("Chicago" OR "Illinois") ${NEG}` },
 ];
 
 function getTodaySearchGroup() {
@@ -455,115 +575,179 @@ async function enrichWithLinkedIn(linkedinUrl, enrichlayerApiKey) {
 
 // ── Claude Scoring ──
 
-const SCORING_PROMPT = `You are the deal sourcing analyst for Superior Studios, a Chicago-based PRE-SEED venture fund (~$10M Fund I) led by Danny Goodman and Eric Hutt.
+// R4: Extract-then-score prompt. Forces verbatim quotes as evidence, defaults to 5 when
+// evidence is missing, surfaces red flags, and treats elite national schools as pedigree
+// only (never as a standalone Chicago tie — R10).
+const SCORING_PROMPT = `You are the deal sourcing analyst for Superior Studios, a Chicago-based PRE-SEED venture fund (~$10M Fund I). Every candidate shown to Danny must be a top-decile fit. False positives are more expensive than false negatives — err on the side of "pass" when evidence is thin.
 
-Score this founder candidate 1-10 on fit with Superior Studios. The fund ONLY invests at pre-seed. We are looking for:
-1. People in STEALTH MODE — just left a job, building something new, haven't raised yet
-2. Potential founders — exceptional builders at top companies who look like they're about to start something
-3. Very early-stage founders — pre-seed, maybe angel round, no institutional funding yet
+Your job has two stages:
+STAGE 1 — EXTRACT. For each scoring dimension, pull the *verbatim* quote from the profile text that justifies a claim. If no quote exists for a dimension, the evidence for that dimension is empty.
+STAGE 2 — SCORE. Only score a dimension above 5 when you have a verbatim quote supporting it. If evidence is empty or ambiguous, default to 5. Do not extrapolate.
 
-CRITICAL DISQUALIFIERS (auto-score 1-3):
-- Company has ALREADY RAISED Series A or later → score 1-2 (too late for us)
-- Company has raised a large seed ($5M+) → score 2-3 (likely too late)
-- Company is established/mature (founded 3+ years ago with meaningful revenue/team) → score 1-3
-- Person is a senior exec at an established company with no sign of leaving → score 2-3
-- The person is clearly a job-seeker, not a founder/builder → score 1-2
+Who we want (the ICP):
+- Stealth founders who just left a senior role and haven't gone public
+- Recently-departed senior ops/eng from category-defining companies (FAANG, Stripe, OpenAI, Anthropic, Ramp, Anduril, Scale, Databricks)
+- Repeat founders in transition (post-exit, post-acquisition, post-shutdown, now building again)
+- High-pedigree operators with Chicago/IL ties poised to start something
 
-GEOGRAPHY (25% weight):
-- 9-10: Currently building in Chicago. Born/raised in Chicago area. Deep Chicago roots + building here.
-- 7-8: Illinois-based. Went to Northwestern, UChicago, UIUC, or other Illinois school. Lived/worked in Chicago previously.
-- 5-6: Midwest-based or has meaningful Illinois ties (family, previous job, school). Stanford/Harvard/MIT grad with Chicago connection.
-- 3-4: National with no direct Chicago/IL connection but genuinely exceptional caliber.
-- 1-2: No geographic fit and not exceptional enough to overcome.
+Hard disqualifiers (auto-score 1-3, regardless of other signals):
+- Company has RAISED Series A or later
+- Company has raised a large seed ($5M+)
+- Candidate is a senior exec at an established co with NO departure signal
+- Candidate is clearly a job-seeker or recruiter, not a builder
+- Candidate is a student with a portfolio project and no commercial evidence
+- Candidate is a service provider (consultant, agency, recruiter) not a founder
 
-FOUNDER CALIBER (35% weight):
-- 9-10: Previously exited a company. Serial founder. Product/eng leadership at Google, Meta, Stripe, OpenAI, Anthropic, Palantir, SpaceX, or similar. YC/TechStars/SPC alum. PhD from elite institution doing commercialization.
-- 7-8: Staff+ engineer at notable tech company. Elite institution. First-time founder with exceptional domain expertise or technical depth.
-- 5-6: Solid professional background. Good institution. Relevant industry experience.
-- 3-4: Junior or unclear background. Limited evidence of building ability.
-- 1-2: No evidence of relevant experience or building.
+Location rules — CRITICAL:
+- Tie categories in priority order: current Chicago/IL residence > Chicago-based work > Illinois school alumni (Northwestern/UChicago/UIUC/IIT/Kellogg/Booth/Loyola/DePaul) > hometown/raised in IL > worked at Chicago-HQ company (Grubhub/Groupon/Avant/Braintree/Tempus/Sprout/Cameo).
+- National elite schools (Stanford, Harvard, MIT, Berkeley, CMU, Princeton, Yale, Columbia, Penn/Wharton, Cornell) are PEDIGREE MULTIPLIERS, not ties. Attending an elite national school without one of the above tie types = geography score 3-4, not 7+.
+- The strongest combination is: elite national school + verified Chicago/IL tie + one of the four archetype signals. Flag it explicitly in rationale when you see it.
 
-STAGE & TIMING (25% weight — this is critical):
-- 9-10: STEALTH MODE. Just left a top company to build something new. Pre-product, pre-revenue. No funding yet or just angels/friends & family. This is our sweet spot.
-- 7-8: Very early. Has a prototype or MVP. Pre-seed or small angel round. Founded in last 12 months.
-- 5-6: Exploring, thinking about starting something. Still at their job but clearly restless/building on the side.
-- 3-4: Has raised a seed round ($2-4M). Getting late for us but might still be reachable.
-- 1-2: Series A or later. Established company. Clearly too far along for pre-seed investment.
+Recency rules — CRITICAL:
+- "Just left" / "recently departed" is only a 9-10 stage signal if the departure was WITHIN 6 MONTHS. Estimate months-since-departure from the text.
+- If the profile says "just left" but with no date, and no other freshness signals, assume 6+ months and score stage 5-6, not 9-10.
+- Explicitly named recent dates (2025, 2026) count as fresh if within the last 6 months.
 
-SECTOR FIT (15% weight):
-- B2B SaaS, AI/ML, developer tools, fintech, healthtech, defense/govtech, vertical software, marketplace — ideal
-- Deep tech, climate tech, biotech — good if founder is exceptional
-- Consumer, social, crypto — lower fit unless exceptional
+Stage & timing rubric (25% weight):
+- 9-10: Stealth, departed top company <=3 months ago, no funding
+- 7-8: Early (prototype/MVP), founded <12mo, pre-seed or small angel
+- 5-6: Exploring, still employed, side-building
+- 3-4: Has raised seed $2-4M
+- 1-2: Series A+ or established
 
-IMPORTANT: If you see any evidence the company has raised a Series A, Series B, or significant venture funding, the score MUST be 3 or below regardless of how impressive the founder is. We literally cannot invest at that stage.
+Founder caliber (35% weight):
+- 9-10: Previously exited. Serial founder. Staff+/VP/Director at target companies (Google/Meta/Stripe/OpenAI/Anthropic/Ramp/Anduril/Scale/Databricks). YC/TechStars/SPC alum. PhD from elite school commercializing.
+- 7-8: Staff+ at notable co. Elite institution grad. Exceptional domain depth.
+- 5-6: Solid pro background. Good institution.
+- 3-4: Junior or unclear.
+- 1-2: No relevant experience.
 
-Return ONLY valid JSON:
+Geography (25% weight): per tie-category priority above.
+
+Sector fit (15% weight):
+- Ideal: B2B SaaS, AI/ML, devtools, fintech, healthtech, defense/govtech, vertical software
+- Good if exceptional: deep tech, climate, biotech
+- Lower: consumer, social, crypto
+
+Return ONLY valid JSON in this exact shape:
 {
-  "confidence_score": <1-10 integer>,
-  "confidence_rationale": "<2-3 sentences explaining fit. Be specific about stage/timing, geographic connection, and caliber signals. If too far along, say so explicitly.>",
+  "evidence_map": {
+    "tie_evidence": "<verbatim quote or empty string>",
+    "tie_type": "<one of: current|working|school_alumni|hometown|chicago_company|none>",
+    "caliber_evidence": "<verbatim quote or empty string>",
+    "stage_evidence": "<verbatim quote or empty string>",
+    "sector_evidence": "<verbatim quote or empty string>"
+  },
+  "departure_recency_months": <integer months since last role change, or null if unknown>,
+  "anchor_schools_il": ["<IL schools attended, verbatim>"],
+  "elite_schools_national": ["<national elite schools attended, verbatim>"],
+  "red_flags": ["<concrete red flags: 'student, no commercial evidence', 'Series B company', 'recruiter, not builder', etc.>"],
+  "confidence_score": <1-10 integer; default 5 if evidence is thin>,
+  "confidence_rationale": "<2-3 sentences. Cite the verbatim evidence. If score is low, say WHY specifically. If score is high, explain which archetype + tie they match.>",
   "tags": ["<domain>", "<stage>", "<geography>", "<signal>"],
-  "chicago_connection": "<one sentence: their specific Chicago/Illinois tie>",
-  "pedigree_signals": ["<school or company pedigree, e.g. 'Ex-Google Staff Eng', 'Northwestern Kellogg MBA'>"],
-  "builder_signals": ["<evidence of building, e.g. 'Previous exit (acquired by X)', 'Active GitHub (500+ stars)', 'YC W24'>"],
+  "chicago_connection": "<one sentence; if no tie, write 'No verified tie'>",
+  "pedigree_signals": ["<'Ex-Google Staff Eng', 'Northwestern Kellogg MBA', etc.>"],
+  "builder_signals": ["<'Previous exit (acquired by X)', 'YC W24', etc.>"],
   "company_one_liner": "<what they're building, or 'Stealth' or 'Exploring' if unclear>"
 }`;
+
+function emptyScore(rationale) {
+  return {
+    confidence_score: 5,
+    confidence_rationale: rationale,
+    tags: [],
+    chicago_connection: '',
+    pedigree_signals: [],
+    builder_signals: [],
+    company_one_liner: '',
+    evidence_map: {},
+    departure_recency_months: null,
+    anchor_schools_il: [],
+    elite_schools_national: [],
+    red_flags: [],
+  };
+}
 
 async function scoreFounder(client, founder, scoringPrompt) {
   try {
     const response = await client.messages.create({
       model: 'claude-sonnet-4-20250514',
-      max_tokens: 768,
+      max_tokens: 1536,
       system: scoringPrompt || SCORING_PROMPT,
       messages: [{
         role: 'user',
-        content: `Score this founder candidate:\n\nName: ${founder.name}\nHeadline: ${founder.headline || 'N/A'}\nCompany: ${founder.company || 'Unknown'}\nLinkedIn: ${founder.linkedin_url || 'N/A'}\nGitHub: ${founder.github_url || 'N/A'}\nSource: ${founder.source}\n\nProfile text:\n${(founder.text || '').slice(0, 4000)}`
+        content: `Score this founder candidate:\n\nName: ${founder.name}\nHeadline: ${founder.headline || 'N/A'}\nCompany: ${founder.company || 'Unknown'}\nLinkedIn: ${founder.linkedin_url || 'N/A'}\nGitHub: ${founder.github_url || 'N/A'}\nSource: ${founder.source}\nPre-extracted anchor IL schools: ${JSON.stringify(founder.anchor_schools_il || [])}\nPre-extracted elite national schools: ${JSON.stringify(founder.elite_schools_national || [])}\n\nProfile text:\n${(founder.text || '').slice(0, 4000)}`
       }]
     });
 
     const text = response.content[0].text.trim();
     const jsonMatch = text.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      const parsed = JSON.parse(jsonMatch[0]);
-      return {
-        confidence_score: parsed.confidence_score || 5,
-        confidence_rationale: parsed.confidence_rationale || '',
-        tags: parsed.tags || [],
-        chicago_connection: parsed.chicago_connection || '',
-        pedigree_signals: parsed.pedigree_signals || [],
-        builder_signals: parsed.builder_signals || [],
-        company_one_liner: parsed.company_one_liner || '',
-      };
+    if (!jsonMatch) return emptyScore('Could not parse scoring response');
+    const parsed = JSON.parse(jsonMatch[0]);
+
+    // R3: normalize recency — clamp to valid range
+    let recency = parsed.departure_recency_months;
+    if (recency !== null && recency !== undefined) {
+      recency = parseInt(recency);
+      if (isNaN(recency) || recency < 0 || recency > 240) recency = null;
+    } else {
+      recency = null;
     }
-    return { confidence_score: 5, confidence_rationale: 'Could not parse scoring response', tags: [], chicago_connection: '', pedigree_signals: [], builder_signals: [], company_one_liner: '' };
+
+    // R3: decay the score if "just left" claim is stale (>6 months without freshness)
+    let score = parsed.confidence_score || 5;
+    const rawScore = score;
+    if (recency !== null && recency > 6 && score >= 8) {
+      score = Math.max(5, score - 2);
+    }
+
+    return {
+      confidence_score: score,
+      raw_confidence_score: rawScore,
+      confidence_rationale: parsed.confidence_rationale || '',
+      tags: parsed.tags || [],
+      chicago_connection: parsed.chicago_connection || '',
+      pedigree_signals: parsed.pedigree_signals || [],
+      builder_signals: parsed.builder_signals || [],
+      company_one_liner: parsed.company_one_liner || '',
+      evidence_map: parsed.evidence_map || {},
+      departure_recency_months: recency,
+      anchor_schools_il: parsed.anchor_schools_il || [],
+      elite_schools_national: parsed.elite_schools_national || [],
+      red_flags: parsed.red_flags || [],
+    };
   } catch (err) {
-    return { confidence_score: 5, confidence_rationale: 'Scoring failed: ' + err.message, tags: [], chicago_connection: '', pedigree_signals: [], builder_signals: [], company_one_liner: '' };
+    return emptyScore('Scoring failed: ' + err.message);
   }
 }
 
 // ── Deduplication ──
 
+// R7: Dedup rules
+//   - Match ANY sourced_founders row (including dismissed) that has do_not_resurface=1
+//     → block forever. User explicitly said "never show again."
+//   - Match any non-dismissed sourced_founders row → block (already in queue).
+//   - Dismissed rows with do_not_resurface=0 → allow re-surface (intentional: user
+//     may want second look later when circumstances change).
 function isDuplicate(founder, userId) {
-  // Check by LinkedIn URL (scoped to user)
   if (founder.linkedin_url) {
     const normalizedUrl = founder.linkedin_url.replace(/\/$/, '').toLowerCase();
     const slug = normalizedUrl.split('/in/')[1] || normalizedUrl;
     const existing = db.prepare('SELECT id FROM founders WHERE LOWER(linkedin_url) LIKE ? AND created_by = ? AND is_deleted = 0').get(`%${slug}%`, userId);
     if (existing) return true;
-    const sourced = db.prepare("SELECT id FROM sourced_founders WHERE LOWER(linkedin_url) LIKE ? AND user_id = ? AND status != 'dismissed'").get(`%${slug}%`, userId);
+    const sourced = db.prepare("SELECT id FROM sourced_founders WHERE LOWER(linkedin_url) LIKE ? AND user_id = ? AND (status != 'dismissed' OR do_not_resurface = 1)").get(`%${slug}%`, userId);
     if (sourced) return true;
   }
-  // Check by email (scoped to user)
   if (founder.email) {
     const existing = db.prepare('SELECT id FROM founders WHERE email = ? AND created_by = ? AND is_deleted = 0').get(founder.email, userId);
     if (existing) return true;
-    const sourced = db.prepare("SELECT id FROM sourced_founders WHERE email = ? AND user_id = ? AND status != 'dismissed'").get(founder.email, userId);
+    const sourced = db.prepare("SELECT id FROM sourced_founders WHERE email = ? AND user_id = ? AND (status != 'dismissed' OR do_not_resurface = 1)").get(founder.email, userId);
     if (sourced) return true;
   }
-  // Check by name + company (scoped to user)
   if (founder.name && founder.company) {
     const existing = db.prepare('SELECT id FROM founders WHERE LOWER(name) = LOWER(?) AND LOWER(company) = LOWER(?) AND created_by = ? AND is_deleted = 0').get(founder.name, founder.company, userId);
     if (existing) return true;
-    const sourced = db.prepare("SELECT id FROM sourced_founders WHERE LOWER(name) = LOWER(?) AND LOWER(company) = LOWER(?) AND user_id = ? AND status != 'dismissed'").get(founder.name, founder.company, userId);
+    const sourced = db.prepare("SELECT id FROM sourced_founders WHERE LOWER(name) = LOWER(?) AND LOWER(company) = LOWER(?) AND user_id = ? AND (status != 'dismissed' OR do_not_resurface = 1)").get(founder.name, founder.company, userId);
     if (sourced) return true;
   }
   return false;
@@ -703,63 +887,24 @@ function buildUserSearchQueries(criteria, fullSweep) {
   return queries;
 }
 
+// R4: User-customized prompt reuses the base SCORING_PROMPT's extract-then-score
+// structure and output schema. Only the criteria preface differs.
 function buildUserScoringPrompt(criteria) {
-  const locations = criteria.locations.join(', ') || 'any geography';
-  const schools = criteria.schools.join(', ') || 'any strong institution';
-  const companies = criteria.companies.join(', ') || 'top tech companies';
-  const domains = criteria.domains.join(', ') || 'any sector';
-  const stage = criteria.stageFilter || 'Any';
+  const locations = (criteria.locations || []).join(', ') || 'Chicago, Illinois';
+  const schools = (criteria.schools || []).join(', ') || 'Northwestern, UChicago, UIUC, IIT, Kellogg, Booth, Loyola, DePaul';
+  const companies = (criteria.companies || []).join(', ') || 'Google, Meta, Stripe, OpenAI, Anthropic, Ramp, Anduril, Scale, Databricks';
+  const domains = (criteria.domains || []).join(', ') || 'B2B SaaS, AI/ML, devtools, fintech, healthtech, defense, vertical software';
+  const stage = criteria.stageFilter || 'Pre-seed';
 
-  return `You are a deal sourcing analyst for a venture fund focused on ${stage} stage investing.
+  const preface = `Criteria for this run:
+- Target stage: ${stage}
+- Target locations (tie-qualifying): ${locations}
+- Target local-anchor schools (tie + pedigree): ${schools}
+- Target pedigree-qualifying companies: ${companies}
+- Target sectors: ${domains}
 
-Score this founder candidate 1-10 on fit. The fund invests at ${stage} stage. We are looking for:
-1. People in STEALTH MODE — just left a job, building something new, haven't raised yet
-2. Potential founders — exceptional builders at top companies who look like they're about to start something
-3. Very early-stage founders — pre-seed, maybe angel round, no institutional funding yet
-
-CRITICAL DISQUALIFIERS (auto-score 1-3):
-- Company has ALREADY RAISED Series A or later → score 1-2 (too late)
-- Company has raised a large seed ($5M+) → score 2-3 (likely too late)
-- Company is established/mature (founded 3+ years ago with meaningful revenue/team) → score 1-3
-- Person is a senior exec at an established company with no sign of leaving → score 2-3
-- The person is clearly a job-seeker, not a founder/builder → score 1-2
-
-GEOGRAPHY (25% weight):
-Target locations: ${locations}
-- 9-10: Currently building in a target location. Deep local roots.
-- 7-8: Based in or near target locations. Attended local institutions (${schools}). Previously lived/worked there.
-- 5-6: Nearby region or meaningful ties. Elite institution grad with local connection.
-- 3-4: National with no direct geographic connection but genuinely exceptional caliber.
-- 1-2: No geographic fit and not exceptional enough to overcome.
-
-FOUNDER CALIBER (35% weight):
-Target companies: ${companies}
-- 9-10: Previously exited a company. Serial founder. Product/eng leadership at target companies or equivalent. YC/TechStars alum. PhD commercializing.
-- 7-8: Staff+ engineer at notable tech company. Elite institution. First-time founder with exceptional domain expertise.
-- 5-6: Solid professional background. Good institution. Relevant industry experience.
-- 3-4: Junior or unclear background. Limited evidence of building ability.
-- 1-2: No evidence of relevant experience or building.
-
-STAGE & TIMING (25% weight):
-- 9-10: STEALTH MODE. Just left a top company to build something new. Pre-product, pre-revenue. No funding yet.
-- 7-8: Very early. Has a prototype or MVP. Pre-seed or small angel round. Founded in last 12 months.
-- 5-6: Exploring, thinking about starting something. Still employed but clearly building on the side.
-- 3-4: Has raised a seed round ($2-4M). Getting late.
-- 1-2: Series A or later. Established company.
-
-SECTOR FIT (15% weight):
-Target sectors: ${domains}
-
-Return ONLY valid JSON:
-{
-  "confidence_score": <1-10 integer>,
-  "confidence_rationale": "<2-3 sentences explaining fit>",
-  "tags": ["<domain>", "<stage>", "<geography>", "<signal>"],
-  "chicago_connection": "<one sentence: their specific geographic tie to your target locations>",
-  "pedigree_signals": ["<school or company pedigree>"],
-  "builder_signals": ["<evidence of building>"],
-  "company_one_liner": "<what they're building, or 'Stealth' or 'Exploring' if unclear>"
-}`;
+`;
+  return preface + SCORING_PROMPT;
 }
 
 // ── User API Key Loader ──
@@ -869,6 +1014,8 @@ async function runSourcingEngine({ fullSweep = false, userId = 1 } = {}) {
         location_type: il.type,
         pedigree_signals: signals.pedigree,
         builder_signals: signals.builder,
+        anchor_schools_il: signals.anchor_schools_il || [],
+        elite_schools_national: signals.elite_schools_national || [],
       });
     }
 
@@ -935,14 +1082,18 @@ async function runSourcingEngine({ fullSweep = false, userId = 1 } = {}) {
       headline, location_city, location_type, chicago_connection,
       tags, search_query, company_one_liner,
       pedigree_signals, builder_signals, github_url, website_url,
-      user_id
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      user_id,
+      departure_recency_months, signal_captured_at,
+      anchor_schools_il, elite_schools_national,
+      evidence_map, red_flags
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?, ?, ?)
   `);
 
   for (const candidate of uniqueCandidates) {
     // Pre-filter: skip founders who are obviously too far along (saves Claude API calls)
-    if (isTooFarAlong(candidate.text, candidate.headline)) {
-      console.log(`[Sourcing] ⏭️ ${candidate.name} — skipped (too far along, post-seed signals detected)`);
+    const stageCheck = isTooFarAlong(candidate.text, candidate.headline);
+    if (stageCheck.disqualified) {
+      console.log(`[Sourcing] ⏭️ ${candidate.name} — skipped: ${stageCheck.reason}`);
       totalFiltered++;
       continue;
     }
@@ -964,6 +1115,10 @@ async function runSourcingEngine({ fullSweep = false, userId = 1 } = {}) {
     // Merge extracted signals with AI signals
     const allPedigree = [...new Set([...(candidate.pedigree_signals || []), ...(score.pedigree_signals || [])])];
     const allBuilder = [...new Set([...(candidate.builder_signals || []), ...(score.builder_signals || [])])];
+
+    // Merge pre-extracted schools with AI-extracted schools (R10)
+    const allAnchorIl = [...new Set([...(candidate.anchor_schools_il || []), ...(score.anchor_schools_il || [])])];
+    const allEliteNational = [...new Set([...(candidate.elite_schools_national || []), ...(score.elite_schools_national || [])])];
 
     try {
       insertStmt.run(
@@ -987,7 +1142,12 @@ async function runSourcingEngine({ fullSweep = false, userId = 1 } = {}) {
         JSON.stringify(allBuilder),
         candidate.github_url || null,
         null,
-        userId
+        userId,
+        score.departure_recency_months,
+        JSON.stringify(allAnchorIl),
+        JSON.stringify(allEliteNational),
+        JSON.stringify(score.evidence_map || {}),
+        JSON.stringify(score.red_flags || [])
       );
       totalAdded++;
 
@@ -1017,6 +1177,28 @@ async function runSourcingEngine({ fullSweep = false, userId = 1 } = {}) {
         await new Promise(r => setTimeout(r, 800));
       }
     }
+  }
+
+  // ── Phase 5.5: Co-founder pair detection (R5) ──
+  try {
+    const { detectPairs } = require('./pair-detector');
+    const pairStats = detectPairs({ userId, windowDays: 90 });
+    if (pairStats.pairsFound > 0) {
+      console.log(`[Sourcing][Pairs] ${pairStats.pairsFound} pair(s), ${pairStats.rowsBumped} row(s) bumped`);
+      sourcesHit.push(`pairs:${pairStats.pairsFound}`);
+    }
+  } catch (err) {
+    console.error('[Sourcing][Pairs] Error:', err.message);
+    errors.push({ source: 'pair-detector', error: err.message });
+  }
+
+  // ── Phase 5.6: GitHub activity depth (R8) for top scorers ──
+  try {
+    const { scoreGithubActivity } = require('./github-activity');
+    await scoreGithubActivity({ userId, githubToken: apiKeys.github, limit: 10 });
+  } catch (err) {
+    console.error('[Sourcing][GH-Activity] Error:', err.message);
+    errors.push({ source: 'github-activity', error: err.message });
   }
 
   // ── Phase 6: Update run log ──

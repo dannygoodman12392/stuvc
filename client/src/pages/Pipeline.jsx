@@ -155,6 +155,16 @@ export default function Pipeline() {
     } catch (err) { console.error(err); }
   }
 
+  // R7: permanent-hide (dismissed rows with do_not_resurface=1 never come back)
+  async function handleHideForever(id) {
+    if (!confirm('Hide this candidate permanently? They will never re-surface in future sourcing runs.')) return;
+    try {
+      await api.hideForeverSourced(id);
+      setSourcedQueue(q => q.filter(f => f.id !== id));
+      setSourcedStarred(q => q.filter(f => f.id !== id));
+    } catch (err) { console.error(err); }
+  }
+
   async function handleStar(id) {
     try {
       await api.starSourced(id);
@@ -279,6 +289,7 @@ export default function Pipeline() {
           loading={loading}
           onApprove={handleApprove}
           onDismiss={handleDismiss}
+          onHideForever={handleHideForever}
           onStar={handleStar}
           onUnstar={handleUnstar}
           onTriggerSourcing={handleTriggerSourcing}
@@ -349,7 +360,7 @@ export default function Pipeline() {
 
 // ── Inbox Tab (redesigned sourcing inbox) ──
 
-function InboxTab({ queue, starred, stats, loading, onApprove, onDismiss, onStar, onUnstar, onTriggerSourcing, sourcingRunning, filter, setFilter }) {
+function InboxTab({ queue, starred, stats, loading, onApprove, onDismiss, onHideForever, onStar, onUnstar, onTriggerSourcing, sourcingRunning, filter, setFilter }) {
   const [showStarred, setShowStarred] = useState(false);
 
   if (loading) return <div className="text-center py-12 text-gray-500 text-sm">Loading...</div>;
@@ -411,7 +422,7 @@ function InboxTab({ queue, starred, stats, loading, onApprove, onDismiss, onStar
           </h3>
           <div className="space-y-3">
             {starred.map(f => (
-              <InboxCard key={f.id} founder={f} onApprove={onApprove} onDismiss={onDismiss} onStar={null} onUnstar={onUnstar} />
+              <InboxCard key={f.id} founder={f} onApprove={onApprove} onDismiss={onDismiss} onHideForever={onHideForever} onStar={null} onUnstar={onUnstar} />
             ))}
           </div>
         </div>
@@ -427,7 +438,7 @@ function InboxTab({ queue, starred, stats, loading, onApprove, onDismiss, onStar
           </h3>
           <div className="space-y-3">
             {highScorers.map(f => (
-              <InboxCard key={f.id} founder={f} onApprove={onApprove} onDismiss={onDismiss} onStar={onStar} onUnstar={null} />
+              <InboxCard key={f.id} founder={f} onApprove={onApprove} onDismiss={onDismiss} onHideForever={onHideForever} onStar={onStar} onUnstar={null} />
             ))}
           </div>
         </div>
@@ -443,7 +454,7 @@ function InboxTab({ queue, starred, stats, loading, onApprove, onDismiss, onStar
           </h3>
           <div className="space-y-3">
             {medScorers.map(f => (
-              <InboxCard key={f.id} founder={f} onApprove={onApprove} onDismiss={onDismiss} onStar={onStar} onUnstar={null} />
+              <InboxCard key={f.id} founder={f} onApprove={onApprove} onDismiss={onDismiss} onHideForever={onHideForever} onStar={onStar} onUnstar={null} />
             ))}
           </div>
         </div>
@@ -460,7 +471,7 @@ function InboxTab({ queue, starred, stats, loading, onApprove, onDismiss, onStar
             </summary>
             <div className="space-y-3 mt-3">
               {lowScorers.map(f => (
-                <InboxCard key={f.id} founder={f} onApprove={onApprove} onDismiss={onDismiss} onStar={onStar} onUnstar={null} compact />
+                <InboxCard key={f.id} founder={f} onApprove={onApprove} onDismiss={onDismiss} onHideForever={onHideForever} onStar={onStar} onUnstar={null} compact />
               ))}
             </div>
           </details>
@@ -484,7 +495,7 @@ function InboxTab({ queue, starred, stats, loading, onApprove, onDismiss, onStar
 
 // ── Inbox Card (rich founder preview) ──
 
-function InboxCard({ founder: f, onApprove, onDismiss, onStar, onUnstar, compact }) {
+function InboxCard({ founder: f, onApprove, onDismiss, onHideForever, onStar, onUnstar, compact }) {
   const [expanded, setExpanded] = useState(false);
 
   let tags = [];
@@ -627,10 +638,20 @@ function InboxCard({ founder: f, onApprove, onDismiss, onStar, onUnstar, compact
             </button>
           )}
         </div>
-        <button onClick={() => onDismiss(f.id)}
-          className="text-xs font-medium px-3 py-1.5 rounded-md text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors">
-          Skip
-        </button>
+        <div className="flex items-center gap-1">
+          <button onClick={() => onDismiss(f.id)}
+            className="text-xs font-medium px-3 py-1.5 rounded-md text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors"
+            title="Dismiss — may re-surface later if patterns change">
+            Skip
+          </button>
+          {onHideForever && (
+            <button onClick={() => onHideForever(f.id)}
+              className="text-xs font-medium px-2 py-1.5 rounded-md text-gray-300 hover:text-red-600 hover:bg-red-50 transition-colors"
+              title="Permanently hide — never re-surface">
+              🚫
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );
