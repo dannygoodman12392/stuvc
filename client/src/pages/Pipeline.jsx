@@ -515,8 +515,8 @@ function InboxTab({ queue, starred, stats, loading, onApprove, onDismiss, onHide
           <details>
             <summary className="text-sm font-semibold text-gray-400 mb-3 cursor-pointer flex items-center gap-2">
               <span className="w-2 h-2 rounded-full bg-gray-300" />
-              No Caliber Signal ({cTier.length})
-              <span className="text-[10px] font-normal">Tier C — click to expand</span>
+              Emerging / Limited Signal ({cTier.length})
+              <span className="text-[10px] font-normal">Tier C — thin public profile; click to expand</span>
             </summary>
             <div className="space-y-3 mt-3">
               {cTier.map(f => (
@@ -561,7 +561,7 @@ function InboxCard({ founder: f, onApprove, onDismiss, onHideForever, onStar, on
     S: { label: 'S', cls: 'bg-violet-100 text-violet-700 border-violet-300', title: 'Best-of-Best · unicorn-track' },
     A: { label: 'A', cls: 'bg-amber-100 text-amber-700 border-amber-300', title: 'Top Builder · best-of-best signal' },
     B: { label: 'B', cls: 'bg-emerald-50 text-emerald-700 border-emerald-200', title: 'Strong · one caliber signal' },
-    C: { label: 'C', cls: 'bg-gray-100 text-gray-500 border-gray-200', title: 'No hard caliber signal' },
+    C: { label: 'C', cls: 'bg-gray-100 text-gray-500 border-gray-200', title: 'Limited public signal so far — still may be a strong founder' },
   };
   const tierMeta = TIER_META[tier] || TIER_META.C;
 

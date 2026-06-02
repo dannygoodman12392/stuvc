@@ -58,12 +58,14 @@ seedIfEmpty();
     }
 
     // One-time sourcing inbox cleanup — drop non-founders, dedupe, re-score caliber.
-    const sourcingCleanupFlag = db.prepare("SELECT * FROM migration_flags WHERE key = 'sourcing_cleanup_v1'").get();
+    // v2 re-runs with the broadened caliber definition (traction / builder evidence,
+    // not just credentials) so strong uncredentialed founders are graded up.
+    const sourcingCleanupFlag = db.prepare("SELECT * FROM migration_flags WHERE key = 'sourcing_cleanup_v2'").get();
     if (!sourcingCleanupFlag) {
       try {
-        console.log('[Migration] Cleaning up sourcing inbox (founder gate + dedupe + caliber)...');
+        console.log('[Migration] Cleaning up sourcing inbox (founder gate + dedupe + broadened caliber)...');
         require('./migrations/cleanup-sourcing-v1')();
-        db.prepare("INSERT INTO migration_flags (key) VALUES ('sourcing_cleanup_v1')").run();
+        db.prepare("INSERT INTO migration_flags (key) VALUES ('sourcing_cleanup_v2')").run();
       } catch (err) {
         console.error('[Migration] Sourcing cleanup error:', err.message);
       }
@@ -107,7 +109,7 @@ app.use('/api/ai', rateLimit({ windowMs: 15 * 60 * 1000, max: 50, standardHeader
 app.use('/api/auth/register', rateLimit({ windowMs: 15 * 60 * 1000, max: 5, standardHeaders: true, legacyHeaders: false }));
 
 // Public routes
-app.get('/api/health', (req, res) => res.json({ status: 'ok', app: 'Stu', version: '2.4.1' }));
+app.get('/api/health', (req, res) => res.json({ status: 'ok', app: 'Stu', version: '2.4.2' }));
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/payments', payments.router);
 

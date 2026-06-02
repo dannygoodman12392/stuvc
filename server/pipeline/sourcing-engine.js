@@ -360,36 +360,97 @@ function detectCaliberSignals(text, headline) {
   if (/\bph\.?d\b/.test(combined) && /\b(cited|citations|published|papers|neurips|icml|iclr|cvpr|professor|faculty|research scientist)\b/.test(combined)) {
     signals.push('Research eminence');
   }
+  // Significant open-source work (a real builder signal independent of any badge)
+  if (/\b(\d[\d,.]*\s?k?\+?\s*(github )?stars|widely[- ]used|popular open[- ]source|maintainer of|creator of .{0,30}(open source|library|framework))\b/.test(combined)) {
+    signals.push('Notable open-source');
+  }
 
-  return { signals: [...new Set(signals)], topProgram, hyperscaleDeparture };
+  // (6) Elite-company background — worked at a category-defining company, even WITHOUT
+  //     an explicit senior-departure phrase. Being an engineer at OpenAI/Stripe is itself
+  //     a caliber signal for a builder, not only when they "just left."
+  let eliteCompany = false;
+  if (!hyperscaleDeparture) {
+    for (const co of HYPERSCALE_COMPANIES) {
+      if (combined.includes(co)) {
+        signals.push(`Elite-company background: ${co.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')}`);
+        eliteCompany = true;
+        break;
+      }
+    }
+  }
+
+  // (7) TRACTION — the most important builder signal of all. Real customers, revenue,
+  //     or users mean this person is BUILDING, not just credentialed. No badge required.
+  let traction = false, strongTraction = false;
+  const payingCustomers = combined.match(/\b(\d{1,5})\+?\s*(paying\s+)?(customers|clients|enterprises?|logos|design partners)\b/);
+  const userCount = combined.match(/\b(\d[\d,.]*)\s*(k|m|mm|million|thousand)\+?\s*(users|signups|sign-ups|downloads|developers|subscribers|members)\b/);
+  const revenueWord = /\b(arr|mrr|revenue|profitable|ramen profitable|cash[- ]flow positive)\b/.test(combined);
+  const dollarFig = /\$\s?\d[\d,.]*\s*(k|m|mm|million|b|bn)?\b/.test(combined);
+  const grewTo = /\b(grew|scaled|went from|took it (from|to)|bootstrapped to)\b[^.]{0,40}\b(\$|\d|users|customers|revenue|profitable)/.test(combined);
+  const profitable = /\b(profitable|ramen profitable|cash[- ]flow positive)\b/.test(combined);
+  if (payingCustomers || userCount || (revenueWord && dollarFig) || grewTo || profitable) {
+    traction = true;
+    const bigDollar = /\$\s?\d[\d,.]*\s*(m|mm|million|b|bn)\b/.test(combined);
+    let usersAbs = 0;
+    if (userCount) {
+      const n = parseFloat((userCount[1] || '0').replace(/,/g, ''));
+      const unit = (userCount[2] || '').toLowerCase();
+      const mult = /m|mm|million/.test(unit) ? 1e6 : /k|thousand/.test(unit) ? 1e3 : 1;
+      usersAbs = n * mult;
+    }
+    const manyCustomers = payingCustomers && parseInt(payingCustomers[1], 10) >= 10;
+    strongTraction = !!(bigDollar || usersAbs >= 100000 || manyCustomers
+      || (profitable && (revenueWord || userCount || payingCustomers)));
+    signals.push(strongTraction ? 'Strong traction (revenue/users)' : 'Early traction');
+  }
+
+  // (8) Shipped & scaled — built something real and at scale
+  if (/\b(shipped|built and scaled|scaled (to|a)|launched .{0,30}(used by|to thousands|to millions)|millions of (users|requests)|powering)\b/.test(combined)) {
+    signals.push('Shipped at scale');
+  }
+
+  return {
+    signals: [...new Set(signals)],
+    topProgram, hyperscaleDeparture, eliteCompany, traction, strongTraction,
+  };
 }
 
 // Deterministic caliber tier from hard signals. The LLM may raise a tier within
 // the evidence it can justify, but S requires at least one hard signal here.
 function computeCaliber(text, headline, eliteSchoolsNational = []) {
-  const { signals, topProgram, hyperscaleDeparture } = detectCaliberSignals(text, headline);
+  const det = detectCaliberSignals(text, headline);
+  const { signals, topProgram, hyperscaleDeparture, eliteCompany, traction, strongTraction } = det;
   const has = (frag) => signals.some(s => s.toLowerCase().includes(frag));
   const bigExit = has('exit (significant)');
   const anyExit = has('exit');
   const repeat = has('repeat founder');
   const research = has('research eminence');
+  const oss = has('open-source');
+  const shipped = has('shipped at scale');
   const eliteNational = (eliteSchoolsNational || []).length > 0;
 
+  // "Elite builder" — strong evidence of building ability that does NOT depend on a
+  // brand-name credential. This is the path for the great Chicago founder with no YC badge.
+  const eliteBuilder = strongTraction || (traction && (eliteCompany || shipped || repeat || research || oss));
+
   let tier, score, rationale;
-  if (bigExit || (anyExit && repeat) || (topProgram && (hyperscaleDeparture || eliteNational))) {
+  if (bigExit || (anyExit && repeat) || (topProgram && (hyperscaleDeparture || eliteNational)) || (strongTraction && (anyExit || topProgram || repeat))) {
     tier = 'S'; score = 9;
-    rationale = 'Unicorn-track: proven exit and/or top-program selection paired with elite pedigree.';
-  } else if (anyExit || topProgram || hyperscaleDeparture || (signals.length && eliteNational) || (research && eliteNational)) {
+    rationale = 'Top-tier: a real exit, top-program selection with pedigree, or serious traction paired with a prior win.';
+  } else if (anyExit || topProgram || hyperscaleDeparture || eliteBuilder || research || oss || repeat || (signals.length && eliteNational)) {
     tier = 'A'; score = 7;
-    rationale = 'Best-of-best signal: top-program admit, senior departure from a category-defining company, prior exit, or research eminence with elite pedigree.';
-  } else if (signals.length > 0 || eliteNational || research) {
+    rationale = 'Best-of-best: a prior exit/top program, OR exceptional builder evidence — real traction, scaled product, elite-company depth, or research/OSS eminence (no badge required).';
+  } else if (signals.length > 0 || traction || eliteCompany || eliteNational || research || oss) {
     tier = 'B'; score = 5;
-    rationale = 'Strong operator with at least one caliber signal, short of unicorn-track evidence.';
+    rationale = 'Strong builder with at least one real caliber signal (traction, elite-company background, or pedigree).';
   } else {
     tier = 'C'; score = 3;
-    rationale = 'No hard caliber signal detected in available text.';
+    rationale = 'Limited public signal so far — promising founder, but not enough evidence in the profile yet to grade higher.';
   }
-  return { tier, score, signals, rationale, hardSignalPresent: anyExit || topProgram || hyperscaleDeparture };
+  // A hard signal (lets the LLM justify A/S) now includes genuine builder evidence,
+  // not just credentials — so a high-traction founder isn't capped out of the top tiers.
+  const hardSignalPresent = anyExit || topProgram || hyperscaleDeparture || strongTraction || eliteCompany || repeat;
+  return { tier, score, signals, rationale, hardSignalPresent };
 }
 
 const TIER_RANK = { S: 4, A: 3, B: 2, C: 1 };
@@ -851,18 +912,26 @@ Sector fit (15% weight):
 
 CALIBER ASSESSMENT — answer this SEPARATELY from the fit score above:
 The fit score answers "is this a real, fresh, Chicago-tied founder?" Caliber answers a DIFFERENT
-question: "independent of geography, is this a best-of-best, fund-returning builder — the kind who
-would get into YC or a16z Speedrun, or already did?" A founder can be a strong local fit but only
-B-caliber, or S-caliber but stale. Do not let one bleed into the other.
-- S (caliber_score 9-10): Unicorn-track. Prior meaningful exit, OR admitted to a top program
-  (YC / a16z Speedrun / Thiel Fellowship / Neo), OR repeat founder with a real prior outcome,
-  paired with elite pedigree.
-- A (7-8): Best-of-best signal. Senior departure (Staff+/VP/Head/founder) from a category-defining
-  company (Google/Meta/Stripe/OpenAI/Anthropic/Ramp/Anduril/Scale/Databricks/Citadel/Jane Street),
-  OR top-program admit, OR prior exit, OR research eminence (PhD + cited work) from an elite school.
-- B (5-6): Strong operator with one caliber signal, short of unicorn-track evidence.
-- C (1-4): No hard caliber signal in the text.
-Only claim a caliber_signal you can support with a verbatim quote. Never invent an exit, program, or title.
+question: "independent of geography, is this a best-of-best builder?" A founder can be a strong
+local fit but only B-caliber, or S-caliber but stale. Do not let one bleed into the other.
+
+CRITICAL: elite credentials (YC, a16z Speedrun, an exit) are ONE path to high caliber — NOT the only
+path. An exceptional builder with real traction or a scaled product deserves A or S even with NO
+brand-name badge. Judge building ABILITY and EVIDENCE, not pedigree alone. Do not down-tier a great
+founder just because they never did YC or sold a company.
+- S (caliber_score 9-10): Truly exceptional. A meaningful prior exit; OR top-program admit
+  (YC/a16z Speedrun/Thiel/Neo) with elite pedigree; OR serious traction (substantial revenue/users)
+  paired with a prior win.
+- A (7-8): Best-of-best. ANY of: prior exit; top-program admit; senior/Staff+ background at a
+  category-defining company (Google/Meta/Stripe/OpenAI/Anthropic/Ramp/Anduril/Scale/Databricks/
+  Citadel); real traction (paying customers, revenue, meaningful users); a shipped-and-scaled product;
+  research eminence (PhD + cited work) or notable open-source.
+- B (5-6): Strong builder with at least one real signal — early traction, elite-company experience,
+  serious technical work, or strong pedigree.
+- C (1-4): Genuinely thin public evidence so far (not a judgment that they're weak — just not enough
+  in the text to grade higher). Promising-but-unproven stealth founders can sit here.
+Only claim a caliber_signal you can support with a verbatim quote. Never invent an exit, program,
+title, or traction number.
 
 Return ONLY valid JSON in this exact shape:
 {

@@ -6,6 +6,19 @@
 
 const RELEASES = [
   {
+    version: 'v2.4.2',
+    date: 'June 2, 2026',
+    time: '7:30 PM CT',
+    title: 'Caliber now rewards great builders, not just credentials',
+    highlights: [
+      {
+        product: 'Sourcing',
+        change: 'Broadened the caliber grade so a YC/exit/elite badge is just ONE path to the top tiers — not a requirement. Real traction (paying customers, revenue, users), a shipped-and-scaled product, deep elite-company experience, and notable open-source now lift a founder to A or S on their own. The historic inbox was re-graded on this broader scale, and Tier C is reframed as "limited public signal," not low quality.',
+        benefit: 'The best builders in Chicago/Illinois rise to the top whether or not they have a brand-name credential. The credentialed founders are still found and surfaced — nothing was narrowed.',
+      },
+    ],
+  },
+  {
     version: 'v2.4.1',
     date: 'June 2, 2026',
     time: '6:45 PM CT',
