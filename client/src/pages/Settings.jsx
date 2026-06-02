@@ -591,7 +591,7 @@ export default function Settings() {
       )}
 
       {/* Newsletters Tab */}
-      {tab === 'newsletter' && (
+      {activeTab === 'newsletter' && (
         <div className="space-y-5 max-w-xl">
           <div>
             <h2 className="text-sm font-semibold text-gray-900">Daily Brief — newsletter intake</h2>

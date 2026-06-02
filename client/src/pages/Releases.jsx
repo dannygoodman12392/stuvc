@@ -6,6 +6,19 @@
 
 const RELEASES = [
   {
+    version: 'v2.4.3',
+    date: 'June 2, 2026',
+    time: '8:10 PM CT',
+    title: 'Fix: Settings page would not load',
+    highlights: [
+      {
+        product: 'Platform',
+        change: 'Fixed a bug introduced with the Newsletters settings tab that caused the entire Settings page to render blank.',
+        benefit: 'Settings opens normally again, including the Newsletters setup for the Daily Brief.',
+      },
+    ],
+  },
+  {
     version: 'v2.4.2',
     date: 'June 2, 2026',
     time: '7:30 PM CT',
