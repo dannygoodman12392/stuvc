@@ -98,6 +98,20 @@ router.post('/', (req, res) => {
   );
 
   const founder = db.prepare('SELECT * FROM founders WHERE id = ?').get(result.lastInsertRowid);
+
+  // Fire-and-forget Notion sync if created on the investment track
+  try {
+    if ((founder.pipeline_tracks || '').includes('investment')) {
+      const notionSync = require('../services/notion-sync');
+      console.log(`[NotionSync] POST /founders → create (${founder.name})`);
+      notionSync.pushFounderToNotion(founder).catch(err =>
+        console.error('[NotionSync] POST push failed:', err.message)
+      );
+    }
+  } catch (syncErr) {
+    console.error('[NotionSync] Module load failed:', syncErr.message);
+  }
+
   res.status(201).json(founder);
 });
 
@@ -159,6 +173,24 @@ router.put('/:id', (req, res) => {
     }
   } catch (syncErr) {
     console.error('[AirtableSync] Module load failed:', syncErr.message);
+  }
+
+  // Fire-and-forget Notion (Strider OS) sync — fires whenever an investment-track
+  // founder is touched. Idempotent (upserts by SS Record ID).
+  try {
+    const oldHasInvestment = (founder.pipeline_tracks || '').includes('investment');
+    const nextTracks = req.body.pipeline_tracks !== undefined ? req.body.pipeline_tracks : founder.pipeline_tracks;
+    const newHasInvestment = (nextTracks || '').includes('investment');
+    if (newHasInvestment) {
+      const notionSync = require('../services/notion-sync');
+      const action = oldHasInvestment ? 'update' : 'create';
+      console.log(`[NotionSync] PUT /founders/${updated.id} → ${action} (${updated.name})`);
+      notionSync.pushFounderToNotion(updated).catch(err =>
+        console.error('[NotionSync] Push failed:', err.message)
+      );
+    }
+  } catch (syncErr) {
+    console.error('[NotionSync] Module load failed:', syncErr.message);
   }
 
   res.json(updated);

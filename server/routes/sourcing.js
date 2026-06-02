@@ -4,19 +4,36 @@ const db = require('../db');
 
 // GET /api/sourcing/queue — pending sourced founders with enhanced data
 router.get('/queue', (req, res) => {
-  const { sort, source, minScore, search } = req.query;
+  const { sort, source, minScore, search, caliber } = req.query;
   let where = "status = 'pending' AND user_id = ?";
   const params = [];
   params.push(req.user.id);
 
   if (source) { where += ' AND source = ?'; params.push(source); }
   if (minScore) { where += ' AND confidence_score >= ?'; params.push(parseInt(minScore)); }
+  // Caliber filter: 'S', 'A', 'B' — or a minimum tier like 'A' meaning S+A.
+  if (caliber) {
+    const order = { S: 4, A: 3, B: 2, C: 1 };
+    const floor = order[String(caliber).toUpperCase()];
+    if (floor) {
+      const allowed = Object.keys(order).filter(t => order[t] >= floor);
+      where += ` AND caliber_tier IN (${allowed.map(() => '?').join(',')})`;
+      params.push(...allowed);
+    }
+  }
   if (search) {
     where += ' AND (name LIKE ? OR company LIKE ? OR headline LIKE ?)';
     params.push(`%${search}%`, `%${search}%`, `%${search}%`);
   }
 
-  const sortCol = sort === 'newest' ? 'created_at DESC' : 'confidence_score DESC, created_at DESC';
+  // Rank by caliber tier first (S→A→B→C), then fit score. The best-of-best float
+  // to the top regardless of how fresh the relevance signal is.
+  const caliberRank = `CASE caliber_tier WHEN 'S' THEN 4 WHEN 'A' THEN 3 WHEN 'B' THEN 2 ELSE 1 END`;
+  const sortCol = sort === 'newest'
+    ? 'created_at DESC'
+    : sort === 'fit'
+      ? 'confidence_score DESC, created_at DESC'
+      : `${caliberRank} DESC, confidence_score DESC, created_at DESC`;
   const founders = db.prepare(`SELECT * FROM sourced_founders WHERE ${where} ORDER BY ${sortCol}`).all(...params);
   res.json(founders);
 });
@@ -54,8 +71,9 @@ router.post('/approve/:id', (req, res) => {
       location_city, stage, domain, tags,
       status, pipeline_tracks, admissions_status,
       company_one_liner, notable_background, previous_companies,
+      caliber_tier,
       created_by
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     sourced.name,
     sourced.company || null,
@@ -78,6 +96,7 @@ router.post('/approve/:id', (req, res) => {
     sourced.company_one_liner || null,
     pedigreeSignals.length > 0 ? pedigreeSignals.join(', ') : null,
     builderSignals.length > 0 ? builderSignals.join(', ') : null,
+    sourced.caliber_tier || null,
     req.user.id
   );
 
@@ -154,10 +173,14 @@ router.get('/stats', (req, res) => {
   const dismissed = db.prepare("SELECT COUNT(*) as c FROM sourced_founders WHERE status = 'dismissed' AND user_id = ?").get(req.user.id).c;
   const bySrc = db.prepare("SELECT source, COUNT(*) as count FROM sourced_founders WHERE status = 'pending' AND user_id = ? GROUP BY source").all(req.user.id);
   const byScore = db.prepare("SELECT CASE WHEN confidence_score >= 8 THEN 'high' WHEN confidence_score >= 6 THEN 'medium' ELSE 'low' END as tier, COUNT(*) as count FROM sourced_founders WHERE status = 'pending' AND user_id = ? GROUP BY tier").all(req.user.id);
+  // Caliber breakdown — how many best-of-best are sitting in the inbox right now.
+  const byCaliberRows = db.prepare("SELECT COALESCE(caliber_tier, 'C') as tier, COUNT(*) as count FROM sourced_founders WHERE status = 'pending' AND user_id = ? GROUP BY tier").all(req.user.id);
+  const byCaliber = { S: 0, A: 0, B: 0, C: 0 };
+  for (const r of byCaliberRows) { if (byCaliber[r.tier] != null) byCaliber[r.tier] = r.count; }
   const lastRun = db.prepare('SELECT * FROM sourcing_runs WHERE user_id = ? ORDER BY run_at DESC LIMIT 1').get(req.user.id);
   const todayAdded = db.prepare("SELECT COUNT(*) as c FROM sourced_founders WHERE status = 'pending' AND user_id = ? AND DATE(created_at) = DATE('now')").get(req.user.id).c;
 
-  res.json({ pending, starred, approved, dismissed, bySource: bySrc, byScore, lastRun, todayAdded });
+  res.json({ pending, starred, approved, dismissed, bySource: bySrc, byScore, byCaliber, lastRun, todayAdded });
 });
 
 module.exports = router;

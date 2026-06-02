@@ -211,6 +211,9 @@ addColumn('sourced_founders', 'builder_signals', 'TEXT');
 addColumn('sourced_founders', 'github_url', 'TEXT');
 addColumn('sourced_founders', 'website_url', 'TEXT');
 
+// Caliber tier carried forward from sourcing into the pipeline
+addColumn('founders', 'caliber_tier', 'TEXT');
+
 // Airtable record IDs (for one-way Stu → Airtable sync)
 addColumn('founders', 'airtable_founder_record_id', 'TEXT');
 addColumn('founders', 'airtable_deal_record_id', 'TEXT');
@@ -369,6 +372,17 @@ addColumn('sourced_founders', 'github_activity_data', 'TEXT');          // JSON 
 // R4: extract-then-score evidence map
 addColumn('sourced_founders', 'evidence_map', 'TEXT');                  // JSON from new Claude extraction prompt
 addColumn('sourced_founders', 'red_flags', 'TEXT');                     // JSON
+
+// CALIBER v1: the unicorn-grade axis, scored SEPARATELY from confidence/relevance.
+//   confidence_score answers "is this a real, fresh, Chicago-tied founder?"
+//   caliber_* answers "is this a best-of-best, fund-returning builder?"
+// A founder can be highly relevant (9 confidence) but B-caliber, or A-caliber but
+// stale (low confidence). Keeping them separate stops the two questions from
+// canceling each other out in a single muddy number.
+addColumn('sourced_founders', 'caliber_tier', 'TEXT');                  // 'S' | 'A' | 'B' | 'C'
+addColumn('sourced_founders', 'caliber_score', 'INTEGER');             // 1-10, deterministic after reconciliation
+addColumn('sourced_founders', 'caliber_rationale', 'TEXT');            // why this tier
+addColumn('sourced_founders', 'caliber_signals', 'TEXT');             // JSON — hard caliber signals detected
 
 // R2: entity filings source (new)
 db.exec(`

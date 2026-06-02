@@ -429,38 +429,24 @@ async function runAssessmentAgents(assessmentId, founderId) {
     // Build context from all assessment_inputs
     const allInputs = db.prepare('SELECT * FROM assessment_inputs WHERE assessment_id = ? ORDER BY input_type, id').all(assessmentId);
 
-    let context = '';
+    // ── Budget-aware context assembly ──
+    // Old behavior sliced the concatenation at 150K, which could cut a recent call
+    // transcript mid-sentence (or drop it entirely) just because decks came first.
+    // Instead we build prioritized blocks and fill a budget highest-priority first,
+    // so the freshest founder voice (transcripts, recent calls, decks) is protected
+    // and the lowest-value material (old CRM notes) is what gets trimmed — and we
+    // log exactly what was truncated or dropped rather than failing silently.
     const inputsByType = {};
     for (const inp of allInputs) {
       if (!inputsByType[inp.input_type]) inputsByType[inp.input_type] = [];
       inputsByType[inp.input_type].push(inp);
     }
 
-    // Structured context assembly
-    if (inputsByType.deck) {
-      for (let i = 0; i < inputsByType.deck.length; i++) {
-        const d = inputsByType.deck[i];
-        context += `\n\n--- PITCH DECK ${i + 1}: ${d.label || d.file_name || 'Untitled'} ---\n${d.content}`;
-      }
-    }
-    if (inputsByType.transcript) {
-      for (let i = 0; i < inputsByType.transcript.length; i++) {
-        const t = inputsByType.transcript[i];
-        context += `\n\n--- CALL TRANSCRIPT ${i + 1}: ${t.label || 'Meeting Notes'} ---\n${t.content}`;
-      }
-    }
-    if (inputsByType.url) {
-      for (let i = 0; i < inputsByType.url.length; i++) {
-        const u = inputsByType.url[i];
-        context += `\n\n--- WEBSITE${u.source_url ? ': ' + u.source_url : ''} ---\n${u.content}`;
-      }
-    }
-    if (inputsByType.notes) {
-      for (let i = 0; i < inputsByType.notes.length; i++) {
-        const n = inputsByType.notes[i];
-        context += `\n\n--- ANALYST NOTES ${i + 1}: ${n.label || ''} ---\n${n.content}`;
-      }
-    }
+    const blocks = [];
+    (inputsByType.transcript || []).forEach((t, i) => blocks.push({ priority: 1, label: `CALL TRANSCRIPT ${i + 1}: ${t.label || 'Meeting Notes'}`, content: t.content || '' }));
+    (inputsByType.deck || []).forEach((d, i) => blocks.push({ priority: 2, label: `PITCH DECK ${i + 1}: ${d.label || d.file_name || 'Untitled'}`, content: d.content || '' }));
+    (inputsByType.url || []).forEach((u) => blocks.push({ priority: 3, label: `WEBSITE${u.source_url ? ': ' + u.source_url : ''}`, content: u.content || '' }));
+    (inputsByType.notes || []).forEach((n, i) => blocks.push({ priority: 3, label: `ANALYST NOTES ${i + 1}: ${n.label || ''}`, content: n.content || '' }));
 
     // Pull founder data if linked — scoped to assessment owner
     let founderContext = '';
@@ -469,28 +455,25 @@ async function runAssessmentAgents(assessmentId, founderId) {
       if (founder) {
         founderContext = `\nFounder: ${founder.name}\nCompany: ${founder.company || 'Unknown'}\nRole: ${founder.role || 'Founder'}\nLocation: ${founder.location_city || ''} ${founder.location_state || ''}\nStage: ${founder.stage || 'Pre-seed'}\nDomain: ${founder.domain || 'Unknown'}\nLinkedIn: ${founder.linkedin_url || 'N/A'}\nBio: ${founder.bio || 'N/A'}\nPrevious companies: ${founder.previous_companies || 'N/A'}\nNotable background: ${founder.notable_background || 'N/A'}`;
 
-        // Also pull call logs and notes for this founder
+        // Recent CRM calls — high priority (founder's own words), newest first.
         const calls = db.prepare('SELECT structured_summary, raw_transcript FROM call_logs WHERE founder_id = ? ORDER BY created_at DESC LIMIT 5').all(founderId);
-        if (calls.length > 0) {
-          for (let i = 0; i < calls.length; i++) {
-            const call = calls[i];
-            const text = call.structured_summary || call.raw_transcript;
-            if (text) context += `\n\n--- PREVIOUS CALL ${i + 1} (from CRM) ---\n${text}`;
-          }
-        }
+        calls.forEach((call, i) => {
+          const text = call.structured_summary || call.raw_transcript;
+          if (text) blocks.push({ priority: 2, label: `PREVIOUS CALL ${i + 1} (from CRM, newest first)`, content: text });
+        });
 
+        // CRM notes — lowest priority; trimmed first under budget pressure.
         const notes = db.prepare('SELECT content FROM founder_notes WHERE founder_id = ? ORDER BY created_at DESC LIMIT 10').all(founderId);
         if (notes.length > 0) {
-          context += `\n\n--- CRM NOTES ---\n${notes.map(n => n.content).join('\n---\n')}`;
+          blocks.push({ priority: 4, label: 'CRM NOTES (newest first)', content: notes.map(n => n.content).join('\n---\n') });
         }
       }
     }
 
-    // Cap context to ~150K chars to stay within limits
-    const fullContext = founderContext + context;
-    const cappedContext = fullContext.slice(0, 150000);
-    if (fullContext.length > 150000) {
-      console.warn(`[Assessment] Context truncated from ${fullContext.length} to 150K chars`);
+    const assembled = assembleContext(founderContext, blocks, 150000);
+    const cappedContext = assembled.context;
+    if (assembled.notes.length) {
+      console.warn(`[Assessment ${assessmentId}] context assembly: ${assembled.notes.join('; ')}`);
     }
 
     // Run all 4 agents in parallel (Team, Product, Market, Bear)
@@ -520,6 +503,16 @@ async function runAssessmentAgents(assessmentId, founderId) {
     // ── Deterministic score computation ──
     // LLMs can't do arithmetic reliably. Compute all scores in code.
     correctPillarScores(agentOutputs);
+
+    // ── Trust layer: verify every quote against the source context ──
+    // Tags each key_quote verbatim/paraphrased/unverified. Does not change scores;
+    // it lets the IC trust (or distrust) the evidence behind each number.
+    try {
+      const { verifyAllAgents } = require('../agents/verify');
+      verifyAllAgents(agentOutputs, cappedContext);
+    } catch (e) {
+      console.warn('[Assessment] quote verification skipped:', e.message);
+    }
 
     // Save agent outputs — reuse existing DB columns:
     // founder_agent_output → team, market_agent_output → product,
@@ -565,6 +558,32 @@ async function runAssessmentAgents(assessmentId, founderId) {
 
 function round1(n) {
   return Math.round(n * 10) / 10;
+}
+
+// Fill a character budget with prioritized blocks (priority 1 = most important).
+// High-priority blocks get budget first; a block that would overflow is truncated
+// with an explicit marker; anything that can't fit is dropped and reported. Never
+// cuts silently mid-stream the way a naive slice() did.
+function assembleContext(header, blocks, budget = 150000) {
+  const notes = [];
+  let out = header || '';
+  const sorted = [...blocks].sort((a, b) => a.priority - b.priority);
+  for (const b of sorted) {
+    const piece = `\n\n--- ${b.label} ---\n`;
+    const remaining = budget - out.length - piece.length;
+    if (remaining <= 200) {
+      notes.push(`dropped "${b.label}" (budget exhausted)`);
+      continue;
+    }
+    let content = b.content || '';
+    if (content.length > remaining) {
+      const cut = content.length - remaining;
+      content = content.slice(0, remaining) + `\n[... ${cut} chars truncated for length ...]`;
+      notes.push(`truncated "${b.label}" by ${cut} chars`);
+    }
+    out += piece + content;
+  }
+  return { context: out, notes };
 }
 
 function computeTeamPillarScore(subs) {
@@ -987,6 +1006,25 @@ async function runSynthesis(client, prompt, agentOutputs, context, signal) {
   if (parsed) return parsed;
   return { raw: text, error: 'Could not parse synthesis' };
 }
+
+// ── POST /api/assessments/:id/push-to-notion — push assessment to Strider Notion ──
+router.post('/:id/push-to-notion', async (req, res) => {
+  // Verify ownership
+  const assessment = db.prepare(
+    'SELECT id, founder_id, status, synthesis_output FROM opportunity_assessments WHERE id = ? AND is_deleted = 0 AND created_by = ?'
+  ).get(req.params.id, req.user.id);
+  if (!assessment) return res.status(404).json({ error: 'Assessment not found' });
+  if (!assessment.synthesis_output) return res.status(400).json({ error: `Assessment is not complete (status: ${assessment.status})` });
+
+  try {
+    const { pushAssessmentToNotion } = require('../services/notion-assessment-sync');
+    const result = await pushAssessmentToNotion(req.params.id);
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    console.error('[AssessmentSync] Push failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // Export router + internal functions for migrations
 router._internal = { runAssessmentAgents, processRerunInputs };

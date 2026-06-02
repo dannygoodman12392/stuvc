@@ -123,7 +123,10 @@ export default function TalentPortfolioDetail() {
       <div>
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-sm font-semibold text-gray-900">Roles</h2>
-          <Link to="/talent/roles" className="text-xs text-amber-700 hover:text-amber-800">Manage all →</Link>
+          <div className="flex items-center gap-3">
+            <Link to={`/talent/matches?company=${company.id}`} className="text-xs font-medium text-amber-700 hover:text-amber-800">All matches for {company.name} →</Link>
+            <Link to="/talent/roles" className="text-xs text-amber-700 hover:text-amber-800">Manage all →</Link>
+          </div>
         </div>
         {(!company.roles || company.roles.length === 0) ? (
           <div className="card p-6 text-center text-sm text-gray-400">No roles yet for this company.</div>

@@ -13,6 +13,7 @@ const navConfig = [
   { to: '/talent', label: 'Talent' },
   { to: '/portfolio', label: 'Portfolio', placeholder: true },
   { to: '/fund', label: 'Fund', placeholder: true },
+  { to: '/releases', label: 'Releases' },
   { to: '/settings', label: 'Settings' },
 ];
 

@@ -108,6 +108,7 @@ export const api = {
   rerunAssessment: (id, data) => request(`/assessments/${id}/rerun`, { method: 'POST', body: JSON.stringify(data) }),
   getStewardOperator: (id) => request(`/assessments/${id}/steward-operator`),
   runStewardOperator: (id) => request(`/assessments/${id}/steward-operator`, { method: 'POST' }),
+  pushAssessmentToNotion: (id) => request(`/assessments/${id}/push-to-notion`, { method: 'POST' }),
 
   // Deal Room
   getDeals: () => request('/deal-room'),
@@ -236,7 +237,7 @@ export const api = {
   // Talent — Matches
   getTalentMatches: (params) => request('/talent/matches?' + new URLSearchParams(params || {})),
   getTalentMatch: (id) => request(`/talent/matches/${id}`),
-  getTalentMatchStats: () => request('/talent/matches/stats'),
+  getTalentMatchStats: (params) => request('/talent/matches/stats?' + new URLSearchParams(params || {})),
   updateTalentMatch: (id, data) => request(`/talent/matches/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteTalentMatch: (id) => request(`/talent/matches/${id}`, { method: 'DELETE' }),
   bulkUpdateTalentMatches: (ids, patch) => request('/talent/matches/bulk/update', { method: 'POST', body: JSON.stringify({ ids, patch }) }),

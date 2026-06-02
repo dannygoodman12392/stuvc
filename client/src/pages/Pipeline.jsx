@@ -36,7 +36,7 @@ export default function Pipeline() {
   const [sourcedStarred, setSourcedStarred] = useState([]);
   const [stats, setStats] = useState(null);
   const [sourcingStats, setSourcingStats] = useState(null);
-  const [filter, setFilter] = useState({ status: '', search: '', minScore: '' });
+  const [filter, setFilter] = useState({ status: '', search: '', minScore: '', caliber: '' });
   const [loading, setLoading] = useState(true);
   const [viewMode, setViewMode] = useState(() => localStorage.getItem('pipeline_view') || 'list');
   const [sourcingRunning, setSourcingRunning] = useState(false);
@@ -109,6 +109,7 @@ export default function Pipeline() {
         const params = {};
         if (filter.search) params.search = filter.search;
         if (filter.minScore) params.minScore = filter.minScore;
+        if (filter.caliber) params.caliber = filter.caliber;
         const [q, starred, ss, s] = await Promise.all([
           api.getSourcingQueue(params),
           api.getSourcingStarred(),
@@ -365,9 +366,14 @@ function InboxTab({ queue, starred, stats, loading, onApprove, onDismiss, onHide
 
   if (loading) return <div className="text-center py-12 text-gray-500 text-sm">Loading...</div>;
 
-  const highScorers = queue.filter(f => f.confidence_score >= 8);
-  const medScorers = queue.filter(f => f.confidence_score >= 6 && f.confidence_score < 8);
-  const lowScorers = queue.filter(f => f.confidence_score < 6);
+  // Caliber-led grouping: the unicorn-grade axis is the north star. Within each tier
+  // the route already sorts by fit score, so the freshest best-of-best lead.
+  const tierOf = (f) => f.caliber_tier || 'C';
+  const sTier = queue.filter(f => tierOf(f) === 'S');
+  const aTier = queue.filter(f => tierOf(f) === 'A');
+  const bTier = queue.filter(f => tierOf(f) === 'B');
+  const cTier = queue.filter(f => tierOf(f) === 'C');
+  const bc = stats?.byCaliber || {};
 
   return (
     <div>
@@ -404,13 +410,40 @@ function InboxTab({ queue, starred, stats, loading, onApprove, onDismiss, onHide
         </div>
       </div>
 
+      {/* Caliber summary — how many best-of-best are waiting */}
+      <div className="flex items-center gap-2 mb-3">
+        {[
+          { t: 'S', label: 'Best-of-Best', cls: 'bg-violet-50 text-violet-700 border-violet-200' },
+          { t: 'A', label: 'Top Builders', cls: 'bg-amber-50 text-amber-700 border-amber-200' },
+          { t: 'B', label: 'Strong', cls: 'bg-emerald-50 text-emerald-700 border-emerald-100' },
+        ].map(({ t, label, cls }) => (
+          <button
+            key={t}
+            onClick={() => setFilter(f => ({ ...f, caliber: f.caliber === t ? '' : t }))}
+            className={`text-[11px] font-medium px-2.5 py-1 rounded-full border transition-colors ${cls} ${filter.caliber === t ? 'ring-2 ring-offset-1 ring-current' : ''}`}
+            title={`Filter to ${t}-tier${t !== 'S' ? ' and above' : ''}`}
+          >
+            {t} · {label} ({bc[t] || 0})
+          </button>
+        ))}
+        {filter.caliber && (
+          <button onClick={() => setFilter(f => ({ ...f, caliber: '' }))} className="text-[11px] text-gray-400 hover:text-gray-600">clear</button>
+        )}
+      </div>
+
       {/* Filters */}
       <div className="flex flex-col sm:flex-row gap-2 sm:gap-3 mb-4">
         <input type="text" placeholder="Search inbox..." value={filter.search} onChange={e => setFilter(f => ({ ...f, search: e.target.value }))} className="input text-sm w-full sm:w-64" />
+        <select value={filter.caliber} onChange={e => setFilter(f => ({ ...f, caliber: e.target.value }))} className="select text-sm">
+          <option value="">All caliber</option>
+          <option value="S">S only (unicorn-track)</option>
+          <option value="A">A+ (best-of-best)</option>
+          <option value="B">B+ (strong+)</option>
+        </select>
         <select value={filter.minScore} onChange={e => setFilter(f => ({ ...f, minScore: e.target.value }))} className="select text-sm">
-          <option value="">All scores</option>
-          <option value="8">8+ (High conviction)</option>
-          <option value="6">6+ (Worth reviewing)</option>
+          <option value="">All fit scores</option>
+          <option value="8">Fit 8+ (high conviction)</option>
+          <option value="6">Fit 6+ (worth reviewing)</option>
         </select>
       </div>
 
@@ -428,49 +461,65 @@ function InboxTab({ queue, starred, stats, loading, onApprove, onDismiss, onHide
         </div>
       )}
 
-      {/* High conviction (8+) */}
-      {highScorers.length > 0 && (
+      {/* S — Best-of-Best (unicorn-track) */}
+      {sTier.length > 0 && (
         <div className="mb-6">
-          <h3 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-emerald-500" />
-            High Conviction ({highScorers.length})
-            <span className="text-[10px] font-normal text-gray-400">Score 8+</span>
+          <h3 className="text-sm font-semibold text-violet-700 mb-3 flex items-center gap-2">
+            <span>&#128142;</span>
+            Best-of-Best ({sTier.length})
+            <span className="text-[10px] font-normal text-gray-400">Tier S · unicorn-track</span>
           </h3>
           <div className="space-y-3">
-            {highScorers.map(f => (
+            {sTier.map(f => (
               <InboxCard key={f.id} founder={f} onApprove={onApprove} onDismiss={onDismiss} onHideForever={onHideForever} onStar={onStar} onUnstar={null} />
             ))}
           </div>
         </div>
       )}
 
-      {/* Medium (6-7) */}
-      {medScorers.length > 0 && (
+      {/* A — Top Builders */}
+      {aTier.length > 0 && (
         <div className="mb-6">
-          <h3 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-amber-400" />
-            Worth Reviewing ({medScorers.length})
-            <span className="text-[10px] font-normal text-gray-400">Score 6-7</span>
+          <h3 className="text-sm font-semibold text-amber-700 mb-3 flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-amber-500" />
+            Top Builders ({aTier.length})
+            <span className="text-[10px] font-normal text-gray-400">Tier A · best-of-best signal</span>
           </h3>
           <div className="space-y-3">
-            {medScorers.map(f => (
+            {aTier.map(f => (
               <InboxCard key={f.id} founder={f} onApprove={onApprove} onDismiss={onDismiss} onHideForever={onHideForever} onStar={onStar} onUnstar={null} />
             ))}
           </div>
         </div>
       )}
 
-      {/* Low (<6) */}
-      {lowScorers.length > 0 && (
+      {/* B — Strong */}
+      {bTier.length > 0 && (
+        <div className="mb-6">
+          <h3 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-emerald-400" />
+            Strong ({bTier.length})
+            <span className="text-[10px] font-normal text-gray-400">Tier B · one caliber signal</span>
+          </h3>
+          <div className="space-y-3">
+            {bTier.map(f => (
+              <InboxCard key={f.id} founder={f} onApprove={onApprove} onDismiss={onDismiss} onHideForever={onHideForever} onStar={onStar} onUnstar={null} />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* C — no hard caliber signal (collapsed by default) */}
+      {cTier.length > 0 && (
         <div className="mb-6">
           <details>
             <summary className="text-sm font-semibold text-gray-400 mb-3 cursor-pointer flex items-center gap-2">
               <span className="w-2 h-2 rounded-full bg-gray-300" />
-              Lower Fit ({lowScorers.length})
-              <span className="text-[10px] font-normal">Score &lt;6 — click to expand</span>
+              No Caliber Signal ({cTier.length})
+              <span className="text-[10px] font-normal">Tier C — click to expand</span>
             </summary>
             <div className="space-y-3 mt-3">
-              {lowScorers.map(f => (
+              {cTier.map(f => (
                 <InboxCard key={f.id} founder={f} onApprove={onApprove} onDismiss={onDismiss} onHideForever={onHideForever} onStar={onStar} onUnstar={null} compact />
               ))}
             </div>
@@ -501,9 +550,20 @@ function InboxCard({ founder: f, onApprove, onDismiss, onHideForever, onStar, on
   let tags = [];
   let pedigree = [];
   let builder = [];
+  let caliberSignals = [];
   try { tags = JSON.parse(f.tags || '[]'); } catch {}
   try { pedigree = JSON.parse(f.pedigree_signals || '[]'); } catch {}
   try { builder = JSON.parse(f.builder_signals || '[]'); } catch {}
+  try { caliberSignals = JSON.parse(f.caliber_signals || '[]'); } catch {}
+
+  const tier = f.caliber_tier || 'C';
+  const TIER_META = {
+    S: { label: 'S', cls: 'bg-violet-100 text-violet-700 border-violet-300', title: 'Best-of-Best · unicorn-track' },
+    A: { label: 'A', cls: 'bg-amber-100 text-amber-700 border-amber-300', title: 'Top Builder · best-of-best signal' },
+    B: { label: 'B', cls: 'bg-emerald-50 text-emerald-700 border-emerald-200', title: 'Strong · one caliber signal' },
+    C: { label: 'C', cls: 'bg-gray-100 text-gray-500 border-gray-200', title: 'No hard caliber signal' },
+  };
+  const tierMeta = TIER_META[tier] || TIER_META.C;
 
   const scoreColor = f.confidence_score >= 8 ? 'text-emerald-600 bg-emerald-50 border-emerald-200'
     : f.confidence_score >= 6 ? 'text-amber-600 bg-amber-50 border-amber-200'
@@ -522,7 +582,10 @@ function InboxCard({ founder: f, onApprove, onDismiss, onHideForever, onStar, on
               {f.confidence_score}
             </div>
             <div className="min-w-0">
-              <p className="text-sm font-medium text-gray-900 truncate">{f.name}</p>
+              <div className="flex items-center gap-1.5">
+                <span className={`text-[10px] font-bold px-1 py-0 rounded border ${tierMeta.cls}`} title={tierMeta.title}>{tierMeta.label}</span>
+                <p className="text-sm font-medium text-gray-900 truncate">{f.name}</p>
+              </div>
               <p className="text-xs text-gray-500 truncate">{f.company || f.company_one_liner || 'Stealth'}{f.chicago_connection ? ` · ${f.chicago_connection}` : ''}</p>
             </div>
           </div>
@@ -549,6 +612,7 @@ function InboxCard({ founder: f, onApprove, onDismiss, onHideForever, onStar, on
             </div>
             <div className="min-w-0">
               <div className="flex items-center gap-2 mb-0.5">
+                <span className={`text-[11px] font-bold px-1.5 py-0.5 rounded border ${tierMeta.cls}`} title={tierMeta.title}>{tierMeta.label}</span>
                 <p className="text-sm font-semibold text-gray-900">{f.name}</p>
                 {f.source && (
                   <span className="text-[9px] font-medium px-1.5 py-0.5 rounded bg-gray-100 text-gray-500 uppercase">{f.source}</span>
@@ -585,6 +649,20 @@ function InboxCard({ founder: f, onApprove, onDismiss, onHideForever, onStar, on
               <span className="text-[9px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-500 uppercase">{f.location_type.replace('_', ' ')}</span>
             )}
           </div>
+        )}
+
+        {/* Caliber signals — the hard, quote-backed best-of-best evidence */}
+        {caliberSignals.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 mt-2.5">
+            {caliberSignals.map(c => (
+              <span key={c} className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-violet-50 text-violet-700 border border-violet-200">{c}</span>
+            ))}
+          </div>
+        )}
+
+        {/* Caliber rationale */}
+        {f.caliber_rationale && (
+          <p className="text-[11px] text-violet-600/90 mt-1.5 leading-relaxed"><span className="font-semibold">Caliber {tier}:</span> {f.caliber_rationale}</p>
         )}
 
         {/* Signal badges */}

@@ -4,12 +4,14 @@ const db = require('../../db');
 
 // GET /api/talent/matches — match queue
 router.get('/', (req, res) => {
-  const { status, role_id, candidate_id, minScore } = req.query;
+  const { status, role_id, candidate_id, company_id, minScore } = req.query;
   let where = 'm.user_id = ? AND m.is_deleted = 0';
   const params = [req.user.id];
   if (status && status !== 'all') { where += ' AND m.status = ?'; params.push(status); }
   if (role_id) { where += ' AND m.role_id = ?'; params.push(role_id); }
   if (candidate_id) { where += ' AND m.candidate_id = ?'; params.push(candidate_id); }
+  // Company filter — scope to all roles at one portfolio company.
+  if (company_id) { where += ' AND r.portfolio_company_id = ?'; params.push(company_id); }
   if (minScore) { where += ' AND m.match_score >= ?'; params.push(parseInt(minScore)); }
 
   const rows = db.prepare(`
@@ -39,16 +41,30 @@ router.get('/', (req, res) => {
   res.json(out);
 });
 
-// GET /api/talent/matches/stats
+// GET /api/talent/matches/stats — optionally scoped to one role or company so a
+// per-role triage view can show "23 suggested for THIS role" instead of a global count.
 router.get('/stats', (req, res) => {
+  const { role_id, company_id } = req.query;
+  let where = 'm.user_id = ? AND m.is_deleted = 0';
+  const params = [req.user.id];
+  let join = '';
+  if (role_id) { where += ' AND m.role_id = ?'; params.push(role_id); }
+  if (company_id) {
+    join = 'JOIN talent_roles r ON m.role_id = r.id';
+    where += ' AND r.portfolio_company_id = ?';
+    params.push(company_id);
+  }
   const stats = db.prepare(`
-    SELECT status, COUNT(*) as count
-    FROM talent_matches
-    WHERE user_id = ? AND is_deleted = 0
-    GROUP BY status
-  `).all(req.user.id);
+    SELECT m.status as status, COUNT(*) as count
+    FROM talent_matches m
+    ${join}
+    WHERE ${where}
+    GROUP BY m.status
+  `).all(...params);
   const map = {};
-  for (const s of stats) map[s.status] = s.count;
+  let total = 0;
+  for (const s of stats) { map[s.status] = s.count; total += s.count; }
+  map.total = total;
   res.json(map);
 });
 

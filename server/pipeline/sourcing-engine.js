@@ -291,6 +291,136 @@ function extractSignals(text, headline) {
   };
 }
 
+// ── CALIBER: the unicorn-grade axis ──
+// Detected SEPARATELY from confidence/relevance. These are hard, evidence-backed
+// signals that — independent of any Chicago tie — say "this is a best-of-best
+// builder": a prior exit, admission to a top program (the YC/a16z-speedrun bar),
+// a senior departure from a category-defining company, a repeat founder, or
+// research eminence. We compute caliber deterministically so the LLM can NUANCE
+// the tier but can never INFLATE it to S without one of these signals present.
+
+// Top programs whose admission is itself proof of best-of-best selection.
+const TOP_PROGRAMS = [
+  { re: /\by[- ]?combinator\b|\bycombinator\b|\byc\s?[wsf]\d{2}\b/i, label: 'YC' },
+  { re: /a16z\s+speedrun|andreessen\s+speedrun|\bspeedrun\b/i, label: 'a16z Speedrun' },
+  { re: /thiel\s+fellow/i, label: 'Thiel Fellow' },
+  { re: /\bneo\s+(scholar|fellow|cohort|accelerator)\b/i, label: 'Neo' },
+];
+// Strong-but-second-tier programs: caliber signal, but not S-grade on their own.
+const STRONG_PROGRAMS = [
+  { re: /south\s+park\s+commons|\bspc\b/i, label: 'SPC' },
+  { re: /techstars/i, label: 'Techstars' },
+  { re: /\bon\s+deck\b|\bodf\b/i, label: 'On Deck' },
+  { re: /pear\s?vc|pearx|pear\s+garage/i, label: 'PearX' },
+  { re: /entrepreneur\s+first|\bef\s+cohort\b/i, label: 'Entrepreneur First' },
+];
+const SENIOR_TITLE_RE = /\b(staff|senior staff|principal|distinguished|lead|founding)\s+(engineer|scientist|researcher|designer|architect)\b|\b(vp|vice president|head of|director|chief|cto|ceo|coo|cpo)\b/i;
+const DEPARTURE_RE = /\b(ex-|former(ly)?|previously|just left|recently left|left\s+\w+\s+(to|after)|departed|alum(ni)? of|spent \d+ years at|years at)\b/i;
+
+function detectCaliberSignals(text, headline) {
+  const combined = ((headline || '') + ' ' + (text || '')).toLowerCase();
+  const signals = [];
+
+  // (1) Prior exit — the strongest single signal
+  const exitRe = /\b(acquired by|was acquired|got acquired|exited|sold (my|the|our|his|her|a) (company|startup|business)|successful exit|prior exit|previously exited|ipo'?d)\b/;
+  if (exitRe.test(combined)) {
+    const bigExit = /\$\s?\d{2,}\s?(m|mm|million|b|bn|billion)\b/.test(combined)
+      || /\b(unicorn|nine[- ]figure|hundreds of millions|\$\d+\s?b)\b/.test(combined);
+    signals.push(bigExit ? 'Prior exit (significant)' : 'Prior exit');
+  }
+
+  // (2) Top-program admission
+  let topProgram = false;
+  for (const p of TOP_PROGRAMS) {
+    if (p.re.test(combined)) { signals.push(`${p.label} alum`); topProgram = true; }
+  }
+  for (const p of STRONG_PROGRAMS) {
+    if (p.re.test(combined)) signals.push(`${p.label} alum`);
+  }
+
+  // (3) Senior departure from a category-defining company
+  let hyperscaleDeparture = false;
+  for (const co of HYPERSCALE_COMPANIES) {
+    if (!combined.includes(co)) continue;
+    const idx = combined.indexOf(co);
+    const window = combined.slice(Math.max(0, idx - 80), idx + co.length + 80);
+    if (SENIOR_TITLE_RE.test(window) && DEPARTURE_RE.test(combined)) {
+      signals.push(`Senior departure: ${co.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')}`);
+      hyperscaleDeparture = true;
+      break;
+    }
+  }
+
+  // (4) Repeat / serial founder
+  if (/\b(serial (founder|entrepreneur)|repeat founder|second.time founder|third.time founder|previously founded|co.?founded \w+)\b/.test(combined)) {
+    signals.push('Repeat founder');
+  }
+
+  // (5) Research eminence
+  if (/\bph\.?d\b/.test(combined) && /\b(cited|citations|published|papers|neurips|icml|iclr|cvpr|professor|faculty|research scientist)\b/.test(combined)) {
+    signals.push('Research eminence');
+  }
+
+  return { signals: [...new Set(signals)], topProgram, hyperscaleDeparture };
+}
+
+// Deterministic caliber tier from hard signals. The LLM may raise a tier within
+// the evidence it can justify, but S requires at least one hard signal here.
+function computeCaliber(text, headline, eliteSchoolsNational = []) {
+  const { signals, topProgram, hyperscaleDeparture } = detectCaliberSignals(text, headline);
+  const has = (frag) => signals.some(s => s.toLowerCase().includes(frag));
+  const bigExit = has('exit (significant)');
+  const anyExit = has('exit');
+  const repeat = has('repeat founder');
+  const research = has('research eminence');
+  const eliteNational = (eliteSchoolsNational || []).length > 0;
+
+  let tier, score, rationale;
+  if (bigExit || (anyExit && repeat) || (topProgram && (hyperscaleDeparture || eliteNational))) {
+    tier = 'S'; score = 9;
+    rationale = 'Unicorn-track: proven exit and/or top-program selection paired with elite pedigree.';
+  } else if (anyExit || topProgram || hyperscaleDeparture || (signals.length && eliteNational) || (research && eliteNational)) {
+    tier = 'A'; score = 7;
+    rationale = 'Best-of-best signal: top-program admit, senior departure from a category-defining company, prior exit, or research eminence with elite pedigree.';
+  } else if (signals.length > 0 || eliteNational || research) {
+    tier = 'B'; score = 5;
+    rationale = 'Strong operator with at least one caliber signal, short of unicorn-track evidence.';
+  } else {
+    tier = 'C'; score = 3;
+    rationale = 'No hard caliber signal detected in available text.';
+  }
+  return { tier, score, signals, rationale, hardSignalPresent: anyExit || topProgram || hyperscaleDeparture };
+}
+
+const TIER_RANK = { S: 4, A: 3, B: 2, C: 1 };
+const TIER_BAND = { S: [9, 10], A: [7, 8], B: [5, 6], C: [1, 4] };
+
+// Reconcile the LLM's caliber claim with the deterministic floor. Take the higher
+// tier, but never allow S unless a hard signal is present. Clamp the score into
+// the chosen tier's band.
+function reconcileCaliber(det, llmTier, llmScore) {
+  let tier = det.tier;
+  if (llmTier && TIER_RANK[llmTier] > TIER_RANK[tier]) tier = llmTier;
+  if (tier === 'S' && !det.hardSignalPresent) tier = 'A'; // no S without hard evidence
+  const [lo, hi] = TIER_BAND[tier];
+  let score = Number.isFinite(llmScore) ? llmScore : det.score;
+  if (score < lo) score = lo;
+  if (score > hi) score = hi;
+  return { tier, score };
+}
+
+// Red flags that hard-clamp relevance to a pass and cap caliber.
+const DISQUALIFYING_FLAGS = [
+  'student', 'recruiter', 'consultant', 'service provider', 'agency',
+  'job seeker', 'job-seeker', 'no commercial', 'series a', 'series b',
+  'fractional', 'coach', 'advisor only',
+];
+function hasDisqualifyingFlag(redFlags = []) {
+  return (redFlags || []).some(rf =>
+    DISQUALIFYING_FLAGS.some(d => String(rf).toLowerCase().includes(d))
+  );
+}
+
 // ── R6: Stage Pre-filter — body text + seniority + funding patterns ──
 // Returns { disqualified: bool, reason: string | null }
 // Disqualifies candidates whose own company is clearly past pre-seed.
@@ -468,6 +598,33 @@ const DAILY_STEALTH_QUERIES = [
   { name: 'LinkedIn repeat founder Chicago', query: `site:linkedin.com/in ("repeat founder" OR "second-time founder" OR "serial founder") ("Chicago" OR "Illinois") ${NEG}` },
 ];
 
+// ELITE COHORT QUERIES — the inversion. Instead of scraping LinkedIn for "stealth
+// Chicago founder" (high recall, low precision), start from authoritative proof of
+// caliber — recent top-program cohorts and exited founders — and intersect with the
+// target geography. Precision over recall: every hit already cleared an elite bar.
+// {LOC} is replaced with a parenthesized OR of the user's target locations.
+const ELITE_COHORT_QUERY_TEMPLATES = [
+  { name: 'Recent YC founder back home', query: `site:linkedin.com/in ("YC W25" OR "YC S25" OR "YC W26" OR "Y Combinator 2025" OR "Y Combinator 2026") "founder" {LOC} ${NEG}` },
+  { name: 'a16z Speedrun founder', query: `site:linkedin.com/in ("a16z Speedrun" OR "Speedrun" "Andreessen") "founder" {LOC} ${NEG}` },
+  { name: 'Thiel Fellow building', query: `site:linkedin.com/in "Thiel Fellow" ("founder" OR "building" OR "stealth") {LOC} ${NEG}` },
+  { name: 'Neo Scholar founder', query: `site:linkedin.com/in ("Neo Scholar" OR "Neo cohort" OR "Neo accelerator") "founder" {LOC} ${NEG}` },
+  { name: 'Exited founder building again', query: `site:linkedin.com/in ("previously exited" OR "acquired by" OR "sold my company" OR "second-time founder") "founder" {LOC} ${NEG}` },
+  { name: 'Ex-frontier-lab founder', query: `site:linkedin.com/in ("ex-OpenAI" OR "ex-Anthropic" OR "ex-DeepMind" OR "formerly OpenAI" OR "formerly Anthropic") ("founder" OR "stealth" OR "building") {LOC} ${NEG}` },
+  { name: 'Forbes 30u30 founder local', query: `site:linkedin.com/in ("Forbes 30 Under 30" OR "30 under 30") "founder" {LOC} ${NEG}` },
+];
+
+function buildEliteCohortQueries(locations) {
+  const locs = (locations || []).filter(Boolean).slice(0, 6);
+  const locClause = locs.length
+    ? '(' + locs.map(l => `"${l}"`).join(' OR ') + ')'
+    : '("Chicago" OR "Illinois" OR "Evanston")';
+  return ELITE_COHORT_QUERY_TEMPLATES.map(q => ({
+    name: q.name,
+    query: q.query.replace('{LOC}', locClause),
+    cohort: true,
+  }));
+}
+
 function getTodaySearchGroup() {
   const days = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
   const dayName = days[new Date().getDay()];
@@ -629,6 +786,21 @@ Sector fit (15% weight):
 - Good if exceptional: deep tech, climate, biotech
 - Lower: consumer, social, crypto
 
+CALIBER ASSESSMENT — answer this SEPARATELY from the fit score above:
+The fit score answers "is this a real, fresh, Chicago-tied founder?" Caliber answers a DIFFERENT
+question: "independent of geography, is this a best-of-best, fund-returning builder — the kind who
+would get into YC or a16z Speedrun, or already did?" A founder can be a strong local fit but only
+B-caliber, or S-caliber but stale. Do not let one bleed into the other.
+- S (caliber_score 9-10): Unicorn-track. Prior meaningful exit, OR admitted to a top program
+  (YC / a16z Speedrun / Thiel Fellowship / Neo), OR repeat founder with a real prior outcome,
+  paired with elite pedigree.
+- A (7-8): Best-of-best signal. Senior departure (Staff+/VP/Head/founder) from a category-defining
+  company (Google/Meta/Stripe/OpenAI/Anthropic/Ramp/Anduril/Scale/Databricks/Citadel/Jane Street),
+  OR top-program admit, OR prior exit, OR research eminence (PhD + cited work) from an elite school.
+- B (5-6): Strong operator with one caliber signal, short of unicorn-track evidence.
+- C (1-4): No hard caliber signal in the text.
+Only claim a caliber_signal you can support with a verbatim quote. Never invent an exit, program, or title.
+
 Return ONLY valid JSON in this exact shape:
 {
   "evidence_map": {
@@ -642,6 +814,10 @@ Return ONLY valid JSON in this exact shape:
   "anchor_schools_il": ["<IL schools attended, verbatim>"],
   "elite_schools_national": ["<national elite schools attended, verbatim>"],
   "red_flags": ["<concrete red flags: 'student, no commercial evidence', 'Series B company', 'recruiter, not builder', etc.>"],
+  "caliber_tier": "<S|A|B|C — the unicorn-grade axis, independent of geography>",
+  "caliber_score": <1-10 integer aligned to the tier band: S=9-10, A=7-8, B=5-6, C=1-4>,
+  "caliber_signals": ["<hard, quote-backed caliber signals: 'Prior exit (acquired by X)', 'YC W25 alum', 'Ex-OpenAI Staff Eng', 'Repeat founder', 'PhD + cited research', etc.>"],
+  "caliber_rationale": "<1-2 sentences: why this tier, citing the strongest caliber signal>",
   "confidence_score": <1-10 integer; default 5 if evidence is thin>,
   "confidence_rationale": "<2-3 sentences. Cite the verbatim evidence. If score is low, say WHY specifically. If score is high, explain which archetype + tie they match.>",
   "tags": ["<domain>", "<stage>", "<geography>", "<signal>"],
@@ -665,6 +841,10 @@ function emptyScore(rationale) {
     anchor_schools_il: [],
     elite_schools_national: [],
     red_flags: [],
+    caliber_tier: 'C',
+    caliber_score: 3,
+    caliber_signals: [],
+    caliber_rationale: 'Not assessed — scoring unavailable.',
   };
 }
 
@@ -701,6 +881,28 @@ async function scoreFounder(client, founder, scoringPrompt) {
       score = Math.max(5, score - 2);
     }
 
+    const redFlags = parsed.red_flags || [];
+
+    // CALIBER: reconcile the LLM's tier with the deterministic floor computed from
+    // hard signals in the raw text. The LLM can nuance within its evidence, but it
+    // cannot inflate to S-tier without a hard signal (exit / top program / senior
+    // departure) actually being present.
+    const eliteNational = parsed.elite_schools_national || founder.elite_schools_national || [];
+    const det = computeCaliber(founder.text, founder.headline, eliteNational);
+    let { tier: caliberTier, score: caliberScore } = reconcileCaliber(det, parsed.caliber_tier, parsed.caliber_score);
+    const caliberSignals = [...new Set([...(det.signals || []), ...(parsed.caliber_signals || [])])];
+    let caliberRationale = parsed.caliber_rationale || det.rationale;
+
+    // ENFORCE red flags: a disqualifying flag clamps relevance to a pass (<=3) and
+    // caps caliber at C, regardless of what the LLM scored. This was previously
+    // captured and ignored.
+    if (hasDisqualifyingFlag(redFlags)) {
+      score = Math.min(3, score);
+      caliberTier = 'C';
+      caliberScore = Math.min(3, caliberScore);
+      caliberRationale = `Red-flagged (${redFlags.join('; ')}). ` + caliberRationale;
+    }
+
     return {
       confidence_score: score,
       raw_confidence_score: rawScore,
@@ -713,8 +915,12 @@ async function scoreFounder(client, founder, scoringPrompt) {
       evidence_map: parsed.evidence_map || {},
       departure_recency_months: recency,
       anchor_schools_il: parsed.anchor_schools_il || [],
-      elite_schools_national: parsed.elite_schools_national || [],
-      red_flags: parsed.red_flags || [],
+      elite_schools_national: eliteNational,
+      red_flags: redFlags,
+      caliber_tier: caliberTier,
+      caliber_score: caliberScore,
+      caliber_signals: caliberSignals,
+      caliber_rationale: caliberRationale,
     };
   } catch (err) {
     return emptyScore('Scoring failed: ' + err.message);
@@ -794,6 +1000,7 @@ function getAllSearchQueries() {
   }
   all.push(...DAILY_STEALTH_QUERIES);
   all.push(...BROAD_TALENT_QUERIES);
+  all.push(...buildEliteCohortQueries([]));
   return all;
 }
 
@@ -883,8 +1090,12 @@ function buildUserSearchQueries(criteria, fullSweep) {
     if (cq.query) queries.push({ name: cq.name || 'Custom query', query: cq.query });
   }
 
-  if (!fullSweep) return queries.slice(0, 20);
-  return queries;
+  // ELITE COHORT — always run these high-precision authoritative-list queries,
+  // even in daily mode. They are the highest-yield-per-call source of S/A caliber.
+  const cohortQueries = buildEliteCohortQueries(criteria.locations);
+
+  if (!fullSweep) return [...cohortQueries, ...queries.slice(0, 20)];
+  return [...cohortQueries, ...queries];
 }
 
 // R4: User-customized prompt reuses the base SCORING_PROMPT's extract-then-score
@@ -1085,8 +1296,9 @@ async function runSourcingEngine({ fullSweep = false, userId = 1 } = {}) {
       user_id,
       departure_recency_months, signal_captured_at,
       anchor_schools_il, elite_schools_national,
-      evidence_map, red_flags
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?, ?, ?)
+      evidence_map, red_flags,
+      caliber_tier, caliber_score, caliber_rationale, caliber_signals
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   for (const candidate of uniqueCandidates) {
@@ -1098,18 +1310,27 @@ async function runSourcingEngine({ fullSweep = false, userId = 1 } = {}) {
       continue;
     }
 
-    let score = {
-      confidence_score: 5,
-      confidence_rationale: 'AI scoring unavailable',
-      tags: [],
-      chicago_connection: candidate.location_city || '',
-      pedigree_signals: candidate.pedigree_signals || [],
-      builder_signals: candidate.builder_signals || [],
-      company_one_liner: '',
-    };
-
+    let score;
     if (anthropic) {
       score = await scoreFounder(anthropic, candidate, userScoringPrompt);
+    } else {
+      // No LLM available — still compute caliber deterministically from raw text.
+      const det = computeCaliber(candidate.text, candidate.headline, candidate.elite_schools_national || []);
+      score = {
+        confidence_score: 5,
+        confidence_rationale: 'AI scoring unavailable',
+        tags: [],
+        chicago_connection: candidate.location_city || '',
+        pedigree_signals: candidate.pedigree_signals || [],
+        builder_signals: candidate.builder_signals || [],
+        company_one_liner: '',
+        evidence_map: {},
+        red_flags: [],
+        caliber_tier: det.tier,
+        caliber_score: det.score,
+        caliber_signals: det.signals,
+        caliber_rationale: det.rationale,
+      };
     }
 
     // Merge extracted signals with AI signals
@@ -1147,12 +1368,16 @@ async function runSourcingEngine({ fullSweep = false, userId = 1 } = {}) {
         JSON.stringify(allAnchorIl),
         JSON.stringify(allEliteNational),
         JSON.stringify(score.evidence_map || {}),
-        JSON.stringify(score.red_flags || [])
+        JSON.stringify(score.red_flags || []),
+        score.caliber_tier || 'C',
+        score.caliber_score != null ? score.caliber_score : 3,
+        score.caliber_rationale || null,
+        JSON.stringify(score.caliber_signals || [])
       );
       totalAdded++;
 
-      const scoreEmoji = score.confidence_score >= 8 ? '🔥' : score.confidence_score >= 6 ? '✅' : '📝';
-      console.log(`[Sourcing] ${scoreEmoji} ${candidate.name} (${candidate.company || 'stealth'}) → ${score.confidence_score}/10 [${candidate.location_type}:${candidate.location_city}]`);
+      const tierEmoji = { S: '💎', A: '🔥', B: '✅', C: '📝' }[score.caliber_tier || 'C'] || '📝';
+      console.log(`[Sourcing] ${tierEmoji} ${candidate.name} (${candidate.company || 'stealth'}) → fit ${score.confidence_score}/10 · caliber ${score.caliber_tier || 'C'}${score.caliber_score ? ` (${score.caliber_score})` : ''} [${candidate.location_type}:${candidate.location_city}]`);
     } catch (err) {
       console.error(`[Sourcing] Insert error for ${candidate.name}: ${err.message}`);
       errors.push({ source: candidate.source, name: candidate.name, error: err.message });
@@ -1221,4 +1446,13 @@ async function runSourcingEngine({ fullSweep = false, userId = 1 } = {}) {
   return { totalFound, totalAdded, totalDeduped, totalFiltered, errors };
 }
 
-module.exports = { runSourcingEngine, enrichWithLinkedIn };
+module.exports = {
+  runSourcingEngine,
+  enrichWithLinkedIn,
+  // Exported for testing/reuse
+  detectCaliberSignals,
+  computeCaliber,
+  reconcileCaliber,
+  hasDisqualifyingFlag,
+  buildEliteCohortQueries,
+};

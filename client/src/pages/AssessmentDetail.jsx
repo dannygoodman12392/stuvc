@@ -48,6 +48,7 @@ export default function AssessmentDetail() {
   const [showVersions, setShowVersions] = useState(false);
   const [rubric, setRubric] = useState(null);
   const [rubricLoading, setRubricLoading] = useState(false);
+  const [notionState, setNotionState] = useState({ status: 'idle', url: null, error: null });
   const pollRef = useRef(null);
   const rubricPollRef = useRef(null);
 
@@ -133,6 +134,17 @@ export default function AssessmentDetail() {
     catch { return null; }
   }
 
+  async function handlePushToNotion() {
+    if (notionState.status === 'pushing') return;
+    setNotionState({ status: 'pushing', url: null, error: null });
+    try {
+      const result = await api.pushAssessmentToNotion(id);
+      setNotionState({ status: 'success', url: result.url, error: null, action: result.action });
+    } catch (err) {
+      setNotionState({ status: 'error', url: null, error: err?.message || 'Failed to push to Notion' });
+    }
+  }
+
   if (loading) return <div className="text-center py-12 text-gray-500 text-sm">Loading...</div>;
   if (!assessment) return <div className="text-center py-12 text-gray-500 text-sm">Assessment not found</div>;
 
@@ -172,6 +184,33 @@ export default function AssessmentDetail() {
               <span className="badge badge-blue animate-pulse text-xs">
                 {assessment.status === 'processing_inputs' ? 'Processing...' : assessment.status === 'synthesizing' ? 'Synthesizing...' : 'Running...'}
               </span>
+            )}
+            {isComplete && (
+              <div className="flex items-center gap-2">
+                {notionState.status === 'success' && notionState.url ? (
+                  <a
+                    href={notionState.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs px-3 py-1.5 rounded border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition"
+                    title={notionState.action === 'updated' ? 'Updated in Notion' : 'Created in Notion'}
+                  >
+                    Open in Notion ↗
+                  </a>
+                ) : (
+                  <button
+                    onClick={handlePushToNotion}
+                    disabled={notionState.status === 'pushing'}
+                    className="text-xs px-3 py-1.5 rounded border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition"
+                    title={notionState.error || 'Send this assessment to your Strider Notion'}
+                  >
+                    {notionState.status === 'pushing' ? 'Sending…' : notionState.status === 'error' ? 'Retry → Notion' : 'Send to Notion'}
+                  </button>
+                )}
+                {notionState.status === 'error' && (
+                  <span className="text-xs text-red-500" title={notionState.error}>!</span>
+                )}
+              </div>
             )}
           </div>
         </div>
@@ -306,6 +345,36 @@ const QUOTE_COLORS = {
   'NEGATIVE': 'border-l-red-400',
   'MIXED': 'border-l-amber-400',
 };
+
+const VERIFY_META = {
+  verbatim: { icon: '✓', label: 'Verbatim', cls: 'text-emerald-600 bg-emerald-50 border-emerald-200', title: 'Found word-for-word in the source materials' },
+  paraphrased: { icon: '≈', label: 'Paraphrased', cls: 'text-amber-600 bg-amber-50 border-amber-200', title: 'Closely matches the source, not word-for-word' },
+  unverified: { icon: '⚠', label: 'Unverified', cls: 'text-red-600 bg-red-50 border-red-200', title: 'Not found in the source materials — confirm before citing' },
+};
+
+function QuoteVerifyBadge({ verification }) {
+  const m = VERIFY_META[verification];
+  if (!m) return null;
+  return (
+    <span className={`flex-shrink-0 text-[9px] font-semibold px-1.5 py-0.5 rounded border ${m.cls}`} title={m.title}>
+      {m.icon} {m.label}
+    </span>
+  );
+}
+
+function QuoteIntegritySummary({ integrity }) {
+  if (!integrity) return null;
+  const parts = [];
+  if (integrity.verbatim) parts.push(<span key="v" className="text-emerald-600">{'✓'} {integrity.verbatim}</span>);
+  if (integrity.paraphrased) parts.push(<span key="p" className="text-amber-600">{'≈'} {integrity.paraphrased}</span>);
+  if (integrity.unverified) parts.push(<span key="u" className="text-red-600">{'⚠'} {integrity.unverified}</span>);
+  if (parts.length === 0) return null;
+  return (
+    <span className="text-[10px] font-medium flex items-center gap-2" title="Quote verification against source materials">
+      {parts}
+    </span>
+  );
+}
 
 function scoreColor(score) {
   if (score >= 7) return 'text-emerald-600';
@@ -621,11 +690,19 @@ function TeamOutput({ data }) {
       {/* Key Quotes */}
       {data.key_quotes && data.key_quotes.length > 0 && (
         <div className="card p-4">
-          <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Key Quotes</h3>
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Key Quotes</h3>
+            {data.quote_integrity && (
+              <QuoteIntegritySummary integrity={data.quote_integrity} />
+            )}
+          </div>
           <div className="space-y-3">
             {data.key_quotes.map((q, i) => (
               <div key={i} className={`border-l-3 pl-3 ${QUOTE_COLORS[q.signal] || 'border-l-gray-300'}`}>
-                <p className="text-sm text-gray-800 italic">"{q.quote}"</p>
+                <div className="flex items-start gap-2">
+                  <p className="text-sm text-gray-800 italic flex-1">"{q.quote}"</p>
+                  {q.verification && <QuoteVerifyBadge verification={q.verification} />}
+                </div>
                 <p className="text-xs text-gray-500 mt-1">
                   <span className={`font-medium ${q.signal === 'POSITIVE' ? 'text-emerald-600' : q.signal === 'NEGATIVE' ? 'text-red-600' : 'text-amber-600'}`}>
                     {q.signal}
@@ -635,6 +712,11 @@ function TeamOutput({ data }) {
               </div>
             ))}
           </div>
+          {data.quote_integrity?.has_unverified && (
+            <p className="text-[11px] text-red-500 mt-3 flex items-center gap-1">
+              <span>&#9888;</span> Unverified quotes were not found in the source materials — treat as paraphrase or potential model error and confirm before citing.
+            </p>
+          )}
         </div>
       )}
 

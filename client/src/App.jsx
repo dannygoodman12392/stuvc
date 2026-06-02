@@ -14,6 +14,7 @@ import AssessmentDetail from './pages/AssessmentDetail';
 import AskStu from './pages/AskStu';
 import Placeholder from './pages/Placeholder';
 import Settings from './pages/Settings';
+import Releases from './pages/Releases';
 import Payment from './pages/Payment';
 import PaymentSuccess from './pages/PaymentSuccess';
 import Admin from './pages/Admin';
@@ -86,6 +87,7 @@ function AppRoutes() {
       <Route path="/portfolio" element={<ProtectedRoute><Placeholder title="Portfolio" /></ProtectedRoute>} />
       <Route path="/fund" element={<ProtectedRoute><Placeholder title="Fund Analytics" /></ProtectedRoute>} />
       <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
+      <Route path="/releases" element={<ProtectedRoute><Releases /></ProtectedRoute>} />
       <Route path="/admin" element={<ProtectedRoute><Admin /></ProtectedRoute>} />
       <Route path="/talent" element={<ProtectedRoute><TalentLayout /></ProtectedRoute>}>
         <Route index element={<TalentHome />} />

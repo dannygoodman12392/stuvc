@@ -202,12 +202,17 @@ export default function TalentRoleDetail() {
       <div>
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-sm font-semibold text-gray-900">Matches ({role.matches?.length || 0})</h2>
+          {role.matches?.length > 0 && (
+            <Link to={`/talent/matches?role=${id}`} className="text-xs font-medium text-amber-700 hover:text-amber-800">
+              Open match queue for this role →
+            </Link>
+          )}
         </div>
         {!role.matches || role.matches.length === 0 ? (
           <div className="card p-6 text-center text-sm text-gray-400">No matches yet. Click Rescore to evaluate existing candidates.</div>
         ) : (
           <div className="card divide-y divide-gray-100">
-            {role.matches.map(m => (
+            {role.matches.slice(0, 8).map(m => (
               <div key={m.id} className="flex items-center gap-4 px-4 py-3 hover:bg-gray-50">
                 <div className="w-10 h-10 rounded-full bg-amber-50 border border-amber-100 flex items-center justify-center text-amber-700 font-semibold text-sm tabular-nums flex-shrink-0">
                   {m.match_score}
@@ -219,6 +224,11 @@ export default function TalentRoleDetail() {
                 <span className="badge badge-gray text-[10px]">{m.status}</span>
               </div>
             ))}
+            {role.matches.length > 8 && (
+              <Link to={`/talent/matches?role=${id}`} className="block px-4 py-3 text-xs font-medium text-amber-700 hover:bg-amber-50 text-center">
+                View all {role.matches.length} matches in the queue →
+              </Link>
+            )}
           </div>
         )}
       </div>
