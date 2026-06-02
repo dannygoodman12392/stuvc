@@ -6,6 +6,19 @@
 
 const RELEASES = [
   {
+    version: 'v2.4.0',
+    date: 'June 2, 2026',
+    time: '5:30 PM CT',
+    title: 'Daily Brief — your newsletters in one feed',
+    highlights: [
+      {
+        product: 'Platform',
+        change: 'New Daily Brief: tag newsletters with a Gmail label and Stu pulls them in, extracts the key points of each issue, and ranks them — items that touch your pipeline first, then your thesis, then general reads. Set it up in Settings → Newsletters (Gmail address + App Password + label), then hit Sync. Refreshes automatically each morning.',
+        benefit: 'Get the gist of every newsletter you follow in one place, in a couple of minutes, with the stuff relevant to your deals surfaced to the top — and a link to read the full issue when you want.',
+      },
+    ],
+  },
+  {
     version: 'v2.3.0',
     date: 'June 2, 2026',
     time: '4:15 PM CT',

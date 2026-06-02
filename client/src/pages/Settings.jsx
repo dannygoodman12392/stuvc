@@ -245,6 +245,12 @@ export default function Settings() {
   const [apiKeyGithub, setApiKeyGithub] = useState('');
   const apiKeysSave = useSaveState();
 
+  // Newsletter (Daily Brief) state
+  const [gmailAddress, setGmailAddress] = useState('');
+  const [gmailAppPassword, setGmailAppPassword] = useState('');
+  const [newsletterLabel, setNewsletterLabel] = useState('Stu/News');
+  const newsletterSave = useSaveState();
+
   useEffect(() => {
     async function load() {
       try {
@@ -262,6 +268,9 @@ export default function Settings() {
         setApiKeyAnthropic(settings.api_key_anthropic || '');
         setApiKeyEnrichlayer(settings.api_key_enrichlayer || '');
         setApiKeyGithub(settings.api_key_github || '');
+        setGmailAddress(settings.newsletter_gmail_address || '');
+        setGmailAppPassword(settings.newsletter_gmail_app_password || '');
+        setNewsletterLabel(settings.newsletter_label || 'Stu/News');
       } catch (err) {
         setLoadError(err.message || 'Failed to load settings');
       } finally {
@@ -356,6 +365,16 @@ export default function Settings() {
     });
   }
 
+  async function saveNewsletter() {
+    await newsletterSave.doSave(async () => {
+      await Promise.all([
+        api.updateSetting('newsletter_gmail_address', gmailAddress.trim()),
+        api.updateSetting('newsletter_gmail_app_password', gmailAppPassword.replace(/\s+/g, '')),
+        api.updateSetting('newsletter_label', newsletterLabel.trim() || 'Stu/News'),
+      ]);
+    });
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
@@ -375,6 +394,7 @@ export default function Settings() {
   const tabs = [
     { id: 'pipeline', label: 'Pipeline Stages' },
     { id: 'sourcing', label: 'Sourcing Criteria' },
+    { id: 'newsletter', label: 'Newsletters' },
     { id: 'apikeys', label: 'API Keys' },
   ];
 
@@ -567,6 +587,46 @@ export default function Settings() {
           {sourcingSave.error && (
             <p className="text-sm text-red-600 mt-2">{sourcingSave.error}</p>
           )}
+        </div>
+      )}
+
+      {/* Newsletters Tab */}
+      {tab === 'newsletter' && (
+        <div className="space-y-5 max-w-xl">
+          <div>
+            <h2 className="text-sm font-semibold text-gray-900">Daily Brief — newsletter intake</h2>
+            <p className="text-xs text-gray-500 mt-1">
+              Stu reads a Gmail label and turns the newsletters you tag into a daily brief with key points.
+            </p>
+          </div>
+
+          <ol className="text-xs text-gray-600 space-y-1.5 bg-gray-50 border border-gray-200 rounded-lg p-3 list-decimal list-inside">
+            <li>In Gmail, create a label (e.g. <span className="font-medium">Stu/News</span>) and tag the newsletters you want.</li>
+            <li>Turn on 2-Step Verification, then create a Gmail <span className="font-medium">App Password</span> (Google Account → Security → App passwords).</li>
+            <li>Paste your Gmail address, the App Password, and the label name below.</li>
+          </ol>
+
+          <div>
+            <label className="label">Gmail address</label>
+            <input type="email" className="input w-full" placeholder="you@gmail.com"
+              value={gmailAddress} onChange={(e) => setGmailAddress(e.target.value)} />
+          </div>
+          <div>
+            <label className="label">Gmail App Password</label>
+            <input type="password" className="input w-full" placeholder="16-character app password" autoComplete="new-password"
+              value={gmailAppPassword} onChange={(e) => setGmailAppPassword(e.target.value)} />
+            <p className="text-[11px] text-gray-400 mt-1">Stored privately for your account. Spaces are removed automatically. This is an app-specific password, not your Google password.</p>
+          </div>
+          <div>
+            <label className="label">Gmail label</label>
+            <input type="text" className="input w-full" placeholder="Stu/News"
+              value={newsletterLabel} onChange={(e) => setNewsletterLabel(e.target.value)} />
+          </div>
+
+          <div className="flex items-center">
+            <SaveButton onClick={saveNewsletter} saving={newsletterSave.saving} saved={newsletterSave.saved} />
+          </div>
+          {newsletterSave.error && <p className="text-sm text-red-600 mt-2">{newsletterSave.error}</p>}
         </div>
       )}
 

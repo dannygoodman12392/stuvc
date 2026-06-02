@@ -9,6 +9,7 @@ import { api } from '../utils/api';
 const navConfig = [
   { to: '/ask', label: 'Ask Stu', accent: true },
   { to: '/', label: 'Pipeline' },
+  { to: '/brief', label: 'Daily Brief' },
   { to: '/assess', label: 'Assess' },
   { to: '/talent', label: 'Talent' },
   { to: '/portfolio', label: 'Portfolio', placeholder: true },

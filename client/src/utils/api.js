@@ -158,6 +158,12 @@ export const api = {
   getSourcingCriteria: () => request('/settings/sourcing-criteria'),
   completeOnboarding: () => request('/settings/complete-onboarding', { method: 'POST' }),
 
+  // Newsletter / Daily Brief
+  getNewsletterBrief: (date) => request('/newsletter/brief' + (date ? `?date=${date}` : '')),
+  getNewsletterStatus: () => request('/newsletter/status'),
+  syncNewsletter: () => request('/newsletter/sync', { method: 'POST' }),
+  dismissNewsletterItem: (id) => request(`/newsletter/${id}`, { method: 'DELETE' }),
+
   // Stu tool-use chat
   stuChat: async function* (messages) {
     const token = getToken();

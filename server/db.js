@@ -777,6 +777,34 @@ db.exec(`CREATE INDEX IF NOT EXISTS idx_tm_candidate ON talent_matches(candidate
 // Defaults to 'engineering' so existing roles keep their current (eng-centric) behavior.
 addColumn('talent_roles', 'role_function', "TEXT DEFAULT 'engineering'");
 
+// ── Newsletter / Daily Brief ──
+// One row per extracted newsletter issue. Stu reads a Gmail label over IMAP, extracts
+// the key points with Claude, and ranks each issue by relevance to the user's pipeline.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS newsletter_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    message_id TEXT,
+    source_name TEXT,
+    sender TEXT,
+    subject TEXT,
+    received_at DATETIME,
+    brief_date TEXT,
+    url TEXT,
+    summary TEXT,
+    key_points TEXT,
+    relevance_score INTEGER DEFAULT 0,
+    relevance_reason TEXT,
+    matched_entities TEXT,
+    category TEXT DEFAULT 'general',
+    is_read INTEGER DEFAULT 0,
+    is_deleted INTEGER DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+`);
+db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_news_msg ON newsletter_items(user_id, message_id);`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_news_brief ON newsletter_items(user_id, brief_date, relevance_score DESC);`);
+
 // Talent criteria (sourcing config — global or per-portfolio-co)
 db.exec(`
   CREATE TABLE IF NOT EXISTS talent_criteria (
