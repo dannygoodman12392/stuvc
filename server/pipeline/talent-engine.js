@@ -83,7 +83,7 @@ function loadUserApiKeys(userId) {
 function loadRoleScope(userId, roleId) {
   if (!roleId) return null;
   const role = db.prepare(
-    'SELECT id, title, band, location_pref, remote_ok, stack_requirements, domain_requirements, must_haves, nice_to_haves, portfolio_company_id FROM talent_roles WHERE id = ? AND user_id = ? AND is_deleted = 0'
+    'SELECT id, title, band, role_function, location_pref, remote_ok, stack_requirements, domain_requirements, must_haves, nice_to_haves, portfolio_company_id FROM talent_roles WHERE id = ? AND user_id = ? AND is_deleted = 0'
   ).get(roleId, userId);
   if (!role) return null;
   const p = (v) => { try { return JSON.parse(v); } catch { return []; } };
@@ -91,6 +91,7 @@ function loadRoleScope(userId, roleId) {
     id: role.id,
     title: role.title,
     band: role.band || 'A',
+    function: normalizeArchetype(role.role_function),
     location_pref: role.location_pref || null,
     remote_ok: !!role.remote_ok,
     stacks: p(role.stack_requirements),
@@ -132,8 +133,191 @@ function matchesLocation(candidate, locationTokens) {
   return locationTokens.some(t => hay.includes(t));
 }
 
+// ── Role archetypes ──
+// Each role has a FUNCTION. The tier-1 caliber bar and the sourcing queries differ
+// completely by function — a CMO is not judged on founding-engineer signals. The
+// (P)(F)(L)(R) letters stay as generic "evidence category" slots; their MEANING is
+// redefined per archetype. Engineering is the default and preserves prior behavior.
+function normalizeArchetype(v) {
+  const s = String(v || '').toLowerCase();
+  if (/gtm|sales|marketing|growth|revenue|cmo|cro|demand/.test(s)) return 'gtm';
+  if (/product|^pm$|\bpm\b|cpo/.test(s)) return 'product';
+  if (/design|ux|ui|brand/.test(s)) return 'design';
+  if (/ops|operation|bizops|chief of staff|coo/.test(s)) return 'operations';
+  if (/finance|fp&a|cfo|account/.test(s)) return 'finance';
+  if (/general|founder|chief of staff|business/.test(s)) return 'generalist';
+  if (/eng|technical|software|cto|developer|ml|ai|data/.test(s)) return 'engineering';
+  return 'engineering';
+}
+
+const ARCHETYPES = {
+  engineering: {
+    label: 'Engineering',
+    caliberName: 'BUILD CALIBER',
+    mission: 'Tier-1-fundable technical talent for portfolio-company hiring (founding engineer, CTO, first-5 hire).',
+    bar: `  (P) PEDIGREE SCHOOL — verbatim attendance at a top CS/engineering program:
+      MIT, Stanford, Harvard, Princeton, Yale, Caltech, CMU, UC Berkeley, Waterloo,
+      Oxford/Cambridge, ETH, Imperial, Tsinghua, IIT (Bombay/Delhi/Madras/Kanpur).
+      DOES NOT COUNT: "MIT Technology Review", "Illinois Institute of Technology", visiting programs.
+  (F) FAANG+ / ELITE STARTUP — shipped IC or staff role (NOT intern, NOT TPM, NOT short contract) at:
+      Google/DeepMind, Meta/FAIR, Apple, Amazon (SDE III+), Microsoft Research, Stripe, OpenAI,
+      Anthropic, Databricks, Nvidia, Snowflake, Ramp, Brex, Plaid, Figma, Linear, Notion, Vercel,
+      Scale AI, Palantir, Jane Street/Two Sigma/Citadel/DRW, Waymo, early Airbnb/Uber, YC company.
+      Tenure ≥18 months unless "Founding Engineer". DOES NOT COUNT: generic AWS SDE, contractor, intern, TPM, PM.
+  (L) PRIOR TIER-1 FOUNDER — raised from Sequoia/Khosla/Benchmark/a16z/Founders Fund/Accel/Greylock/Index/YC,
+      OR meaningful exit ($50M+ acquisition, IPO as founder/early exec).
+  (R) RESEARCH/OSS EMINENCE — PhD top-10 CS + cited papers, OR >2k-star OSS as owner/maintainer,
+      OR invited speaker at NeurIPS/ICML/Strange Loop/KubeCon keynote.`,
+    seniority: `SWEET SPOT: 7–14 yrs, currently Senior/Staff IC or Founding Engineer. PENALIZE 18+yr VPs / Sr Directors
+at public cos who won't take the leap. SCORE HIGHER: 5–10yr engineers with founding-eng / early-at-scaled-startup history.`,
+    caliberDef: '9–10 only if (P)+(F) or (F)+(R); 7–8 if one strong category; ≤5 otherwise',
+  },
+  gtm: {
+    label: 'Go-to-Market (Sales / Marketing / Growth)',
+    caliberName: 'GTM CALIBER',
+    mission: 'A go-to-market leader who can build pipeline and revenue for a portfolio company (CMO/CRO/VP Sales/Head of Growth/first GTM hire).',
+    bar: `  (P) SCALED REVENUE — owned a number and beat it, with a QUOTED metric: built pipeline that closed
+      enterprise logos, grew ARR a meaningful multiple ($1M→$10M+), or carried and exceeded quota at scale.
+  (F) ELITE GTM ORG — quota-carrier-to-leader at a category-defining go-to-market machine or hypergrowth
+      startup (Salesforce, HubSpot, Stripe, Snowflake, Datadog, Gong, Ramp, Brex, Toast, ServiceTitan,
+      Procore, Klaviyo). NOT a 3-month BDR stint.
+  (L) BUILT A FUNCTION 0→1 — first sales/marketing hire who built the team, the motion, and the pipeline
+      from scratch at an early-stage startup that then scaled.
+  (R) CATEGORY / BRAND — created or defined a category, ran named campaigns with measurable lift, or is a
+      recognized voice (large following, conference talks, published GTM playbooks).`,
+    seniority: `Reward operators who took something from $0–1M to $10M+ AND have a 0→1 chapter. PENALIZE pure
+big-co lifers who never built from zero, and anyone who only managed an existing machine. For a first-GTM-hire role, prioritize the 0→1 builder over the big-title manager.`,
+    caliberDef: '9–10 only if (P)+(L) or (P)+(F) with quoted metrics; 7–8 one strong category; ≤5 if no owned-number evidence',
+  },
+  product: {
+    label: 'Product',
+    caliberName: 'PRODUCT CALIBER',
+    mission: 'A product leader who can own roadmap and ship for a portfolio company (CPO/Head of Product/founding PM).',
+    bar: `  (P) SHIPPED AT SCALE — owned a product/surface used by many users with a QUOTED outcome (adoption,
+      revenue, retention). Project-managing someone else's roadmap does NOT count.
+  (F) ELITE PRODUCT ORG — PM/product leadership at a top product company (Stripe, Figma, Notion, Linear,
+      Airbnb, Ramp, Rippling, Google, Meta) where they OWNED a roadmap.
+  (L) 0→1 PRODUCT — defined and launched a product from zero (founder or founding PM) that found traction.
+  (R) CRAFT / DOMAIN — recognized product thinker (writing, talks) OR deep domain expertise matching the company.`,
+    seniority: `Reward 0→1 builders and PMs with a clear ownership story. PENALIZE process-PMs who only optimized
+mature products and can't point to something they took from zero.`,
+    caliberDef: '9–10 if (P)+(L) or (F)+(L); 7–8 one strong; ≤5 if no shipped-ownership evidence',
+  },
+  design: {
+    label: 'Design',
+    caliberName: 'DESIGN CALIBER',
+    mission: 'A design leader (founding designer / Head of Design) who can own product and brand for a portfolio company.',
+    bar: `  (P) SHIPPED DESIGN AT SCALE — owned the design of products used by many users; quote the scope.
+  (F) ELITE DESIGN ORG — design role at a top product/brand company (Figma, Apple, Airbnb, Stripe, Linear, IDEO).
+  (L) FOUNDING DESIGNER 0→1 — first designer who built the product and brand from scratch at an early startup.
+  (R) PORTFOLIO / RECOGNITION — standout portfolio, design awards, or a following / published work.`,
+    seniority: `Reward range (product + brand) and a 0→1 chapter. PENALIZE pure-pixel executors with no ownership.`,
+    caliberDef: '9–10 if (P)+(L) or strong portfolio + elite org; 7–8 one strong; ≤5 otherwise',
+  },
+  operations: {
+    label: 'Operations / BizOps / Chief of Staff',
+    caliberName: 'OPERATING CALIBER',
+    mission: 'An operator who can build and run functions for a portfolio company (COO-track, BizOps, Chief of Staff, first ops hire).',
+    bar: `  (P) SCALED AN OPS FUNCTION — built processes/systems that scaled headcount, GMV, or operations with a QUOTED result.
+  (F) ELITE PEDIGREE + OPERATOR — top firm (McKinsey/Bain/BCG, GS/MS) PLUS a real operating chapter at a
+      hypergrowth startup — consulting alone is NOT enough.
+  (L) 0→1 OPERATOR — Chief of Staff / first ops hire who built the operating backbone of an early startup.
+  (R) DOMAIN DEPTH — deep expertise in the company's specific vertical/operations.`,
+    seniority: `Reward operators with a build-from-scratch chapter. PENALIZE career consultants with no operating
+ownership and big-co managers who only ran mature machines.`,
+    caliberDef: '9–10 if (P)+(L) or (F)+(L); 7–8 one strong; ≤5 if consulting-only / no owned outcome',
+  },
+  finance: {
+    label: 'Finance',
+    caliberName: 'FINANCE CALIBER',
+    mission: 'A finance leader (CFO-track / Head of Finance / first finance hire) for a portfolio company.',
+    bar: `  (P) OWNED FINANCE AT SCALE — ran FP&A / finance with a QUOTED scope (managed $X, raised $Y, ran a model that drove decisions).
+  (F) ELITE FINANCE PEDIGREE — top firm (Goldman/Morgan Stanley, top PE/VC/IB) PLUS a startup/operator chapter.
+  (L) 0→1 FINANCE — first finance hire who built the finance function and helped raise at an early startup.
+  (R) CREDENTIAL + TRACK RECORD — CPA/CFA AND a real fundraising / operating track record.`,
+    seniority: `Reward a startup finance chapter, not just banking. PENALIZE pure-banking resumes with no operating finance.`,
+    caliberDef: '9–10 if (P)+(L) or (F)+(L); 7–8 one strong; ≤5 if banking-only / no operating finance',
+  },
+  generalist: {
+    label: 'Generalist / Business',
+    caliberName: 'OPERATOR CALIBER',
+    mission: 'An exceptional generalist operator / first business hire for a portfolio company.',
+    bar: `  (P) ELITE PEDIGREE — top school OR top firm with a clear track record.
+  (F) CATEGORY-DEFINING COMPANY — meaningful role at a hypergrowth startup or top company.
+  (L) PRIOR FOUNDER / 0→1 — founded a company or was an early builder who owned outcomes.
+  (R) EXCEPTIONAL TRACK RECORD — quantified wins, recognition, or rare range.`,
+    seniority: `Reward range + ownership + hunger. PENALIZE big-co lifers with no 0→1 or ownership evidence.`,
+    caliberDef: '9–10 if two categories with evidence; 7–8 one strong; ≤5 otherwise',
+  },
+};
+
+function getArchetype(roleScope, criteria) {
+  const key = normalizeArchetype(roleScope?.function || criteria?.role_function || 'engineering');
+  return { key, ...ARCHETYPES[key] };
+}
+
+// Archetype-specific Exa query pools (used when a role's function is non-engineering).
+function archetypeQueries(archKey, locSuffix, isChicago) {
+  const q = (band, name, query) => ({ band, name, query });
+  const pools = {
+    gtm: [
+      q('A', 'Scaled GTM leader', `site:linkedin.com/in ("VP Sales" OR "VP Marketing" OR "CMO" OR "CRO" OR "Head of Growth") ("scaled" OR "ARR" OR "pipeline" OR "quota")${locSuffix}`),
+      q('A', 'Ex-elite GTM org', `site:linkedin.com/in ("Salesforce" OR "HubSpot" OR "Stripe" OR "Snowflake" OR "Gong" OR "Ramp" OR "Toast") ("sales" OR "marketing" OR "growth") (leader OR director OR VP)${locSuffix}`),
+      q('A', 'First GTM hire 0→1', `site:linkedin.com/in ("first marketing hire" OR "first sales hire" OR "founding GTM" OR "built the sales team" OR "built the marketing function")${locSuffix}`),
+      q('B', 'GTM operator startup-ready', `site:linkedin.com/in ("growth marketer" OR "account executive" OR "demand generation") startup "early-stage"${locSuffix}`),
+      ...(isChicago ? [q('A', 'Chicago GTM leaders', `site:linkedin.com/in ("VP Sales" OR "CMO" OR "Head of Growth") ("Sprout Social" OR "Salesforce" OR "Grubhub" OR "ActiveCampaign" OR "G2") Chicago`)] : []),
+    ],
+    product: [
+      q('A', 'PM at elite product org', `site:linkedin.com/in ("Product Manager" OR "Head of Product" OR "CPO" OR "Group PM") ("Stripe" OR "Figma" OR "Notion" OR "Linear" OR "Airbnb" OR "Ramp" OR "Google" OR "Meta")${locSuffix}`),
+      q('A', 'Founding PM 0→1', `site:linkedin.com/in ("founding product manager" OR "first product hire" OR "0 to 1 product" OR "launched product")${locSuffix}`),
+      q('B', 'PM startup-ready', `site:linkedin.com/in "product manager" startup "early-stage" "shipped"${locSuffix}`),
+      ...(isChicago ? [q('A', 'Chicago product leaders', `site:linkedin.com/in ("Head of Product" OR "Director of Product" OR "CPO") Chicago startup`)] : []),
+    ],
+    design: [
+      q('A', 'Founding / lead designer', `site:linkedin.com/in ("founding designer" OR "Head of Design" OR "lead product designer") ("Figma" OR "Stripe" OR "Airbnb" OR "Linear" OR startup)${locSuffix}`),
+      q('B', 'Product designer startup', `site:linkedin.com/in "product designer" startup "early-stage"${locSuffix}`),
+      ...(isChicago ? [q('A', 'Chicago design leaders', `site:linkedin.com/in ("Head of Design" OR "founding designer" OR "Design Lead") Chicago startup`)] : []),
+    ],
+    operations: [
+      q('A', 'BizOps / Chief of Staff', `site:linkedin.com/in ("Chief of Staff" OR "BizOps" OR "Business Operations" OR "Head of Operations" OR "COO") startup ("scaled" OR "0 to 1")${locSuffix}`),
+      q('A', 'Consultant-turned-operator', `site:linkedin.com/in ("McKinsey" OR "Bain" OR "BCG") ("startup" OR "operator" OR "Chief of Staff" OR "Head of Operations")${locSuffix}`),
+      q('B', 'Ops generalist startup', `site:linkedin.com/in "operations" startup "early-stage" "built"${locSuffix}`),
+      ...(isChicago ? [q('A', 'Chicago ops leaders', `site:linkedin.com/in ("Chief of Staff" OR "Head of Operations" OR "COO") Chicago startup`)] : []),
+    ],
+    finance: [
+      q('A', 'Startup CFO / Head of Finance', `site:linkedin.com/in ("CFO" OR "Head of Finance" OR "VP Finance" OR "FP&A") startup ("raised" OR "0 to 1" OR "first finance hire")${locSuffix}`),
+      q('A', 'Banking-to-operator finance', `site:linkedin.com/in ("Goldman Sachs" OR "Morgan Stanley" OR "private equity") ("startup" OR "CFO" OR "Head of Finance")${locSuffix}`),
+      ...(isChicago ? [q('A', 'Chicago finance leaders', `site:linkedin.com/in ("CFO" OR "Head of Finance" OR "VP Finance") Chicago startup`)] : []),
+    ],
+    generalist: [
+      q('A', 'First business hire', `site:linkedin.com/in ("Chief of Staff" OR "first business hire" OR "founding team" OR "General Manager") startup${locSuffix}`),
+      q('A', 'Ex-founder operator', `site:linkedin.com/in ("former founder" OR "ex-founder" OR "previously founded") ("operator" OR "joining" OR "startup")${locSuffix}`),
+    ],
+  };
+  return pools[archKey] || [];
+}
+
 // ── Query construction ──
-function buildTalentQueries(criteria, fullSweep) {
+function buildTalentQueries(criteria, fullSweep, roleScope = null) {
+  // Non-engineering role-scoped sourcing → use the archetype's query pool so the
+  // RIGHT people enter the funnel (a CMO search pulls GTM leaders, not engineers).
+  const arch = getArchetype(roleScope, criteria);
+  if (roleScope && arch.key !== 'engineering') {
+    const locs = (criteria.locations || []).slice(0, 5);
+    const hasLoc = locs.length > 0;
+    const locSuffix = hasLoc ? ` ${locs[0]}` : '';
+    const isChicago = /chicago|illinois|\bil\b/.test((locs[0] || '').toLowerCase());
+    const bands = criteria.bands || ['A', 'B', 'C'];
+    let queries = archetypeQueries(arch.key, locSuffix, isChicago).filter(q => bands.includes(q.band));
+    for (const cq of (criteria.customQueries || [])) {
+      if (cq.query) queries.push({ name: cq.name || 'Custom query', query: cq.query, band: cq.band || null });
+    }
+    return fullSweep ? queries : queries.slice(0, 12);
+  }
+  return buildEngineeringQueries(criteria, fullSweep);
+}
+
+function buildEngineeringQueries(criteria, fullSweep) {
   const queries = [];
   const locs = (criteria.locations || []).slice(0, 5);
   const companies = (criteria.companies || []).slice(0, 8);
@@ -379,47 +563,23 @@ function buildTalentScoringPrompt(criteria, roleScope = null) {
     ? `\n\n⚠️ ROLE-SCOPED SOURCING — HARD CONSTRAINTS\nYou are sourcing specifically for this open role. Treat these as HARD requirements, not preferences:\n- Title: ${roleScope.title}\n- Band: ${roleScope.band} only\n- Location: ${roleScope.location_pref || 'any'}${roleScope.remote_ok ? ' (remote OK)' : ' — STRICT, remote NOT accepted'}\n- Required stacks: ${(roleScope.stacks || []).join(', ') || 'n/a'}\n- Required domains: ${(roleScope.domains || []).join(', ') || 'n/a'}\n- Must-haves: ${(roleScope.must_haves || []).join(', ') || 'n/a'}\n\nIf the candidate clearly fails any HARD constraint (especially location when strict), set overall_score ≤ 3, set location_match=false, and set tier1_ready=false.\n`
     : '';
 
-  return `You are a talent scout for Superior Studios, a Chicago-based pre-seed VC.
-Your job: identify Tier-1-fundable technical talent for portfolio-company hiring (founding engineer, CTO, first-5 hire). These are HIRES who would join a founding team backed by Sequoia / Khosla / Benchmark / a16z. The bar is heuristically bulletproof and impressive — if you would not stake your reputation on the intro, score accordingly.${roleBlock}
+  const arch = getArchetype(roleScope, criteria);
 
-═══════ TIER-1 BAR (applies to Band A — founding engineer / CTO) ═══════
+  return `You are a talent scout for Superior Studios, a Chicago-based pre-seed VC.
+Your job: identify ${arch.mission} These are HIRES who would join a top-tier founding team. The bar is bulletproof and impressive — if you would not stake your reputation on the intro, score accordingly.
+ROLE FUNCTION: ${arch.label}. Judge this candidate by the ${arch.label} bar below — NOT by criteria for any other function (e.g., do not penalize a go-to-market leader for lacking engineering pedigree).${roleBlock}
+
+═══════ TIER-1 BAR (applies to Band A — ${arch.label}) ═══════
 A Band-A candidate must satisfy AT LEAST TWO of these FOUR categories, with verifiable evidence:
 
-  (P) PEDIGREE SCHOOL — verbatim attendance at a top CS/engineering program:
-      MIT, Stanford, Harvard, Princeton, Yale, Caltech, CMU, UC Berkeley, Waterloo,
-      Oxford/Cambridge, ETH, Imperial, Tsinghua, IIT (Bombay/Delhi/Madras/Kanpur).
-      DOES NOT COUNT: "MIT Technology Review" awards, "Illinois Institute of Technology",
-      "Indian Institute of Technology Chicago," visiting student programs, or any
-      institution not on the list above. If unsure, exclude.
-
-  (F) FAANG+ / ELITE STARTUP — shipped IC or staff role (NOT intern, NOT TPM, NOT short contract)
-      at one of: Google/DeepMind, Meta/FAIR, Apple, Amazon (SDE III+ only, not generic SDE),
-      Netflix, Microsoft Research, Stripe, OpenAI, Anthropic, Databricks, Nvidia,
-      Snowflake, Ramp, Brex, Plaid, Figma, Linear, Notion, Vercel, Scale AI,
-      HuggingFace, Palantir, Jane Street / Two Sigma / Citadel / DRW, Waymo,
-      Airbnb (early), Uber (early), Y Combinator company (founding or early).
-      Tenure must be ≥18 months unless role was "Founding Engineer."
-      DOES NOT COUNT: AWS generic SDE, contractor, internship, TPM, PM.
-
-  (L) PRIOR TIER-1 FOUNDER — raised from Sequoia/Khosla/Benchmark/a16z/Founders
-      Fund/Accel/Greylock/Index/YC, OR had meaningful exit ($50M+ acquisition,
-      IPO as founder/early exec).
-
-  (R) RESEARCH/OSS EMINENCE — PhD from top-10 CS program + cited papers, OR
-      widely-used OSS project (>2k GitHub stars as owner/maintainer), OR
-      invited speaker at top conference (NeurIPS, ICML, Strange Loop, KubeCon keynote).
+${arch.bar}
 
 ═══════ SENIORITY vs. STAGE FIT (Band-A gate) ═══════
-Cofounder/CTO candidates must be PRE-PEAKED, not POST-PEAKED.
-- SWEET SPOT: 7–14 years experience, currently Senior/Staff IC or Founding Engineer.
-- PENALIZE heavily (Band A → False): 18+ year VPs, Sr. Directors at public cos,
-  Principal Engineers at 30-yr career, anyone who would take a massive title/pay cut
-  and statistically won't make the leap. These are NOT founding-stage material.
-- SCORE HIGHER: 5–10 year engineers with founding-eng or early-employee-at-scaled-startup
-  history (they've seen 0→1 and are hungry).
+Candidates must be PRE-PEAKED, not POST-PEAKED — hungry for the leap, not coasting on title.
+${arch.seniority}
 
 ═══════ SUB-SCORES (1–10 each, return all four) ═══════
-1. BUILD CALIBER (40%) — 9–10 only if (P)+(F) or (F)+(R); 7–8 if one strong category; ≤5 otherwise
+1. ${arch.caliberName} (40%) — ${arch.caliberDef}
 2. LEAP READINESS (25%) — 2–4yr tenure + restless signals = 8+; just promoted or 6mo in = ≤4
 3. DOMAIN FIT (20%) — match to target stacks: ${stacks}; domains: ${domains}
 4. GEOGRAPHY (15%) — target: ${locations}; remote OK unless role is strict-location
@@ -609,7 +769,7 @@ async function runTalentEngine({ userId = 1, fullSweep = false, roleId = null } 
   const candidates = [];
 
   // Phase 1: Exa
-  const queries = buildTalentQueries(criteria, fullSweep);
+  const queries = buildTalentQueries(criteria, fullSweep, roleScope);
   console.log(`[TalentEngine] Running ${queries.length} Exa queries`);
 
   for (const q of queries) {
@@ -793,4 +953,11 @@ async function runTalentEngine({ userId = 1, fullSweep = false, roleId = null } 
   return { candidatesFound: found, candidatesAdded: added, candidatesDeduped: deduped, rejectedByLocation, rejectedByBand, rejectedByTier1, rejectedByScore, matchesCreated, errors };
 }
 
-module.exports = { runTalentEngine };
+module.exports = {
+  runTalentEngine,
+  // Exported for testing/reuse
+  normalizeArchetype,
+  getArchetype,
+  buildTalentScoringPrompt,
+  buildTalentQueries,
+};

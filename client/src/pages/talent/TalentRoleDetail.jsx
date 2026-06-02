@@ -103,7 +103,20 @@ export default function TalentRoleDetail() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div className="card p-3">
+          <div className="text-[10px] uppercase text-gray-500 font-medium">Function</div>
+          <select value={role.role_function || 'engineering'} onChange={e => patch({ role_function: e.target.value })} className="select w-full mt-1">
+            <option value="engineering">Engineering</option>
+            <option value="gtm">Go-to-Market (Sales/Mktg/Growth)</option>
+            <option value="product">Product</option>
+            <option value="design">Design</option>
+            <option value="operations">Operations / Chief of Staff</option>
+            <option value="finance">Finance</option>
+            <option value="generalist">Generalist / Business</option>
+          </select>
+          <div className="text-[10px] text-gray-400 mt-1">Sets the caliber rubric &amp; sourcing pool</div>
+        </div>
         <div className="card p-3">
           <div className="text-[10px] uppercase text-gray-500 font-medium">Band</div>
           <select value={role.band || 'A'} onChange={e => patch({ band: e.target.value })} className="select w-full mt-1">

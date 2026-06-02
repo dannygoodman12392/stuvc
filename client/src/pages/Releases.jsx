@@ -6,6 +6,19 @@
 
 const RELEASES = [
   {
+    version: 'v2.3.0',
+    date: 'June 2, 2026',
+    time: '4:15 PM CT',
+    title: 'Role-archetype scoring for Talent',
+    highlights: [
+      {
+        product: 'Talent',
+        change: 'Each role now has a Function (Engineering, Go-to-Market, Product, Design, Operations, Finance, Generalist). The candidate caliber rubric AND the sourcing queries now adapt to it — a CMO search is judged on scaled revenue, named campaigns, and 0→1 GTM builds, and sources from elite go-to-market orgs, not founding-engineer signals.',
+        benefit: 'Searches for non-engineering roles finally surface and rank the right people. Set the Function on a role, then Source / Rescore to use the matching rubric.',
+      },
+    ],
+  },
+  {
     version: 'v2.2.0',
     date: 'June 2, 2026',
     time: '2:30 PM CT',

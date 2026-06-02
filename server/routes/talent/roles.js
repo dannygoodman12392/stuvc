@@ -3,7 +3,7 @@ const router = express.Router();
 const db = require('../../db');
 
 const SCALAR_FIELDS = [
-  'portfolio_company_id', 'title', 'band',
+  'portfolio_company_id', 'title', 'band', 'role_function',
   'min_years_experience', 'max_years_experience',
   'comp_low', 'comp_high', 'equity_low', 'equity_high',
   'remote_ok', 'location_pref', 'priority', 'status',

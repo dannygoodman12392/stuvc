@@ -773,6 +773,10 @@ db.exec(`CREATE INDEX IF NOT EXISTS idx_tm_user ON talent_matches(user_id, is_de
 db.exec(`CREATE INDEX IF NOT EXISTS idx_tm_role ON talent_matches(role_id, match_score DESC);`);
 db.exec(`CREATE INDEX IF NOT EXISTS idx_tm_candidate ON talent_matches(candidate_id);`);
 
+// Role function/archetype — drives which caliber rubric and sourcing queries apply.
+// Defaults to 'engineering' so existing roles keep their current (eng-centric) behavior.
+addColumn('talent_roles', 'role_function', "TEXT DEFAULT 'engineering'");
+
 // Talent criteria (sourcing config — global or per-portfolio-co)
 db.exec(`
   CREATE TABLE IF NOT EXISTS talent_criteria (
