@@ -6,6 +6,19 @@
 
 const RELEASES = [
   {
+    version: 'v2.6.3',
+    date: 'June 2, 2026',
+    time: '11:55 PM CT',
+    title: 'Sourcing: a Chicago/Illinois tie is now mandatory',
+    highlights: [
+      {
+        product: 'Sourcing',
+        change: 'Closed a loophole where founders with no local tie could slip through. A verified Chicago/Illinois connection — lives/works here, went to school here, from here, or worked at a Chicago company — is now required for every founder, and the existing inbox was cleaned of untied founders.',
+        benefit: 'Every founder in your inbox has a real reason to be in Chicago/Illinois.',
+      },
+    ],
+  },
+  {
     version: 'v2.6.2',
     date: 'June 2, 2026',
     time: '11:20 PM CT',

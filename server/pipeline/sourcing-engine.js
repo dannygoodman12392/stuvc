@@ -527,6 +527,9 @@ function founderGate(text, headline) {
   return { ok: true, reason: null };
 }
 
+// Tie types that count as a verified Chicago/IL connection.
+const VALID_TIE_TYPES = ['current', 'working', 'school_alumni', 'hometown', 'chicago_company'];
+
 // ── Name normalization for dedup ──
 function normName(s) {
   return String(s || '')
@@ -1279,6 +1282,15 @@ async function runSourcingEngine({ fullSweep = false, userId = 1 } = {}) {
 
   // Load user-specific criteria and API keys
   const criteria = loadUserCriteria(userId);
+  // A Chicago/IL tie is non-negotiable for this fund. If the user hasn't set target
+  // locations/schools, default to Chicago/IL so the tie check NEVER falls back to
+  // "everyone passes" (which was letting in talented founders with no local tie).
+  if (!criteria.locations || criteria.locations.length === 0) {
+    criteria.locations = ['chicago', 'illinois', 'evanston', 'naperville', 'oak park', 'champaign', 'urbana'];
+  }
+  if (!criteria.schools || criteria.schools.length === 0) {
+    criteria.schools = ILLINOIS_SCHOOLS.slice();
+  }
   const apiKeys = loadUserApiKeys(userId);
 
   // Require at minimum an Exa key to run sourcing
@@ -1441,6 +1453,15 @@ async function runSourcingEngine({ fullSweep = false, userId = 1 } = {}) {
   `);
 
   for (const candidate of uniqueCandidates) {
+    // TIE GATE: a verified Chicago/IL tie is mandatory. Intake verification sets a
+    // tie type (current/working/school_alumni/hometown/chicago_company); anything
+    // else (e.g. 'broad') means no real local tie — drop it.
+    if (!VALID_TIE_TYPES.includes(candidate.location_type)) {
+      console.log(`[Sourcing] 🚫 ${candidate.name} — no verified Chicago/IL tie (${candidate.location_type || 'none'})`);
+      totalFiltered++;
+      continue;
+    }
+
     // Founder gate: only real founders/builders — drop investors, fund/accelerator
     // staff, recruiters, and non-founder operators before spending a Claude call.
     const gate = founderGate(candidate.text, candidate.headline);
@@ -1606,4 +1627,5 @@ module.exports = {
   founderGate,
   normName,
   linkedinSlug,
+  VALID_TIE_TYPES,
 };
