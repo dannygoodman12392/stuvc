@@ -6,6 +6,19 @@
 
 const RELEASES = [
   {
+    version: 'v2.7.1',
+    date: 'June 3, 2026',
+    time: '1:15 AM CT',
+    title: 'Talent: role function read from the title/JD, like a real recruiter',
+    highlights: [
+      {
+        product: 'Talent',
+        change: 'Fixed the CMO-still-showing-engineers bug at the root. The matcher was reading a role\'s function from a config field that defaulted to "engineering" for older roles. Now Stu reads the function straight from the role title and job description — "CMO" is go-to-market, "Founding Engineer" is engineering — so matching and sourcing follow the actual role, not a stale setting. Existing roles were re-typed and mismatched matches cleared.',
+        benefit: 'A role you create just works: name it CMO and it sources and matches go-to-market people, no setup. After this, "Source for this role" on the CMO will pull real marketing candidates.',
+      },
+    ],
+  },
+  {
     version: 'v2.7.0',
     date: 'June 2, 2026',
     time: '12:40 AM CT',

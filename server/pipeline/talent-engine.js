@@ -83,15 +83,16 @@ function loadUserApiKeys(userId) {
 function loadRoleScope(userId, roleId) {
   if (!roleId) return null;
   const role = db.prepare(
-    'SELECT id, title, band, role_function, location_pref, remote_ok, stack_requirements, domain_requirements, must_haves, nice_to_haves, portfolio_company_id FROM talent_roles WHERE id = ? AND user_id = ? AND is_deleted = 0'
+    'SELECT id, title, band, role_function, jd_content, location_pref, remote_ok, stack_requirements, domain_requirements, must_haves, nice_to_haves, portfolio_company_id FROM talent_roles WHERE id = ? AND user_id = ? AND is_deleted = 0'
   ).get(roleId, userId);
   if (!role) return null;
   const p = (v) => { try { return JSON.parse(v); } catch { return []; } };
+  const { resolveRoleFunction } = require('./match-engine');
   return {
     id: role.id,
     title: role.title,
     band: role.band || 'A',
-    function: normalizeArchetype(role.role_function),
+    function: resolveRoleFunction(role),
     location_pref: role.location_pref || null,
     remote_ok: !!role.remote_ok,
     stacks: p(role.stack_requirements),

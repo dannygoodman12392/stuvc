@@ -43,11 +43,36 @@ function inferCandidateFunction(c) {
   return 'generalist';
 }
 
+// Infer a function from free text (title or JD). Returns null when there's no signal,
+// so callers can fall back. A platform partner reads "CMO" and knows it's marketing —
+// the TITLE is the strongest signal, not a config field.
+function inferFunctionFromText(text) {
+  const s = String(text || '').toLowerCase();
+  if (/\b(cmo|chief marketing|vp marketing|head of marketing|marketing lead|growth|demand gen|sales|cro|chief revenue|account executive|\bae\b|gtm|go.to.market|brand|partnerships)\b/.test(s)) return 'gtm';
+  if (/\b(cpo|chief product|head of product|product manager|product lead|group pm|\bpm\b)\b/.test(s)) return 'product';
+  if (/\b(head of design|design lead|product designer|\bux\b|\bui\b|brand designer|creative director)\b/.test(s)) return 'design';
+  if (/\b(cfo|chief financial|head of finance|vp finance|controller|fp&a|accounting)\b/.test(s)) return 'finance';
+  if (/\b(coo|chief operating|chief of staff|head of operations|bizops|business operations)\b/.test(s)) return 'operations';
+  if (/\b(cto|chief technology|engineer|engineering|developer|software|founding engineer|\bml\b|machine learning|data scientist|devops|\bsre\b|architect)\b/.test(s)) return 'engineering';
+  if (/\b(general manager|business lead|first business hire)\b/.test(s)) return 'generalist';
+  return null;
+}
+
+// The TRUE function of a role: title first, then JD, then an explicitly-chosen field,
+// then the (default) field. This way a "CMO" role is GTM even if its function field
+// was never set off the 'engineering' default.
+function resolveRoleFunction(role) {
+  return inferFunctionFromText(role.title)
+    || inferFunctionFromText(role.jd_content)
+    || ((role.role_function && role.role_function !== 'engineering') ? normalizeFn(role.role_function) : null)
+    || normalizeFn(role.role_function);
+}
+
 // The gate: a role's function must match the candidate's. A 'generalist' ROLE matches
 // anyone; a specialized role only matches candidates of that same function. This is what
 // stops engineers from ever appearing under a CMO/GTM search.
 function functionFits(candidate, role) {
-  const roleFn = normalizeFn(role.role_function);
+  const roleFn = resolveRoleFunction(role);
   if (roleFn === 'generalist') return true;
   const candFn = candidate.role_function || inferCandidateFunction(candidate);
   return candFn === roleFn;
@@ -223,4 +248,4 @@ async function runMatchEngine({ userId = 1, roleId = null, candidateId = null, o
   return { matches_created: created, pairs_evaluated: evaluated };
 }
 
-module.exports = { runMatchEngine, heuristicMatch, inferCandidateFunction, normalizeFn, functionFits };
+module.exports = { runMatchEngine, heuristicMatch, inferCandidateFunction, normalizeFn, functionFits, resolveRoleFunction, inferFunctionFromText };

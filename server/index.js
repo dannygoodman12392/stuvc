@@ -84,6 +84,19 @@ seedIfEmpty();
       }
     }
 
+    // One-time talent role cleanup — derive role function from title/JD (e.g. CMO → gtm)
+    // and purge matches that don't fit. Fixes roles stuck on the 'engineering' default.
+    const talentRolesFlag = db.prepare("SELECT * FROM migration_flags WHERE key = 'talent_roles_cleanup_v1'").get();
+    if (!talentRolesFlag) {
+      try {
+        console.log('[Migration] Resolving role functions from titles/JDs + clearing mismatched matches...');
+        require('./migrations/cleanup-talent-roles')();
+        db.prepare("INSERT INTO migration_flags (key) VALUES ('talent_roles_cleanup_v1')").run();
+      } catch (err) {
+        console.error('[Migration] Talent roles cleanup error:', err.message);
+      }
+    }
+
     // One-time sourcing tie cleanup — drop inbox founders with no verified Chicago/IL tie.
     const tieFlag = db.prepare("SELECT * FROM migration_flags WHERE key = 'sourcing_tie_cleanup_v1'").get();
     if (!tieFlag) {
@@ -134,7 +147,7 @@ app.use('/api/ai', rateLimit({ windowMs: 15 * 60 * 1000, max: 50, standardHeader
 app.use('/api/auth/register', rateLimit({ windowMs: 15 * 60 * 1000, max: 5, standardHeaders: true, legacyHeaders: false }));
 
 // Public routes
-app.get('/api/health', (req, res) => res.json({ status: 'ok', app: 'Stu', version: '2.7.0' }));
+app.get('/api/health', (req, res) => res.json({ status: 'ok', app: 'Stu', version: '2.7.1' }));
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/payments', payments.router);
 
