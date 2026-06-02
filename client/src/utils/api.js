@@ -1,5 +1,13 @@
 const API_BASE = '/api';
 
+// Public health/version check (no auth) — used to detect new deploys.
+export function fetchAppVersion() {
+  return fetch(`${API_BASE}/health`, { cache: 'no-store' })
+    .then(r => r.json())
+    .then(d => d.version)
+    .catch(() => null);
+}
+
 function getToken() {
   return localStorage.getItem('stu_token');
 }

@@ -4,7 +4,7 @@ import { useAuth } from '../contexts/AuthContext';
 import DannyAI from './DannyAI';
 import SearchPalette from './SearchPalette';
 import StuLogo from './StuLogo';
-import { api } from '../utils/api';
+import { api, fetchAppVersion } from '../utils/api';
 
 const navConfig = [
   { to: '/ask', label: 'Ask Stu', accent: true },
@@ -27,6 +27,26 @@ export default function Layout({ children }) {
   const [aiOpen, setAiOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [founderData, setFounderData] = useState(null);
+  const [updateAvailable, setUpdateAvailable] = useState(false);
+
+  // Detect new deploys: capture the version this tab loaded with, then re-check on
+  // an interval and whenever the tab regains focus. If the server version changed,
+  // a new build shipped — prompt a refresh so the user never sits on stale UI.
+  useEffect(() => {
+    let loadedVersion = null;
+    let cancelled = false;
+    async function check() {
+      const v = await fetchAppVersion();
+      if (cancelled || !v) return;
+      if (loadedVersion == null) { loadedVersion = v; return; }
+      if (v !== loadedVersion) setUpdateAvailable(true);
+    }
+    check();
+    const interval = setInterval(check, 60000);
+    const onFocus = () => check();
+    window.addEventListener('focus', onFocus);
+    return () => { cancelled = true; clearInterval(interval); window.removeEventListener('focus', onFocus); };
+  }, []);
 
   // Detect founder detail page and load context for AI sidebar
   const founderMatch = useMatch('/founders/:id');
@@ -54,6 +74,14 @@ export default function Layout({ children }) {
 
   return (
     <div className="flex h-screen overflow-hidden bg-gray-50">
+      {updateAvailable && (
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 bg-gray-900 text-white text-sm px-4 py-2.5 rounded-full shadow-lg">
+          <span>A new version of Stu is available.</span>
+          <button onClick={() => window.location.reload()} className="font-semibold underline underline-offset-2 hover:text-gray-200">
+            Refresh
+          </button>
+        </div>
+      )}
       {mobileOpen && (
         <div className="fixed inset-0 z-30 bg-black/10 md:hidden" onClick={() => setMobileOpen(false)} />
       )}
