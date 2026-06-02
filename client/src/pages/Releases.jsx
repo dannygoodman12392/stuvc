@@ -6,6 +6,19 @@
 
 const RELEASES = [
   {
+    version: 'v2.4.4',
+    date: 'June 2, 2026',
+    time: '8:45 PM CT',
+    title: 'Daily Brief: reliable Gmail label sync',
+    highlights: [
+      {
+        product: 'Platform',
+        change: 'Fixed newsletter sync failing to open the Gmail label: Stu now lists your real labels and matches yours flexibly (case/nesting differences), and if it still can\'t find it, tells you exactly which labels it can see. Sync now pulls the newest tagged issues whether or not they\'re already read, and the daily auto-refresh (6 AM CT) is wired up correctly.',
+        benefit: 'Hitting Sync now actually pulls your tagged newsletters, and the brief fills in each morning on its own.',
+      },
+    ],
+  },
+  {
     version: 'v2.4.3',
     date: 'June 2, 2026',
     time: '8:10 PM CT',

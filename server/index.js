@@ -109,7 +109,7 @@ app.use('/api/ai', rateLimit({ windowMs: 15 * 60 * 1000, max: 50, standardHeader
 app.use('/api/auth/register', rateLimit({ windowMs: 15 * 60 * 1000, max: 5, standardHeaders: true, legacyHeaders: false }));
 
 // Public routes
-app.get('/api/health', (req, res) => res.json({ status: 'ok', app: 'Stu', version: '2.4.3' }));
+app.get('/api/health', (req, res) => res.json({ status: 'ok', app: 'Stu', version: '2.4.4' }));
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/payments', payments.router);
 
@@ -142,6 +142,29 @@ app.get('*', (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`Stu running on http://localhost:${PORT}`);
+
+  // Daily newsletter brief — scheduled independently of PIPELINE_ENABLED so the
+  // brief is ready each morning for anyone who has connected their Gmail label.
+  {
+    const cron = require('node-cron');
+    cron.schedule('0 6 * * *', async () => {
+      console.log('[Cron] Starting daily newsletter brief...');
+      try {
+        const dbi = require('./db');
+        const { fetchAndProcess } = require('./services/newsletter');
+        const users = dbi.prepare(
+          "SELECT DISTINCT user_id FROM user_settings WHERE setting_key = 'newsletter_gmail_app_password' AND setting_value IS NOT NULL AND setting_value != '' AND setting_value != '\"\"'"
+        ).all();
+        for (const { user_id } of users) {
+          try {
+            const r = await fetchAndProcess(user_id, { limit: 40 });
+            console.log(`[Cron][Newsletter] user ${user_id}:`, r.ok ? `${r.added} added` : r.error);
+          } catch (e) { console.error(`[Cron][Newsletter] user ${user_id} failed:`, e.message); }
+        }
+      } catch (e) { console.error('[Cron][Newsletter] run failed:', e.message); }
+    }, { timezone: 'America/Chicago' });
+    console.log('Daily newsletter brief scheduled (6:00 AM CT)');
+  }
 
   // Daily sourcing cron — runs at 6:00 AM CT (12:00 UTC in CDT / 12:00 UTC in CST)
   if (process.env.PIPELINE_ENABLED === 'true') {

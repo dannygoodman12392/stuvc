@@ -190,12 +190,35 @@ async function fetchAndProcess(userId, { limit = 30 } = {}) {
     return { ok: false, error: `Could not connect to Gmail (check address/App Password): ${e.message}` };
   }
 
+  // Resolve the label to an actual IMAP mailbox path. Gmail nests labels with a
+  // server-specific delimiter and is case/format sensitive, so we list the real
+  // mailboxes and match flexibly rather than trusting the raw string.
+  let mailboxes = [];
+  try { mailboxes = await client.list(); } catch { mailboxes = []; }
+  const want = cfg.label.toLowerCase().trim();
+  const delim = (mailboxes.find(m => m.delimiter) || {}).delimiter || '/';
+  const wantAlt = want.replace(/[\/.]/g, delim).toLowerCase();
+  const lastSeg = want.split(/[\/.]/).pop();
+  const norm = (s) => String(s || '').toLowerCase().replace(/[\/.]/g, '/');
+  const match =
+    mailboxes.find(m => norm(m.path) === norm(want)) ||
+    mailboxes.find(m => (m.path || '').toLowerCase() === wantAlt) ||
+    mailboxes.find(m => (m.name || '').toLowerCase() === lastSeg);
+  const targetPath = match ? match.path : cfg.label;
+
   let lock;
   try {
-    lock = await client.getMailboxLock(cfg.label);
+    lock = await client.getMailboxLock(targetPath);
   } catch (e) {
+    const visible = mailboxes
+      .map(m => m.path)
+      .filter(p => p && !/^\[Gmail\]/i.test(p))
+      .slice(0, 40);
     try { await client.logout(); } catch {}
-    return { ok: false, error: `Could not open label "${cfg.label}" (create it in Gmail and tag a newsletter first): ${e.message}` };
+    return {
+      ok: false,
+      error: `Couldn't open the "${cfg.label}" label. Labels Stu can see: ${visible.join(', ') || '(none — enable IMAP in Gmail settings, and turn on "Show in IMAP" for the label)'}. Check the exact name/spelling in Settings.`,
+    };
   }
 
   const insert = db.prepare(`
@@ -205,9 +228,14 @@ async function fetchAndProcess(userId, { limit = 30 } = {}) {
   `);
 
   try {
-    // Unseen messages in the label; cap to `limit` (process newest).
+    // Pull the NEWEST messages in the label regardless of read/unread — on a first
+    // sync the newsletters you tagged are usually already-read. Dedupe by Message-ID
+    // (below) keeps re-syncs from reprocessing the same issues.
     let uids = [];
-    try { uids = await client.search({ seen: false }, { uid: true }); } catch { uids = []; }
+    try { uids = await client.search({ all: true }, { uid: true }); } catch { uids = []; }
+    if (!Array.isArray(uids) || uids.length === 0) {
+      try { uids = await client.search({ seen: false }, { uid: true }); } catch { uids = []; }
+    }
     if (!Array.isArray(uids)) uids = [];
     const targetUids = uids.slice(-limit);
 
