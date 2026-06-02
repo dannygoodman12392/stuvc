@@ -15,6 +15,44 @@ function parseJSON(s, fallback = []) {
   try { return JSON.parse(s); } catch { return fallback; }
 }
 
+// Self-contained archetype normalizer (mirrors talent-engine; kept local to avoid a
+// circular require). Maps a role's function string to a canonical archetype.
+function normalizeFn(v) {
+  const s = String(v || '').toLowerCase();
+  if (/gtm|sales|marketing|growth|revenue|cmo|cro|demand/.test(s)) return 'gtm';
+  if (/product|cpo|\bpm\b/.test(s)) return 'product';
+  if (/design|ux|ui|brand/.test(s)) return 'design';
+  if (/ops|operation|bizops|chief of staff|coo/.test(s)) return 'operations';
+  if (/finance|fp&a|cfo|account/.test(s)) return 'finance';
+  if (/general|business/.test(s)) return 'generalist';
+  if (/eng|technical|software|cto|developer|\bml\b|\bai\b|data/.test(s)) return 'engineering';
+  return 'engineering';
+}
+
+// Infer a candidate's function from their role/headline/signals. Unknown → 'generalist'
+// (which only matches generalist roles, so unknowns never flood a specialized search).
+function inferCandidateFunction(c) {
+  const text = [c.current_role, c.headline, c.one_liner].filter(Boolean).join(' ').toLowerCase();
+  const hasStack = (parseJSON(c.tech_stack) || []).length > 0;
+  if (/\b(sales|marketing|growth|cmo|cro|revenue|demand gen|account executive|\bae\b|\bbd\b|biz dev|gtm)\b/.test(text)) return 'gtm';
+  if (/\b(product manager|head of product|cpo|group pm|\bpm\b|product lead)\b/.test(text)) return 'product';
+  if (/\b(designer|design lead|head of design|ux|ui|brand)\b/.test(text)) return 'design';
+  if (/\b(cfo|finance|fp&a|controller|accounting|treasur)\b/.test(text)) return 'finance';
+  if (/\b(chief of staff|operations|bizops|\bcoo\b|business operations)\b/.test(text)) return 'operations';
+  if (/\b(engineer|developer|software|cto|\bml\b|machine learning|\bai\b|data scientist|programmer|founding engineer|swe)\b/.test(text) || hasStack) return 'engineering';
+  return 'generalist';
+}
+
+// The gate: a role's function must match the candidate's. A 'generalist' ROLE matches
+// anyone; a specialized role only matches candidates of that same function. This is what
+// stops engineers from ever appearing under a CMO/GTM search.
+function functionFits(candidate, role) {
+  const roleFn = normalizeFn(role.role_function);
+  if (roleFn === 'generalist') return true;
+  const candFn = candidate.role_function || inferCandidateFunction(candidate);
+  return candFn === roleFn;
+}
+
 // Heuristic scoring — fast, deterministic, explainable
 function heuristicMatch(candidate, role) {
   const cStack = (parseJSON(candidate.tech_stack) || []).map(s => s.toLowerCase());
@@ -159,6 +197,11 @@ async function runMatchEngine({ userId = 1, roleId = null, candidateId = null, o
   for (const cand of candidates) {
     for (const role of roles) {
       evaluated++;
+
+      // FUNCTION GATE — never pair a candidate with a role outside their function
+      // (e.g. an engineer with a CMO role). This runs before scoring.
+      if (!functionFits(cand, role)) continue;
+
       const { match_score, match_rationale, strengths, gaps } = heuristicMatch(cand, role);
 
       // Only persist matches above threshold (avoid noise)
@@ -180,4 +223,4 @@ async function runMatchEngine({ userId = 1, roleId = null, candidateId = null, o
   return { matches_created: created, pairs_evaluated: evaluated };
 }
 
-module.exports = { runMatchEngine, heuristicMatch };
+module.exports = { runMatchEngine, heuristicMatch, inferCandidateFunction, normalizeFn, functionFits };

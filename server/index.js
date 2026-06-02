@@ -70,6 +70,19 @@ seedIfEmpty();
         console.error('[Migration] Sourcing cleanup error:', err.message);
       }
     }
+
+    // One-time talent function cleanup — type candidates + remove function-mismatched
+    // matches (e.g. engineers under a CMO role).
+    const talentFnFlag = db.prepare("SELECT * FROM migration_flags WHERE key = 'talent_function_cleanup_v1'").get();
+    if (!talentFnFlag) {
+      try {
+        console.log('[Migration] Typing candidates by function + clearing mismatched matches...');
+        require('./migrations/cleanup-talent-functions')();
+        db.prepare("INSERT INTO migration_flags (key) VALUES ('talent_function_cleanup_v1')").run();
+      } catch (err) {
+        console.error('[Migration] Talent function cleanup error:', err.message);
+      }
+    }
   } catch (err) {
     console.error('[Migration] Airtable import error:', err.message);
   }
@@ -109,7 +122,7 @@ app.use('/api/ai', rateLimit({ windowMs: 15 * 60 * 1000, max: 50, standardHeader
 app.use('/api/auth/register', rateLimit({ windowMs: 15 * 60 * 1000, max: 5, standardHeaders: true, legacyHeaders: false }));
 
 // Public routes
-app.get('/api/health', (req, res) => res.json({ status: 'ok', app: 'Stu', version: '2.6.1' }));
+app.get('/api/health', (req, res) => res.json({ status: 'ok', app: 'Stu', version: '2.6.2' }));
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/payments', payments.router);
 

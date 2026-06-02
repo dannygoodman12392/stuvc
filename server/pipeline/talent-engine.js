@@ -832,6 +832,7 @@ async function runTalentEngine({ userId = 1, fullSweep = false, roleId = null } 
     } catch {}
   }
   const prompt = buildTalentScoringPrompt(criteria, roleScope);
+  const { inferCandidateFunction } = require('./match-engine');
   const insert = db.prepare(`
     INSERT INTO talent_candidates (
       user_id, name, headline, linkedin_url, github_url, email,
@@ -839,8 +840,8 @@ async function runTalentEngine({ userId = 1, fullSweep = false, roleId = null } 
       location_city, tech_stack, pedigree_signals, builder_signals, leap_signals,
       band_fit, score_build_caliber, score_leap_readiness, score_domain_fit,
       score_geography, overall_score, score_rationale, one_liner,
-      source, search_query, raw_data
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      source, search_query, raw_data, role_function
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   let rejectedByLocation = 0;
@@ -907,6 +908,13 @@ async function runTalentEngine({ userId = 1, fullSweep = false, roleId = null } 
     const leap = mergeArr(localSignals.leap, score.leap_signals);
     const stack = mergeArr(localSignals.stack, score.tech_stack);
 
+    // Type the candidate by function. When sourcing is scoped to a role, default to
+    // that role's function (the queries targeted it); otherwise infer from the profile.
+    const candFn = inferCandidateFunction({
+      current_role: score.current_role, headline: c.headline, one_liner: score.one_liner, tech_stack: JSON.stringify(stack),
+    });
+    const roleFunction = (roleScope && candFn === 'generalist') ? roleScope.function : candFn;
+
     try {
       insert.run(
         userId, c.name, c.headline || null, c.linkedin_url || null, c.github_url || null, c.email || null,
@@ -917,7 +925,8 @@ async function runTalentEngine({ userId = 1, fullSweep = false, roleId = null } 
         score.score_build_caliber, score.score_leap_readiness, score.score_domain_fit,
         score.score_geography, score.overall_score, score.score_rationale,
         score.one_liner, c.source, c.search_query,
-        JSON.stringify({ headline: c.headline, text: (c.text || '').slice(0, 2000) })
+        JSON.stringify({ headline: c.headline, text: (c.text || '').slice(0, 2000) }),
+        roleFunction
       );
       added++;
       console.log(`[TalentEngine] ${score.overall_score >= 8 ? '🔥' : score.overall_score >= 6 ? '✅' : '📝'} ${c.name} → ${score.overall_score}/10 [bands: ${(score.band_fit || []).join(',')}]`);

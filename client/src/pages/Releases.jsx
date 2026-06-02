@@ -6,6 +6,19 @@
 
 const RELEASES = [
   {
+    version: 'v2.6.2',
+    date: 'June 2, 2026',
+    time: '11:20 PM CT',
+    title: 'Talent: candidates matched to the right role type',
+    highlights: [
+      {
+        product: 'Talent',
+        change: 'Fixed the core matching flaw: the matcher was function-blind, so engineers were scoring as matches for a CMO role. Every candidate is now typed by function (engineering / go-to-market / product / design / ops / finance), and a hard gate ensures a role only matches candidates of the same function. Existing mismatched matches were cleared.',
+        benefit: 'A CMO/GTM search shows go-to-market people only — never engineers. Set a role\'s Function, then "Source for this role" to fill it with the right candidates.',
+      },
+    ],
+  },
+  {
     version: 'v2.6.0',
     date: 'June 2, 2026',
     time: '10:30 PM CT',

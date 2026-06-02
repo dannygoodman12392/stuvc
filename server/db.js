@@ -776,6 +776,8 @@ db.exec(`CREATE INDEX IF NOT EXISTS idx_tm_candidate ON talent_matches(candidate
 // Role function/archetype — drives which caliber rubric and sourcing queries apply.
 // Defaults to 'engineering' so existing roles keep their current (eng-centric) behavior.
 addColumn('talent_roles', 'role_function', "TEXT DEFAULT 'engineering'");
+// Candidate function/archetype — so the matcher never pairs an engineer with a GTM role.
+addColumn('talent_candidates', 'role_function', 'TEXT');
 
 // ── Newsletter / Daily Brief ──
 // One row per extracted newsletter issue. Stu reads a Gmail label over IMAP, extracts
