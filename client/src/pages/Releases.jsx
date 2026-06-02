@@ -6,6 +6,19 @@
 
 const RELEASES = [
   {
+    version: 'v2.4.1',
+    date: 'June 2, 2026',
+    time: '6:45 PM CT',
+    title: 'Sourcing: founders only, no duplicates, re-scored history',
+    highlights: [
+      {
+        product: 'Sourcing',
+        change: 'Added a hard "founder gate" that filters out investors, fund/accelerator staff (e.g. an a16z Speedrun team member), and recruiters — only real founders/builders get through. Tightened deduplication so each person appears once, even when one hit lists a company and another says "stealth." Cohort searches now exclude investor/team language. Ran a one-time cleanup over your existing inbox: dropped non-founders, collapsed duplicates, and re-scored everyone on the new caliber system.',
+        benefit: 'Your inbox is now just the best founders with Chicago/Illinois ties — one clean entry each, graded on the new S/A/B/C caliber scale.',
+      },
+    ],
+  },
+  {
     version: 'v2.4.0',
     date: 'June 2, 2026',
     time: '5:30 PM CT',

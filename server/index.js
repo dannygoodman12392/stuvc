@@ -56,6 +56,18 @@ seedIfEmpty();
       const rescoreV3 = require('./migrations/rescore-rubric-v3');
       rescoreV3().catch(err => console.error('[Rescore-v3] Migration error:', err.message));
     }
+
+    // One-time sourcing inbox cleanup — drop non-founders, dedupe, re-score caliber.
+    const sourcingCleanupFlag = db.prepare("SELECT * FROM migration_flags WHERE key = 'sourcing_cleanup_v1'").get();
+    if (!sourcingCleanupFlag) {
+      try {
+        console.log('[Migration] Cleaning up sourcing inbox (founder gate + dedupe + caliber)...');
+        require('./migrations/cleanup-sourcing-v1')();
+        db.prepare("INSERT INTO migration_flags (key) VALUES ('sourcing_cleanup_v1')").run();
+      } catch (err) {
+        console.error('[Migration] Sourcing cleanup error:', err.message);
+      }
+    }
   } catch (err) {
     console.error('[Migration] Airtable import error:', err.message);
   }
@@ -95,7 +107,7 @@ app.use('/api/ai', rateLimit({ windowMs: 15 * 60 * 1000, max: 50, standardHeader
 app.use('/api/auth/register', rateLimit({ windowMs: 15 * 60 * 1000, max: 5, standardHeaders: true, legacyHeaders: false }));
 
 // Public routes
-app.get('/api/health', (req, res) => res.json({ status: 'ok', app: 'Stu', version: '2.4.0' }));
+app.get('/api/health', (req, res) => res.json({ status: 'ok', app: 'Stu', version: '2.4.1' }));
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/payments', payments.router);
 

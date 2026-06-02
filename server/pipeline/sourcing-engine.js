@@ -421,6 +421,66 @@ function hasDisqualifyingFlag(redFlags = []) {
   );
 }
 
+// ── FOUNDER GATE ──
+// We only want FOUNDERS (current or stealth) with Chicago/IL ties — not investors,
+// fund/accelerator staff, recruiters, or operators-at-a-fund. A profile passes only
+// if it shows a real founder/building signal AND is not primarily an investor-side role.
+// A genuine founder who also angel-invests still passes (founder signal wins).
+const FOUNDER_SIGNAL_RE = new RegExp([
+  '\\b(co-?founder|founder|founding (ceo|cto|engineer))\\b',
+  '\\b(ceo|cto|coo) (of|@|at) (my|our|a|the|\\w)',
+  '\\b(launched|started|founded|co-?founded|created) (a|my|our|the)? ?(company|startup|product|venture|business)\\b',
+  '\\b(in stealth|stealth mode|stealth founder|building something new)\\b',
+  '\\b(sold|exited) (my|our|the|his|her|a) (company|startup|business)\\b',
+  '\\b(serial|repeat|second.time|two.time) (founder|entrepreneur)\\b',
+  "\\bi'?m building\\b|\\bwe'?re building\\b",
+].join('|'), 'i');
+
+// Roles that mark someone as investor/fund/accelerator/recruiter side (not a founder).
+const INVESTOR_ROLE_RE = /\b(general partner|managing partner|venture partner|investment partner|limited partner|\bgp\b|\blp\b|venture capitalist|angel investor|investor|principal|investment (associate|analyst|team)|scout|platform (lead|partner|manager|team|role)|talent (partner|lead|manager|team)|community (manager|lead|builder)|program (manager|director|lead|associate)|head of platform|deal team|portfolio (manager|operations|support))\b/i;
+const FUND_CONTEXT_RE = /\b(a16z|andreessen horowitz|speedrun|sequoia|benchmark|accel|greylock|founders fund|khosla|lightspeed|general catalyst|bessemer|first round|initialized|\bnea\b|index ventures|bain capital|insight partners|\bventures\b|\bcapital\b|\bvc\b|y combinator|techstars)\b/i;
+const RECRUITER_RE = /\b(recruiter|talent acquisition|headhunter|sourcer|staffing|executive search|recruiting)\b/i;
+
+function founderGate(text, headline) {
+  const h = (headline || '').toLowerCase();
+  const t = (text || '').toLowerCase();
+  const full = h + ' ' + t.slice(0, 1500);
+
+  // The HEADLINE is the authoritative identity. A VC tagline like "we back founders
+  // building the future" must not let an investor pass as a founder, so the investor
+  // checks key off the headline and are only waived by a founder signal IN THE HEADLINE.
+  const founderInHeadline = FOUNDER_SIGNAL_RE.test(h);
+
+  if (RECRUITER_RE.test(h)) return { ok: false, reason: 'Recruiter, not a founder' };
+
+  if (!founderInHeadline && INVESTOR_ROLE_RE.test(h) && FUND_CONTEXT_RE.test(full)) {
+    return { ok: false, reason: 'Investor / fund role, not a founder' };
+  }
+  if (!founderInHeadline && /\b(at|@|with)\s+(a16z|andreessen|speedrun|sequoia|benchmark|accel|greylock|founders fund|khosla|y combinator|techstars)\b/i.test(h)) {
+    return { ok: false, reason: 'Works at a fund/accelerator, not a founder' };
+  }
+  // Must show SOME founder/building signal somewhere — we source founders, not operators at large.
+  if (!FOUNDER_SIGNAL_RE.test(full)) {
+    return { ok: false, reason: 'No founder/building signal' };
+  }
+  return { ok: true, reason: null };
+}
+
+// ── Name normalization for dedup ──
+function normName(s) {
+  return String(s || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, '')   // strip punctuation/emoji
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+function linkedinSlug(url) {
+  if (!url) return null;
+  const u = String(url).toLowerCase().split('?')[0].replace(/\/+$/, '');
+  const slug = u.split('/in/')[1];
+  return slug ? slug.split('/')[0] : null;
+}
+
 // ── R6: Stage Pre-filter — body text + seniority + funding patterns ──
 // Returns { disqualified: bool, reason: string | null }
 // Disqualifies candidates whose own company is clearly past pre-seed.
@@ -603,14 +663,17 @@ const DAILY_STEALTH_QUERIES = [
 // caliber — recent top-program cohorts and exited founders — and intersect with the
 // target geography. Precision over recall: every hit already cleared an elite bar.
 // {LOC} is replaced with a parenthesized OR of the user's target locations.
+// Cohort queries draw from elite programs — which also have STAFF (partners, platform,
+// talent, scouts). Exclude investor/team language so we get the founders, not the team.
+const COHORT_NEG = `${NEG} -"partner" -"general partner" -"investor" -"venture" -"platform" -"talent" -"scout" -"portfolio" -"we backed" -"we invest" -"program manager"`;
 const ELITE_COHORT_QUERY_TEMPLATES = [
-  { name: 'Recent YC founder back home', query: `site:linkedin.com/in ("YC W25" OR "YC S25" OR "YC W26" OR "Y Combinator 2025" OR "Y Combinator 2026") "founder" {LOC} ${NEG}` },
-  { name: 'a16z Speedrun founder', query: `site:linkedin.com/in ("a16z Speedrun" OR "Speedrun" "Andreessen") "founder" {LOC} ${NEG}` },
-  { name: 'Thiel Fellow building', query: `site:linkedin.com/in "Thiel Fellow" ("founder" OR "building" OR "stealth") {LOC} ${NEG}` },
-  { name: 'Neo Scholar founder', query: `site:linkedin.com/in ("Neo Scholar" OR "Neo cohort" OR "Neo accelerator") "founder" {LOC} ${NEG}` },
-  { name: 'Exited founder building again', query: `site:linkedin.com/in ("previously exited" OR "acquired by" OR "sold my company" OR "second-time founder") "founder" {LOC} ${NEG}` },
-  { name: 'Ex-frontier-lab founder', query: `site:linkedin.com/in ("ex-OpenAI" OR "ex-Anthropic" OR "ex-DeepMind" OR "formerly OpenAI" OR "formerly Anthropic") ("founder" OR "stealth" OR "building") {LOC} ${NEG}` },
-  { name: 'Forbes 30u30 founder local', query: `site:linkedin.com/in ("Forbes 30 Under 30" OR "30 under 30") "founder" {LOC} ${NEG}` },
+  { name: 'Recent YC founder back home', query: `site:linkedin.com/in ("YC W25" OR "YC S25" OR "YC W26" OR "Y Combinator 2025" OR "Y Combinator 2026") ("founder" OR "co-founder") {LOC} ${COHORT_NEG}` },
+  { name: 'a16z Speedrun founder', query: `site:linkedin.com/in ("a16z Speedrun" OR "Speedrun company") ("founder" OR "co-founder" OR "building") {LOC} ${COHORT_NEG}` },
+  { name: 'Thiel Fellow building', query: `site:linkedin.com/in "Thiel Fellow" ("founder" OR "co-founder" OR "stealth") {LOC} ${COHORT_NEG}` },
+  { name: 'Neo Scholar founder', query: `site:linkedin.com/in ("Neo Scholar" OR "Neo cohort") ("founder" OR "co-founder") {LOC} ${COHORT_NEG}` },
+  { name: 'Exited founder building again', query: `site:linkedin.com/in ("previously exited" OR "sold my company" OR "second-time founder") ("founder" OR "co-founder" OR "building") {LOC} ${COHORT_NEG}` },
+  { name: 'Ex-frontier-lab founder', query: `site:linkedin.com/in ("ex-OpenAI" OR "ex-Anthropic" OR "ex-DeepMind" OR "formerly OpenAI" OR "formerly Anthropic") ("founder" OR "co-founder" OR "stealth" OR "building") {LOC} ${COHORT_NEG}` },
+  { name: 'Forbes 30u30 founder local', query: `site:linkedin.com/in ("Forbes 30 Under 30" OR "30 under 30") ("founder" OR "co-founder") {LOC} ${COHORT_NEG}` },
 ];
 
 function buildEliteCohortQueries(locations) {
@@ -936,12 +999,11 @@ async function scoreFounder(client, founder, scoringPrompt) {
 //   - Dismissed rows with do_not_resurface=0 → allow re-surface (intentional: user
 //     may want second look later when circumstances change).
 function isDuplicate(founder, userId) {
-  if (founder.linkedin_url) {
-    const normalizedUrl = founder.linkedin_url.replace(/\/$/, '').toLowerCase();
-    const slug = normalizedUrl.split('/in/')[1] || normalizedUrl;
-    const existing = db.prepare('SELECT id FROM founders WHERE LOWER(linkedin_url) LIKE ? AND created_by = ? AND is_deleted = 0').get(`%${slug}%`, userId);
+  const slug = linkedinSlug(founder.linkedin_url);
+  if (slug) {
+    const existing = db.prepare('SELECT id FROM founders WHERE LOWER(linkedin_url) LIKE ? AND created_by = ? AND is_deleted = 0').get(`%/in/${slug}%`, userId);
     if (existing) return true;
-    const sourced = db.prepare("SELECT id FROM sourced_founders WHERE LOWER(linkedin_url) LIKE ? AND user_id = ? AND (status != 'dismissed' OR do_not_resurface = 1)").get(`%${slug}%`, userId);
+    const sourced = db.prepare("SELECT id FROM sourced_founders WHERE LOWER(linkedin_url) LIKE ? AND user_id = ? AND (status != 'dismissed' OR do_not_resurface = 1)").get(`%/in/${slug}%`, userId);
     if (sourced) return true;
   }
   if (founder.email) {
@@ -950,11 +1012,17 @@ function isDuplicate(founder, userId) {
     const sourced = db.prepare("SELECT id FROM sourced_founders WHERE email = ? AND user_id = ? AND (status != 'dismissed' OR do_not_resurface = 1)").get(founder.email, userId);
     if (sourced) return true;
   }
-  if (founder.name && founder.company) {
-    const existing = db.prepare('SELECT id FROM founders WHERE LOWER(name) = LOWER(?) AND LOWER(company) = LOWER(?) AND created_by = ? AND is_deleted = 0').get(founder.name, founder.company, userId);
-    if (existing) return true;
-    const sourced = db.prepare("SELECT id FROM sourced_founders WHERE LOWER(name) = LOWER(?) AND LOWER(company) = LOWER(?) AND user_id = ? AND (status != 'dismissed' OR do_not_resurface = 1)").get(founder.name, founder.company, userId);
-    if (sourced) return true;
+  // Name match. Block when company also matches OR either side has no company —
+  // the same person often appears once "stealth" (no company) and once with one.
+  if (founder.name) {
+    const nm = normName(founder.name);
+    if (nm.length >= 4) {
+      const co = (founder.company || '').toLowerCase();
+      const existing = db.prepare('SELECT company FROM founders WHERE LOWER(name) = LOWER(?) AND created_by = ? AND is_deleted = 0').all(founder.name, userId);
+      if (existing.some(r => !r.company || !co || r.company.toLowerCase() === co)) return true;
+      const sourced = db.prepare("SELECT company FROM sourced_founders WHERE LOWER(name) = LOWER(?) AND user_id = ? AND (status != 'dismissed' OR do_not_resurface = 1)").all(founder.name, userId);
+      if (sourced.some(r => !r.company || !co || r.company.toLowerCase() === co)) return true;
+    }
   }
   return false;
 }
@@ -1263,9 +1331,11 @@ async function runSourcingEngine({ fullSweep = false, userId = 1 } = {}) {
   const seen = new Set();
   const uniqueCandidates = [];
   for (const c of exaCandidates) {
-    const key = c.linkedin_url
-      ? c.linkedin_url.replace(/\/$/, '').toLowerCase()
-      : `${c.name}::${c.company || ''}`.toLowerCase();
+    // Prefer the LinkedIn slug as the identity key; fall back to the normalized
+    // NAME ALONE (not name+company) so the same person doesn't slip through twice
+    // when one hit has a company and another doesn't.
+    const slug = linkedinSlug(c.linkedin_url);
+    const key = slug ? `li:${slug}` : `nm:${normName(c.name)}`;
     if (seen.has(key)) {
       totalDeduped++;
       continue;
@@ -1302,6 +1372,15 @@ async function runSourcingEngine({ fullSweep = false, userId = 1 } = {}) {
   `);
 
   for (const candidate of uniqueCandidates) {
+    // Founder gate: only real founders/builders — drop investors, fund/accelerator
+    // staff, recruiters, and non-founder operators before spending a Claude call.
+    const gate = founderGate(candidate.text, candidate.headline);
+    if (!gate.ok) {
+      console.log(`[Sourcing] 🚫 ${candidate.name} — not a founder: ${gate.reason}`);
+      totalFiltered++;
+      continue;
+    }
+
     // Pre-filter: skip founders who are obviously too far along (saves Claude API calls)
     const stageCheck = isTooFarAlong(candidate.text, candidate.headline);
     if (stageCheck.disqualified) {
@@ -1455,4 +1534,7 @@ module.exports = {
   reconcileCaliber,
   hasDisqualifyingFlag,
   buildEliteCohortQueries,
+  founderGate,
+  normName,
+  linkedinSlug,
 };
