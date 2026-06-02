@@ -6,6 +6,7 @@ import Landing from './pages/Landing';
 import Login from './pages/Login';
 import Signup from './pages/Signup';
 import Onboarding from './pages/Onboarding';
+import Home from './pages/Home';
 import Pipeline from './pages/Pipeline';
 import FounderDetail from './pages/FounderDetail';
 import AddFounder from './pages/AddFounder';
@@ -80,7 +81,8 @@ function AppRoutes() {
         <Onboarding />
       } />
       <Route path="/ask" element={<ProtectedRoute><AskStu /></ProtectedRoute>} />
-      <Route path="/" element={user ? <ProtectedRoute><Pipeline /></ProtectedRoute> : <Landing />} />
+      <Route path="/" element={user ? <ProtectedRoute><Home /></ProtectedRoute> : <Landing />} />
+      <Route path="/pipeline" element={<ProtectedRoute><Pipeline /></ProtectedRoute>} />
       <Route path="/founders/new" element={<ProtectedRoute><AddFounder /></ProtectedRoute>} />
       <Route path="/founders/:id" element={<ProtectedRoute><FounderDetail /></ProtectedRoute>} />
       <Route path="/assess" element={<ProtectedRoute><Assess /></ProtectedRoute>} />

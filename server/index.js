@@ -109,7 +109,7 @@ app.use('/api/ai', rateLimit({ windowMs: 15 * 60 * 1000, max: 50, standardHeader
 app.use('/api/auth/register', rateLimit({ windowMs: 15 * 60 * 1000, max: 5, standardHeaders: true, legacyHeaders: false }));
 
 // Public routes
-app.get('/api/health', (req, res) => res.json({ status: 'ok', app: 'Stu', version: '2.5.1' }));
+app.get('/api/health', (req, res) => res.json({ status: 'ok', app: 'Stu', version: '2.6.0' }));
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/payments', payments.router);
 
@@ -130,6 +130,7 @@ app.use('/api/admin', requireAuth, require('./routes/admin'));
 app.use('/api/import', requireAuth, require('./routes/import'));
 app.use('/api/talent', requireAuth, require('./routes/talent'));
 app.use('/api/newsletter', requireAuth, require('./routes/newsletter'));
+app.use('/api/home', requireAuth, require('./routes/home'));
 
 // Serve static in production
 const clientDist = path.join(__dirname, '..', 'client', 'dist');

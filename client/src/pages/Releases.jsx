@@ -6,6 +6,24 @@
 
 const RELEASES = [
   {
+    version: 'v2.6.0',
+    date: 'June 2, 2026',
+    time: '10:30 PM CT',
+    title: 'Home dashboard + more reliable newsletter add',
+    highlights: [
+      {
+        product: 'Platform',
+        change: 'New Home dashboard (now the landing page after login): a "what needs you today" action strip, plus glimpses of top founders to review, your open roles with new-match counts, and the latest from your Daily Brief. Pipeline moved to its own tab. Also added an auto-refresh prompt so you never sit on a stale page after a deploy.',
+        benefit: 'Open Stu and immediately see what to act on, without digging through tabs.',
+      },
+      {
+        product: 'Daily Brief',
+        change: 'Hardened RSS auto-discovery — sends a real browser user-agent, follows redirects, and tries many feed paths (Substack, WordPress, Ghost, beehiiv, Hugo/Jekyll), so adding a newsletter by its homepage URL now works for far more sources.',
+        benefit: 'Paste a newsletter\'s site URL and Stu finds its feed reliably.',
+      },
+    ],
+  },
+  {
     version: 'v2.5.0',
     date: 'June 2, 2026',
     time: '9:40 PM CT',

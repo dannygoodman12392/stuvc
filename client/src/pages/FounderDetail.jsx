@@ -212,7 +212,7 @@ export default function FounderDetail() {
     <div>
       {/* Breadcrumb */}
       <div className="flex items-center gap-2 text-sm text-gray-400 mb-6">
-        <Link to="/" className="hover:text-gray-600">Pipeline</Link>
+        <Link to="/pipeline" className="hover:text-gray-600">Pipeline</Link>
         <span>/</span>
         <span className="text-gray-700">{founder.name}</span>
       </div>

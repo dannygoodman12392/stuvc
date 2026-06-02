@@ -166,6 +166,9 @@ export const api = {
   getSourcingCriteria: () => request('/settings/sourcing-criteria'),
   completeOnboarding: () => request('/settings/complete-onboarding', { method: 'POST' }),
 
+  // Home dashboard
+  getHome: () => request('/home'),
+
   // Newsletter / Daily Brief
   getNewsletterBrief: (days) => request('/newsletter/brief' + (days ? `?days=${days}` : '')),
   getNewsletterStatus: () => request('/newsletter/status'),

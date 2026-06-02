@@ -55,7 +55,7 @@ export default function AddFounder() {
   return (
     <div className="max-w-2xl">
       <div className="flex items-center gap-2 text-sm text-gray-400 mb-6">
-        <Link to="/" className="hover:text-gray-600">Pipeline</Link>
+        <Link to="/pipeline" className="hover:text-gray-600">Pipeline</Link>
         <span>/</span>
         <span className="text-gray-700">Add Founder</span>
       </div>
@@ -240,7 +240,7 @@ export default function AddFounder() {
           <button type="submit" disabled={saving} className="btn-primary">
             {saving ? 'Saving...' : 'Add Founder'}
           </button>
-          <Link to="/" className="btn-secondary">Cancel</Link>
+          <Link to="/pipeline" className="btn-secondary">Cancel</Link>
         </div>
       </form>
     </div>

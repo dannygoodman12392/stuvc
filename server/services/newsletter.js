@@ -330,36 +330,72 @@ async function storeItem(userId, m, ctx, anthropic, sourceId, insert) {
 }
 
 // ── RSS auto-discovery ──
-async function discoverFeedUrl(rawUrl) {
-  const tryUrls = [];
-  let u = String(rawUrl || '').trim();
-  if (!/^https?:\/\//i.test(u)) u = 'https://' + u;
-  tryUrls.push(u);
-  if (!/\/feed\/?$|\.xml$|\.rss$|\/rss\/?$/i.test(u)) {
-    tryUrls.push(u.replace(/\/+$/, '') + '/feed');     // Substack / WordPress
-    tryUrls.push(u.replace(/\/+$/, '') + '/rss');
-  }
-  const Parser = require('rss-parser');
-  const parser = new Parser({ timeout: 12000 });
-  for (const candidate of tryUrls) {
-    try {
-      const feed = await parser.parseURL(candidate);
-      if (feed && Array.isArray(feed.items)) return { feedUrl: candidate, title: feed.title || null };
-    } catch { /* try next */ }
-  }
-  // Last resort: fetch HTML and look for an RSS <link>
+// Robust: sends a real User-Agent, follows redirects, tries many common feed paths,
+// and parses the homepage HTML for declared feed links (catches beehiiv, Ghost, etc.).
+const FEED_UA = 'Mozilla/5.0 (compatible; StuDailyBrief/1.0; +https://stu.vc)';
+
+async function fetchText(url) {
   try {
-    const https = require('https');
-    const html = await new Promise((resolve, reject) => {
-      https.get(u, res => { let d = ''; res.on('data', c => d += c); res.on('end', () => resolve(d)); }).on('error', reject);
+    const res = await fetch(url, {
+      headers: { 'User-Agent': FEED_UA, 'Accept': 'application/rss+xml, application/atom+xml, application/xml, text/xml, text/html, */*' },
+      redirect: 'follow',
     });
-    const m = html.match(/<link[^>]+type=["']application\/(rss|atom)\+xml["'][^>]*href=["']([^"']+)["']/i);
-    if (m && m[2]) {
-      const href = m[2].startsWith('http') ? m[2] : new URL(m[2], u).href;
-      const feed = await parser.parseURL(href);
-      return { feedUrl: href, title: feed.title || null };
+    if (!res.ok) return null;
+    const contentType = res.headers.get('content-type') || '';
+    const body = await res.text();
+    return { body, contentType, finalUrl: res.url };
+  } catch { return null; }
+}
+
+async function tryParseFeed(parser, url) {
+  const r = await fetchText(url);
+  if (!r) return null;
+  const looksXml = /xml|rss|atom/i.test(r.contentType) || /^\s*(<\?xml|<rss|<feed)/i.test(r.body);
+  if (!looksXml) return { html: r.body, finalUrl: r.finalUrl };
+  try {
+    const feed = await parser.parseString(r.body);
+    if (feed && Array.isArray(feed.items)) return { feedUrl: url, title: feed.title || null };
+  } catch { /* not a valid feed */ }
+  return { html: r.body, finalUrl: r.finalUrl };
+}
+
+async function discoverFeedUrl(rawUrl) {
+  let u = String(rawUrl || '').trim();
+  if (!u) return null;
+  if (!/^https?:\/\//i.test(u)) u = 'https://' + u;
+  const base = u.replace(/\/+$/, '');
+  const Parser = require('rss-parser');
+  const parser = new Parser({ timeout: 12000, headers: { 'User-Agent': FEED_UA } });
+
+  // Candidate feed paths covering Substack, WordPress, Ghost, Hugo/Jekyll, etc.
+  const candidates = [u];
+  let host = '';
+  try { host = new URL(u).host; } catch {}
+  if (/substack\.com$/i.test(host)) candidates.push(`https://${host}/feed`);
+  if (!/\/feed\/?$|\.xml$|\.rss$|\/rss\/?$/i.test(u)) {
+    candidates.push(`${base}/feed`, `${base}/rss`, `${base}/rss.xml`, `${base}/feed.xml`, `${base}/atom.xml`, `${base}/index.xml`);
+  }
+
+  let homepageHtml = null, homepageUrl = u;
+  for (const candidate of candidates) {
+    const r = await tryParseFeed(parser, candidate);
+    if (r && r.feedUrl) return { feedUrl: r.feedUrl, title: r.title };
+    if (r && r.html && !homepageHtml) { homepageHtml = r.html; homepageUrl = r.finalUrl || candidate; }
+  }
+
+  // Parse declared feed links from the homepage HTML.
+  if (homepageHtml) {
+    const links = [...homepageHtml.matchAll(/<link[^>]+>/gi)]
+      .map(m => m[0])
+      .filter(t => /application\/(rss|atom)\+xml/i.test(t));
+    for (const tag of links) {
+      const href = (tag.match(/href=["']([^"']+)["']/i) || [])[1];
+      if (!href) continue;
+      const abs = href.startsWith('http') ? href : new URL(href, homepageUrl).href;
+      const r = await tryParseFeed(parser, abs);
+      if (r && r.feedUrl) return { feedUrl: r.feedUrl, title: r.title };
     }
-  } catch { /* give up */ }
+  }
   return null;
 }
 
