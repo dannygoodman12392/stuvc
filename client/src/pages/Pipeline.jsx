@@ -431,6 +431,14 @@ function InboxTab({ queue, starred, stats, loading, onApprove, onDismiss, onHide
         )}
       </div>
 
+      {/* Learning loop status — quiet, only once there's enough signal */}
+      {stats?.learning?.likedN >= 3 && (
+        <div className="text-[11px] text-gray-400 mb-3">
+          <span className="text-gray-500 font-medium">Learning from your taste</span> · {stats.learning.likedN} approved, {stats.learning.passedN} passed
+          {stats.learning.favored?.length > 0 && <> · favoring <span className="text-violet-600">{stats.learning.favored.slice(0, 4).join(', ')}</span></>}
+        </div>
+      )}
+
       {/* Filters */}
       <div className="flex flex-col sm:flex-row gap-2 sm:gap-3 mb-4">
         <input type="text" placeholder="Search inbox..." value={filter.search} onChange={e => setFilter(f => ({ ...f, search: e.target.value }))} className="input text-sm w-full sm:w-64" />
@@ -658,6 +666,13 @@ function InboxCard({ founder: f, onApprove, onDismiss, onHideForever, onStar, on
               <span key={c} className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-violet-50 text-violet-700 border border-violet-200">{c}</span>
             ))}
           </div>
+        )}
+
+        {/* Affinity to your taste (learning loop) */}
+        {f.affinity_score >= 3 && f.affinity_reason && (
+          <p className="text-[11px] text-emerald-600 mt-1.5" title={f.affinity_reason}>
+            ↑ {f.affinity_reason}
+          </p>
         )}
 
         {/* Caliber rationale */}

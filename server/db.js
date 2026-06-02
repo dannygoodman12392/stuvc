@@ -384,6 +384,11 @@ addColumn('sourced_founders', 'caliber_score', 'INTEGER');             // 1-10, 
 addColumn('sourced_founders', 'caliber_rationale', 'TEXT');            // why this tier
 addColumn('sourced_founders', 'caliber_signals', 'TEXT');             // JSON — hard caliber signals detected
 
+// LEARNING LOOP: affinity to Danny's revealed taste (from approve/star/dismiss history).
+// A re-ranking nudge, never an override of caliber/tie/red-flag rules.
+addColumn('sourced_founders', 'affinity_score', 'INTEGER DEFAULT 0'); // -5..+5
+addColumn('sourced_founders', 'affinity_reason', 'TEXT');
+
 // R2: entity filings source (new)
 db.exec(`
   CREATE TABLE IF NOT EXISTS entity_filings (

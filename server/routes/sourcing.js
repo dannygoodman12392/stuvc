@@ -29,11 +29,12 @@ router.get('/queue', (req, res) => {
   // Rank by caliber tier first (S→A→B→C), then fit score. The best-of-best float
   // to the top regardless of how fresh the relevance signal is.
   const caliberRank = `CASE caliber_tier WHEN 'S' THEN 4 WHEN 'A' THEN 3 WHEN 'B' THEN 2 ELSE 1 END`;
+  // Default order: caliber first, then affinity to your taste (the learning loop), then fit.
   const sortCol = sort === 'newest'
     ? 'created_at DESC'
     : sort === 'fit'
       ? 'confidence_score DESC, created_at DESC'
-      : `${caliberRank} DESC, confidence_score DESC, created_at DESC`;
+      : `${caliberRank} DESC, COALESCE(affinity_score,0) DESC, confidence_score DESC, created_at DESC`;
   const founders = db.prepare(`SELECT * FROM sourced_founders WHERE ${where} ORDER BY ${sortCol}`).all(...params);
   res.json(founders);
 });
@@ -180,7 +181,16 @@ router.get('/stats', (req, res) => {
   const lastRun = db.prepare('SELECT * FROM sourcing_runs WHERE user_id = ? ORDER BY run_at DESC LIMIT 1').get(req.user.id);
   const todayAdded = db.prepare("SELECT COUNT(*) as c FROM sourced_founders WHERE status = 'pending' AND user_id = ? AND DATE(created_at) = DATE('now')").get(req.user.id).c;
 
-  res.json({ pending, starred, approved, dismissed, bySource: bySrc, byScore, byCaliber, lastRun, todayAdded });
+  // Learning loop status — how much taste signal Stu has, and what it's learned.
+  let learning = { likedN: 0, passedN: 0, favored: [], disfavored: [] };
+  try {
+    const { computeTasteProfile } = require('../pipeline/taste');
+    const t = computeTasteProfile(req.user.id);
+    const label = (k) => k.replace(/^(domain|ped|bld|cal|tie|tier):/, '');
+    learning = { likedN: t.likedN, passedN: t.passedN, favored: t.favored.map(label), disfavored: t.disfavored.map(label) };
+  } catch {}
+
+  res.json({ pending, starred, approved, dismissed, bySource: bySrc, byScore, byCaliber, learning, lastRun, todayAdded });
 });
 
 module.exports = router;

@@ -6,6 +6,19 @@
 
 const RELEASES = [
   {
+    version: 'v2.7.0',
+    date: 'June 2, 2026',
+    time: '12:40 AM CT',
+    title: 'Sourcing learns from your decisions',
+    highlights: [
+      {
+        product: 'Sourcing',
+        change: 'The engine now learns from your taste. Every founder you approve or star is a "like"; every dismiss is a "pass." Stu compares them to learn which signals predict your preferences, then feeds that back two ways: it calibrates the AI scoring prompt, and it ranks founders who match your taste higher (an "affinity" nudge). The hard rules — verified Chicago/IL tie, founders-only — are never overridden. A quiet "Learning from your taste" line shows what it has picked up.',
+        benefit: 'The more you use the inbox, the more it surfaces the kind of founder you actually like — without you configuring anything.',
+      },
+    ],
+  },
+  {
     version: 'v2.6.3',
     date: 'June 2, 2026',
     time: '11:55 PM CT',

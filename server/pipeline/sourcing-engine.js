@@ -1436,7 +1436,14 @@ async function runSourcingEngine({ fullSweep = false, userId = 1 } = {}) {
   const anthropic = apiKeys.anthropic ? (() => {
     try { const Anthropic = require('@anthropic-ai/sdk'); return new Anthropic({ apiKey: apiKeys.anthropic }); } catch { return null; }
   })() : getAnthropicClient();
-  const userScoringPrompt = buildUserScoringPrompt(criteria);
+  // LEARNING LOOP: build Danny's taste profile from his approve/star/dismiss history
+  // and feed it into the scoring prompt. Affinity (computed per candidate below) then
+  // nudges ranking among already-qualified founders.
+  const { computeTasteProfile, scoreAffinity } = require('./taste');
+  const taste = computeTasteProfile(userId);
+  const userScoringPrompt = buildUserScoringPrompt(criteria) + (taste.promptText || '');
+  if (taste.promptText) console.log(`[Sourcing] Learning from ${taste.likedN} approvals / ${taste.passedN} passes`);
+
   const insertStmt = db.prepare(`
     INSERT INTO sourced_founders (
       name, company, role, linkedin_url, email, source,
@@ -1448,8 +1455,9 @@ async function runSourcingEngine({ fullSweep = false, userId = 1 } = {}) {
       departure_recency_months, signal_captured_at,
       anchor_schools_il, elite_schools_national,
       evidence_map, red_flags,
-      caliber_tier, caliber_score, caliber_rationale, caliber_signals
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?, ?, ?, ?, ?, ?, ?)
+      caliber_tier, caliber_score, caliber_rationale, caliber_signals,
+      affinity_score, affinity_reason
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   for (const candidate of uniqueCandidates) {
@@ -1510,6 +1518,17 @@ async function runSourcingEngine({ fullSweep = false, userId = 1 } = {}) {
     const allAnchorIl = [...new Set([...(candidate.anchor_schools_il || []), ...(score.anchor_schools_il || [])])];
     const allEliteNational = [...new Set([...(candidate.elite_schools_national || []), ...(score.elite_schools_national || [])])];
 
+    // Affinity to Danny's revealed taste (re-rank nudge, not an override).
+    const aff = scoreAffinity({
+      tags: JSON.stringify(score.tags || []),
+      pedigree_signals: JSON.stringify(allPedigree),
+      builder_signals: JSON.stringify(allBuilder),
+      caliber_signals: JSON.stringify(score.caliber_signals || []),
+      location_type: candidate.location_type,
+      caliber_tier: score.caliber_tier,
+    }, taste.weights);
+    const affinityReason = aff.hits.length ? `Matches your taste: ${aff.hits.join(', ')}` : null;
+
     try {
       insertStmt.run(
         candidate.name,
@@ -1541,7 +1560,9 @@ async function runSourcingEngine({ fullSweep = false, userId = 1 } = {}) {
         score.caliber_tier || 'C',
         score.caliber_score != null ? score.caliber_score : 3,
         score.caliber_rationale || null,
-        JSON.stringify(score.caliber_signals || [])
+        JSON.stringify(score.caliber_signals || []),
+        aff.affinity,
+        affinityReason
       );
       totalAdded++;
 
