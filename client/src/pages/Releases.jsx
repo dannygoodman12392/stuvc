@@ -6,6 +6,19 @@
 
 const RELEASES = [
   {
+    version: 'v2.7.2',
+    date: 'June 3, 2026',
+    time: '2:00 AM CT',
+    title: 'Sourcing: accurate tags and descriptions',
+    highlights: [
+      {
+        product: 'Sourcing',
+        change: 'Fixed inaccurate founder tags. The old extractor used loose text matching, so "submit" could tag someone "MIT", "metadata" could tag "Ex-Meta", and "NYC" could read as "YC". Now it requires word boundaries and real employment context, every pedigree tag is verified against the actual profile, and the AI is held to strict accuracy rules (no inferring schools/employers, no inventing a company). Existing inbox tags were scrubbed of unsupported claims.',
+        benefit: 'Tags and descriptions reflect what a founder\'s profile actually says — so you can trust the inbox at a glance.',
+      },
+    ],
+  },
+  {
     version: 'v2.7.1',
     date: 'June 3, 2026',
     time: '1:15 AM CT',

@@ -228,38 +228,50 @@ function verifyLocation(text, headline, criteria) {
   return { verified: false, type: null, location: null };
 }
 
+// Word-boundary matcher — stops "mit" matching "submit", "meta" matching "metadata", etc.
+function reWord(term) {
+  return new RegExp('\\b' + term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b', 'i');
+}
+const titleCase = (s) => s.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+
 function extractSignals(text, headline) {
   const combined = ((headline || '') + ' ' + (text || '')).toLowerCase();
   const pedigree = [];
   const builder = [];
-  // R10: separate tiers — anchor schools (IL tie + pedigree) vs national elites (pedigree only)
   const anchorSchoolsIl = [];
   const eliteSchoolsNational = [];
 
+  // Schools — word-boundary so we don't tag "MIT" from "submit" or "limited".
   for (const school of ILLINOIS_SCHOOLS) {
-    if (combined.includes(school)) {
-      const display = school.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+    if (reWord(school).test(combined)) {
+      const display = titleCase(school);
       pedigree.push(display);
       anchorSchoolsIl.push(display);
     }
   }
   for (const school of ELITE_SCHOOLS) {
-    if (combined.includes(school)) {
-      const display = school.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+    if (reWord(school).test(combined)) {
+      const display = titleCase(school);
       pedigree.push(display);
       eliteSchoolsNational.push(display);
     }
   }
 
-  // Hyperscale pedigree
+  // Hyperscale pedigree — REQUIRE employment context. Common-word company names
+  // (apple, meta, notion, stripe, avant) must appear with an "ex-/former/at/worked at"
+  // cue, or immediately before a role word, before we claim someone worked there.
+  const EMP_BEFORE = '(ex-?|former(ly)?|previously|prev\\.?|alum(ni)? of|worked (at|for)|joined|engineer at|pm at|spent\\s+[\\w\\s]{0,12}\\s+at|at|@|with)';
   for (const company of HYPERSCALE_COMPANIES) {
-    if (combined.includes(company)) {
-      pedigree.push('Ex-' + company.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' '));
+    const c = company.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const before = new RegExp(EMP_BEFORE + '\\s+' + c + '\\b', 'i');
+    const after = new RegExp('\\b' + c + '\\s*(engineer|alum|alumni|veteran|exec|executive|employee|team|—|-|\\()', 'i');
+    if (before.test(combined) || after.test(combined)) {
+      pedigree.push('Ex-' + titleCase(company));
     }
   }
 
   // Builder signals
-  if (/y combinator|yc\s|ycombinator/.test(combined)) builder.push('YC Alum');
+  if (/\by combinator\b|\bycombinator\b|\byc[ws]\d{2}\b|\byc\b/i.test(combined)) builder.push('YC Alum');
   if (/techstars/.test(combined)) builder.push('Techstars');
   if (/south park commons/.test(combined)) builder.push('SPC');
   if (/\b(exited|acquired|sold|exit)\b/.test(combined)) builder.push('Previous Exit');
@@ -289,6 +301,19 @@ function extractSignals(text, headline) {
     anchor_schools_il: [...new Set(anchorSchoolsIl)],
     elite_schools_national: [...new Set(eliteSchoolsNational)],
   };
+}
+
+// Drop pedigree tags whose entity doesn't actually appear in the profile text
+// (catches both loose regex matches and any LLM invention like a fabricated "Ex-Stripe").
+const PEDIGREE_GENERIC = new Set(['university', 'college', 'institute', 'technology', 'school', 'graduate', 'staff', 'senior', 'principal', 'engineer', 'founder', 'former', 'phd', 'mba']);
+function verifyPedigree(tags, text) {
+  const lc = String(text || '').toLowerCase();
+  if (!lc) return tags || [];
+  return (tags || []).filter(tag => {
+    const words = String(tag).toLowerCase().replace(/^ex-?\s*/, '').split(/[^a-z0-9]+/).filter(w => w.length >= 4 && !PEDIGREE_GENERIC.has(w));
+    if (words.length === 0) return true; // nothing distinctive to verify — keep
+    return words.some(w => reWord(w).test(lc));
+  });
 }
 
 // ── CALIBER: the unicorn-grade axis ──
@@ -936,6 +961,15 @@ founder just because they never did YC or sold a company.
 Only claim a caliber_signal you can support with a verbatim quote. Never invent an exit, program,
 title, or traction number.
 
+ACCURACY RULES — these descriptions must be TRUE to the profile (no inference, no embellishment):
+- Every pedigree_signal (school/employer) MUST be explicitly stated in the profile text. Do NOT
+  tag a school or company from an ambiguous mention (e.g. "MIT Technology Review" is not MIT; a
+  client/partner named Google is not employment at Google). If unsure, omit it.
+- company_one_liner must describe what THIS person is actually building, drawn from the text. If the
+  text doesn't say, use "Stealth" or "Unclear" — never invent a company, product, or sector.
+- tags and builder_signals must reflect what the profile states, not what's plausible for the archetype.
+- confidence_rationale must cite the specific evidence you used. If evidence is thin, say so and score low.
+
 Return ONLY valid JSON in this exact shape:
 {
   "evidence_map": {
@@ -1510,8 +1544,10 @@ async function runSourcingEngine({ fullSweep = false, userId = 1 } = {}) {
       };
     }
 
-    // Merge extracted signals with AI signals
-    const allPedigree = [...new Set([...(candidate.pedigree_signals || []), ...(score.pedigree_signals || [])])];
+    // Merge extracted signals with AI signals, then verify pedigree against the actual
+    // profile text so no inaccurate "Ex-X"/school tag is ever stored.
+    const verifyText = (candidate.headline || '') + ' ' + (candidate.text || '');
+    const allPedigree = verifyPedigree([...new Set([...(candidate.pedigree_signals || []), ...(score.pedigree_signals || [])])], verifyText);
     const allBuilder = [...new Set([...(candidate.builder_signals || []), ...(score.builder_signals || [])])];
 
     // Merge pre-extracted schools with AI-extracted schools (R10)
@@ -1649,4 +1685,6 @@ module.exports = {
   normName,
   linkedinSlug,
   VALID_TIE_TYPES,
+  extractSignals,
+  verifyPedigree,
 };

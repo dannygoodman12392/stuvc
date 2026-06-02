@@ -108,6 +108,18 @@ seedIfEmpty();
         console.error('[Migration] Sourcing tie cleanup error:', err.message);
       }
     }
+
+    // One-time sourcing accuracy cleanup — drop unsupported pedigree tags from the inbox.
+    const accFlag = db.prepare("SELECT * FROM migration_flags WHERE key = 'sourcing_accuracy_v1'").get();
+    if (!accFlag) {
+      try {
+        console.log('[Migration] Scrubbing inaccurate pedigree tags from inbox...');
+        require('./migrations/cleanup-sourcing-accuracy')();
+        db.prepare("INSERT INTO migration_flags (key) VALUES ('sourcing_accuracy_v1')").run();
+      } catch (err) {
+        console.error('[Migration] Sourcing accuracy cleanup error:', err.message);
+      }
+    }
   } catch (err) {
     console.error('[Migration] Airtable import error:', err.message);
   }
@@ -147,7 +159,7 @@ app.use('/api/ai', rateLimit({ windowMs: 15 * 60 * 1000, max: 50, standardHeader
 app.use('/api/auth/register', rateLimit({ windowMs: 15 * 60 * 1000, max: 5, standardHeaders: true, legacyHeaders: false }));
 
 // Public routes
-app.get('/api/health', (req, res) => res.json({ status: 'ok', app: 'Stu', version: '2.7.1' }));
+app.get('/api/health', (req, res) => res.json({ status: 'ok', app: 'Stu', version: '2.7.2' }));
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/payments', payments.router);
 
