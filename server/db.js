@@ -805,6 +805,27 @@ db.exec(`
 db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_news_msg ON newsletter_items(user_id, message_id);`);
 db.exec(`CREATE INDEX IF NOT EXISTS idx_news_brief ON newsletter_items(user_id, brief_date, relevance_score DESC);`);
 
+// Newsletter sources — a managed list so the user adds a newsletter once (RSS feed
+// or email sender) and it flows in forever, no manual Gmail labeling required.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS newsletter_sources (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    name TEXT,
+    type TEXT DEFAULT 'rss',        -- 'rss' | 'email'
+    feed_url TEXT,                   -- for rss
+    sender_match TEXT,               -- for email (substring of From)
+    enabled INTEGER DEFAULT 1,
+    last_fetched DATETIME,
+    last_status TEXT,
+    is_deleted INTEGER DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_news_sources ON newsletter_sources(user_id, enabled, is_deleted);`);
+// Track which source an item came from
+addColumn('newsletter_items', 'source_id', 'INTEGER');
+
 // Talent criteria (sourcing config — global or per-portfolio-co)
 db.exec(`
   CREATE TABLE IF NOT EXISTS talent_criteria (

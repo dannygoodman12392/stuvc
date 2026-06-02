@@ -251,6 +251,43 @@ export default function Settings() {
   const [newsletterLabel, setNewsletterLabel] = useState('Stu/News');
   const newsletterSave = useSaveState();
 
+  // Newsletter sources
+  const [sources, setSources] = useState([]);
+  const [srcUrl, setSrcUrl] = useState('');
+  const [srcName, setSrcName] = useState('');
+  const [srcSender, setSrcSender] = useState('');
+  const [srcMode, setSrcMode] = useState('rss'); // 'rss' | 'email'
+  const [srcAdding, setSrcAdding] = useState(false);
+  const [srcError, setSrcError] = useState('');
+
+  async function loadSources() {
+    try { setSources(await api.getNewsletterSources()); } catch { /* ignore */ }
+  }
+  async function addSource() {
+    setSrcAdding(true); setSrcError('');
+    try {
+      if (srcMode === 'rss') {
+        if (!srcUrl.trim()) { setSrcError('Enter the newsletter URL or RSS feed.'); setSrcAdding(false); return; }
+        await api.addNewsletterSource({ type: 'rss', url: srcUrl.trim(), name: srcName.trim() || undefined });
+      } else {
+        if (!srcSender.trim()) { setSrcError('Enter the sender email.'); setSrcAdding(false); return; }
+        await api.addNewsletterSource({ type: 'email', sender: srcSender.trim(), name: srcName.trim() || undefined });
+      }
+      setSrcUrl(''); setSrcName(''); setSrcSender('');
+      await loadSources();
+    } catch (err) {
+      setSrcError(err.message || 'Could not add source');
+    } finally { setSrcAdding(false); }
+  }
+  async function toggleSource(s) {
+    await api.updateNewsletterSource(s.id, { enabled: s.enabled ? 0 : 1 });
+    loadSources();
+  }
+  async function removeSource(s) {
+    await api.deleteNewsletterSource(s.id);
+    loadSources();
+  }
+
   useEffect(() => {
     async function load() {
       try {
@@ -271,6 +308,7 @@ export default function Settings() {
         setGmailAddress(settings.newsletter_gmail_address || '');
         setGmailAppPassword(settings.newsletter_gmail_app_password || '');
         setNewsletterLabel(settings.newsletter_label || 'Stu/News');
+        loadSources();
       } catch (err) {
         setLoadError(err.message || 'Failed to load settings');
       } finally {
@@ -592,41 +630,88 @@ export default function Settings() {
 
       {/* Newsletters Tab */}
       {activeTab === 'newsletter' && (
-        <div className="space-y-5 max-w-xl">
+        <div className="space-y-6 max-w-2xl">
           <div>
-            <h2 className="text-sm font-semibold text-gray-900">Daily Brief — newsletter intake</h2>
+            <h2 className="text-sm font-semibold text-gray-900">Daily Brief — newsletter sources</h2>
             <p className="text-xs text-gray-500 mt-1">
-              Stu reads a Gmail label and turns the newsletters you tag into a daily brief with key points.
+              Add a newsletter once and it flows into your brief automatically — no Gmail labeling. Paste a
+              newsletter's website or Substack URL and Stu finds its RSS feed. For email-only newsletters, add the sender address.
             </p>
           </div>
 
-          <ol className="text-xs text-gray-600 space-y-1.5 bg-gray-50 border border-gray-200 rounded-lg p-3 list-decimal list-inside">
-            <li>In Gmail, create a label (e.g. <span className="font-medium">Stu/News</span>) and tag the newsletters you want.</li>
-            <li>Turn on 2-Step Verification, then create a Gmail <span className="font-medium">App Password</span> (Google Account → Security → App passwords).</li>
-            <li>Paste your Gmail address, the App Password, and the label name below.</li>
-          </ol>
+          {/* Add source */}
+          <div className="card p-4 space-y-3">
+            <div className="flex items-center gap-1 p-0.5 bg-gray-100 rounded-lg w-fit">
+              {[['rss', 'By URL / RSS'], ['email', 'By sender email']].map(([m, lbl]) => (
+                <button key={m} onClick={() => { setSrcMode(m); setSrcError(''); }}
+                  className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${srcMode === m ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
+                  {lbl}
+                </button>
+              ))}
+            </div>
+            {srcMode === 'rss' ? (
+              <input className="input w-full" placeholder="https://www.notboring.co  (or any newsletter/Substack URL)"
+                value={srcUrl} onChange={(e) => setSrcUrl(e.target.value)} />
+            ) : (
+              <input className="input w-full" placeholder="sender@substack.com  (the address the newsletter comes from)"
+                value={srcSender} onChange={(e) => setSrcSender(e.target.value)} />
+            )}
+            <div className="flex gap-2">
+              <input className="input flex-1" placeholder="Name (optional)" value={srcName} onChange={(e) => setSrcName(e.target.value)} />
+              <button onClick={addSource} disabled={srcAdding} className="btn-primary text-xs px-4 disabled:opacity-50">
+                {srcAdding ? 'Adding…' : 'Add source'}
+              </button>
+            </div>
+            {srcError && <p className="text-xs text-red-600">{srcError}</p>}
+          </div>
 
-          <div>
-            <label className="label">Gmail address</label>
-            <input type="email" className="input w-full" placeholder="you@gmail.com"
-              value={gmailAddress} onChange={(e) => setGmailAddress(e.target.value)} />
-          </div>
-          <div>
-            <label className="label">Gmail App Password</label>
-            <input type="password" className="input w-full" placeholder="16-character app password" autoComplete="new-password"
-              value={gmailAppPassword} onChange={(e) => setGmailAppPassword(e.target.value)} />
-            <p className="text-[11px] text-gray-400 mt-1">Stored privately for your account. Spaces are removed automatically. This is an app-specific password, not your Google password.</p>
-          </div>
-          <div>
-            <label className="label">Gmail label</label>
-            <input type="text" className="input w-full" placeholder="Stu/News"
-              value={newsletterLabel} onChange={(e) => setNewsletterLabel(e.target.value)} />
-          </div>
+          {/* Source list */}
+          {sources.length > 0 && (
+            <div className="space-y-2">
+              {sources.map(s => (
+                <div key={s.id} className="flex items-center justify-between gap-3 card px-4 py-2.5">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium text-gray-900 truncate">{s.name || s.feed_url || s.sender_match}</span>
+                      <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded-full border ${s.type === 'rss' ? 'bg-blue-50 text-blue-600 border-blue-200' : 'bg-gray-100 text-gray-500 border-gray-200'}`}>
+                        {s.type === 'rss' ? 'RSS' : 'EMAIL'}
+                      </span>
+                    </div>
+                    <div className="text-[11px] text-gray-400 truncate">{s.feed_url || s.sender_match}{s.last_status ? ` · ${s.last_status}` : ''}</div>
+                  </div>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <button onClick={() => toggleSource(s)} className={`text-[11px] px-2 py-1 rounded border ${s.enabled ? 'border-emerald-200 text-emerald-700 bg-emerald-50' : 'border-gray-200 text-gray-400'}`}>
+                      {s.enabled ? 'On' : 'Off'}
+                    </button>
+                    <button onClick={() => removeSource(s)} className="text-[11px] text-gray-300 hover:text-red-500">Remove</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
 
-          <div className="flex items-center">
-            <SaveButton onClick={saveNewsletter} saving={newsletterSave.saving} saved={newsletterSave.saved} />
-          </div>
-          {newsletterSave.error && <p className="text-sm text-red-600 mt-2">{newsletterSave.error}</p>}
+          {/* Gmail (optional, for email senders) */}
+          <details className="border-t border-gray-100 pt-4">
+            <summary className="text-xs font-semibold text-gray-700 cursor-pointer">Gmail connection (only needed for email-sender sources)</summary>
+            <div className="space-y-3 mt-3">
+              <p className="text-[11px] text-gray-400">
+                Required only if you add "By sender email" sources. Turn on 2-Step Verification, create a Gmail App Password
+                (Google Account → Security → App passwords), and paste it here.
+              </p>
+              <div>
+                <label className="label">Gmail address</label>
+                <input type="email" className="input w-full" placeholder="you@gmail.com" value={gmailAddress} onChange={(e) => setGmailAddress(e.target.value)} />
+              </div>
+              <div>
+                <label className="label">Gmail App Password</label>
+                <input type="password" className="input w-full" placeholder="16-character app password" autoComplete="new-password" value={gmailAppPassword} onChange={(e) => setGmailAppPassword(e.target.value)} />
+              </div>
+              <div className="flex items-center">
+                <SaveButton onClick={saveNewsletter} saving={newsletterSave.saving} saved={newsletterSave.saved} />
+              </div>
+              {newsletterSave.error && <p className="text-sm text-red-600 mt-2">{newsletterSave.error}</p>}
+            </div>
+          </details>
         </div>
       )}
 

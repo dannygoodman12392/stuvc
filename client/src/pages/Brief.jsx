@@ -16,6 +16,9 @@ function Item({ it, onDismiss }) {
         <div className="min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-sm font-semibold text-gray-900">{it.source_name || 'Newsletter'}</span>
+            {it.received_at && (
+              <span className="text-[10px] text-gray-400">{new Date(it.received_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>
+            )}
             {it.relevance_score >= 65 && (
               <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-violet-50 text-violet-700 border border-violet-200">
                 Relevant
@@ -134,20 +137,22 @@ export default function Brief() {
 
       {notConfigured && (
         <div className="card p-6 text-center">
-          <h3 className="text-sm font-semibold text-gray-800 mb-1">Connect your newsletters</h3>
+          <h3 className="text-sm font-semibold text-gray-800 mb-1">Add your newsletters</h3>
           <p className="text-xs text-gray-500 mb-4 max-w-md mx-auto">
-            In Gmail, create a label and tag the newsletters you want here. Then add your Gmail address,
-            a Gmail App Password, and the label name in Settings — Stu will gather them into a daily brief.
+            Add the newsletters you follow once — paste each one's website or Substack URL and Stu finds its feed.
+            They'll flow into a daily brief of key takeaways automatically, no Gmail labeling needed.
           </p>
-          <Link to="/settings" className="btn-primary text-xs">Set up in Settings →</Link>
+          <Link to="/settings" className="btn-primary text-xs">Add sources in Settings →</Link>
         </div>
       )}
 
       {status?.configured && empty && (
         <div className="card p-8 text-center">
           <div className="text-3xl mb-2">📬</div>
-          <h3 className="text-sm font-semibold text-gray-700 mb-1">No items yet for today</h3>
-          <p className="text-xs text-gray-400 mb-4">Tag some newsletters with your "{status.label}" label in Gmail, then sync.</p>
+          <h3 className="text-sm font-semibold text-gray-700 mb-1">No items yet</h3>
+          <p className="text-xs text-gray-400 mb-4">
+            {status.sourceCount > 0 ? 'Hit Sync to pull the latest from your sources.' : 'Add newsletter sources in Settings, then sync.'}
+          </p>
           <button onClick={sync} disabled={syncing} className="btn-primary text-xs">{syncing ? 'Pulling…' : 'Sync now'}</button>
         </div>
       )}

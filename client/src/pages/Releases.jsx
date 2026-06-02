@@ -6,6 +6,19 @@
 
 const RELEASES = [
   {
+    version: 'v2.5.0',
+    date: 'June 2, 2026',
+    time: '9:40 PM CT',
+    title: 'Daily Brief: automated multi-source newsfeed (RSS)',
+    highlights: [
+      {
+        product: 'Platform',
+        change: 'The Daily Brief is now a managed, automated newsfeed. Add a newsletter once in Settings — paste its website/Substack URL and Stu auto-discovers the RSS feed (or add an email-only newsletter by sender). No more Gmail labeling. The brief is now a rolling multi-day feed of key takeaways across all your sources, ranked by relevance to your pipeline and thesis, refreshed every morning.',
+        benefit: 'Set your newsletters once and skim the key points from all of them in one continuous feed — add or remove sources anytime.',
+      },
+    ],
+  },
+  {
     version: 'v2.4.4',
     date: 'June 2, 2026',
     time: '8:45 PM CT',

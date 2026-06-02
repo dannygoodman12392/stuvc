@@ -109,7 +109,7 @@ app.use('/api/ai', rateLimit({ windowMs: 15 * 60 * 1000, max: 50, standardHeader
 app.use('/api/auth/register', rateLimit({ windowMs: 15 * 60 * 1000, max: 5, standardHeaders: true, legacyHeaders: false }));
 
 // Public routes
-app.get('/api/health', (req, res) => res.json({ status: 'ok', app: 'Stu', version: '2.4.4' }));
+app.get('/api/health', (req, res) => res.json({ status: 'ok', app: 'Stu', version: '2.5.0' }));
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/payments', payments.router);
 
@@ -151,13 +151,20 @@ app.listen(PORT, () => {
       console.log('[Cron] Starting daily newsletter brief...');
       try {
         const dbi = require('./db');
-        const { fetchAndProcess } = require('./services/newsletter');
-        const users = dbi.prepare(
-          "SELECT DISTINCT user_id FROM user_settings WHERE setting_key = 'newsletter_gmail_app_password' AND setting_value IS NOT NULL AND setting_value != '' AND setting_value != '\"\"'"
-        ).all();
+        const { fetchAndProcess, fetchAllSources } = require('./services/newsletter');
+        // Users with either a managed source (RSS/email) or a legacy Gmail label setup.
+        const users = dbi.prepare(`
+          SELECT DISTINCT user_id FROM (
+            SELECT user_id FROM newsletter_sources WHERE enabled = 1 AND is_deleted = 0
+            UNION
+            SELECT user_id FROM user_settings WHERE setting_key = 'newsletter_gmail_app_password'
+              AND setting_value IS NOT NULL AND setting_value != '' AND setting_value != '""'
+          )
+        `).all();
         for (const { user_id } of users) {
           try {
-            const r = await fetchAndProcess(user_id, { limit: 40 });
+            const hasSources = dbi.prepare('SELECT COUNT(*) c FROM newsletter_sources WHERE user_id = ? AND enabled = 1 AND is_deleted = 0').get(user_id).c > 0;
+            const r = hasSources ? await fetchAllSources(user_id) : await fetchAndProcess(user_id, { limit: 40 });
             console.log(`[Cron][Newsletter] user ${user_id}:`, r.ok ? `${r.added} added` : r.error);
           } catch (e) { console.error(`[Cron][Newsletter] user ${user_id} failed:`, e.message); }
         }

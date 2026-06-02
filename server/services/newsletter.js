@@ -281,4 +281,193 @@ async function fetchAndProcess(userId, { limit = 30 } = {}) {
   return { ok: true, fetched, added, errors, briefDate };
 }
 
-module.exports = { fetchAndProcess, loadNewsletterConfig, scoreRelevance, buildRelevanceContext };
+// ════════════════════════════════════════════════════════════════
+// Managed sources: RSS feeds + email senders (no manual labeling)
+// ════════════════════════════════════════════════════════════════
+
+const RECENT_DAYS = 10;          // rolling window for the feed
+const PER_SOURCE = 15;           // max items pulled per source per sync
+
+function briefDateOf(date) {
+  const d = date ? new Date(date) : new Date();
+  if (isNaN(d.getTime())) return new Date().toISOString().slice(0, 10);
+  return d.toISOString().slice(0, 10);
+}
+function isRecent(date) {
+  if (!date) return true; // keep undated items (we'll stamp today)
+  const d = new Date(date);
+  if (isNaN(d.getTime())) return true;
+  return (Date.now() - d.getTime()) <= RECENT_DAYS * 86400000;
+}
+function stripHtml(s) {
+  return String(s || '').replace(/<[^>]+>/g, ' ').replace(/&[a-z]+;/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+const ITEM_INSERT_COLS = `(user_id, source_id, message_id, source_name, sender, subject, received_at, brief_date, url, summary, key_points, relevance_score, relevance_reason, matched_entities, category)`;
+function itemInsertStmt() {
+  return db.prepare(`INSERT INTO newsletter_items ${ITEM_INSERT_COLS} VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+}
+
+// Dedupe + extract + rank + store one issue. Returns true if newly added.
+async function storeItem(userId, m, ctx, anthropic, sourceId, insert) {
+  const exists = db.prepare('SELECT id FROM newsletter_items WHERE user_id = ? AND message_id = ?').get(userId, m.message_id);
+  if (exists) return false;
+  const item = await extractIssue(anthropic, {
+    text: m.text, html: m.html, subject: m.subject, from: m.sender, fromName: m.fromName,
+  });
+  item.subject = m.subject || '';
+  item.sender = m.sender || '';
+  if (m.url && !item.url) item.url = m.url;
+  if (m.sourceName) item.source_name = m.sourceName;
+  const rel = scoreRelevance(item, ctx);
+  insert.run(
+    userId, sourceId || null, m.message_id, item.source_name, m.sender || '', m.subject || '',
+    m.date ? new Date(m.date).toISOString() : null, briefDateOf(m.date),
+    item.url || '', item.summary || '', JSON.stringify(item.key_points || []),
+    rel.score, rel.reason, JSON.stringify(rel.matched), rel.category
+  );
+  return true;
+}
+
+// ── RSS auto-discovery ──
+async function discoverFeedUrl(rawUrl) {
+  const tryUrls = [];
+  let u = String(rawUrl || '').trim();
+  if (!/^https?:\/\//i.test(u)) u = 'https://' + u;
+  tryUrls.push(u);
+  if (!/\/feed\/?$|\.xml$|\.rss$|\/rss\/?$/i.test(u)) {
+    tryUrls.push(u.replace(/\/+$/, '') + '/feed');     // Substack / WordPress
+    tryUrls.push(u.replace(/\/+$/, '') + '/rss');
+  }
+  const Parser = require('rss-parser');
+  const parser = new Parser({ timeout: 12000 });
+  for (const candidate of tryUrls) {
+    try {
+      const feed = await parser.parseURL(candidate);
+      if (feed && Array.isArray(feed.items)) return { feedUrl: candidate, title: feed.title || null };
+    } catch { /* try next */ }
+  }
+  // Last resort: fetch HTML and look for an RSS <link>
+  try {
+    const https = require('https');
+    const html = await new Promise((resolve, reject) => {
+      https.get(u, res => { let d = ''; res.on('data', c => d += c); res.on('end', () => resolve(d)); }).on('error', reject);
+    });
+    const m = html.match(/<link[^>]+type=["']application\/(rss|atom)\+xml["'][^>]*href=["']([^"']+)["']/i);
+    if (m && m[2]) {
+      const href = m[2].startsWith('http') ? m[2] : new URL(m[2], u).href;
+      const feed = await parser.parseURL(href);
+      return { feedUrl: href, title: feed.title || null };
+    }
+  } catch { /* give up */ }
+  return null;
+}
+
+async function fetchRssSource(source, userId, ctx, anthropic, insert) {
+  const Parser = require('rss-parser');
+  const parser = new Parser({ timeout: 15000, headers: { 'User-Agent': 'Stu Daily Brief' } });
+  let added = 0, seen = 0;
+  const feed = await parser.parseURL(source.feed_url);
+  for (const it of (feed.items || []).slice(0, PER_SOURCE)) {
+    const date = it.isoDate || it.pubDate || null;
+    if (!isRecent(date)) continue;
+    seen++;
+    const raw = it['content:encoded'] || it.content || it.summary || '';
+    const text = it.contentSnippet || stripHtml(raw);
+    const messageId = `rss:${source.id}:${it.guid || it.link || it.title || Math.random()}`;
+    const ok = await storeItem(userId, {
+      message_id: messageId, sender: feed.title || source.name, fromName: feed.title || source.name,
+      subject: it.title || '(untitled)', text, html: raw, url: it.link || '', date,
+      sourceName: source.name || feed.title,
+    }, ctx, anthropic, source.id, insert);
+    if (ok) added++;
+  }
+  return { added, seen };
+}
+
+async function fetchEmailSenders(emailSources, userId, ctx, anthropic, insert) {
+  const cfg = loadNewsletterConfig(userId);
+  if (!cfg.address || !cfg.appPassword) return { added: 0, error: 'Gmail not configured for email sources' };
+  let ImapFlow, simpleParser;
+  try { ({ ImapFlow } = require('imapflow')); ({ simpleParser } = require('mailparser')); }
+  catch (e) { return { added: 0, error: 'Email libs unavailable' }; }
+
+  const client = new ImapFlow({ host: 'imap.gmail.com', port: 993, secure: true, auth: { user: cfg.address, pass: cfg.appPassword }, logger: false });
+  let added = 0;
+  try { await client.connect(); } catch (e) { return { added: 0, error: `Gmail connect failed: ${e.message}` }; }
+  try {
+    // Search across All Mail so archived newsletters are included.
+    let boxes = [];
+    try { boxes = await client.list(); } catch {}
+    const allMail = boxes.find(b => b.specialUse === '\\All') || boxes.find(b => /all mail/i.test(b.path || '')) || { path: '[Gmail]/All Mail' };
+    const lock = await client.getMailboxLock(allMail.path);
+    try {
+      const since = new Date(Date.now() - RECENT_DAYS * 86400000);
+      for (const src of emailSources) {
+        if (!src.sender_match) continue;
+        let uids = [];
+        try { uids = await client.search({ from: src.sender_match, since }, { uid: true }); } catch { uids = []; }
+        if (!Array.isArray(uids)) uids = [];
+        for (const uid of uids.slice(-PER_SOURCE)) {
+          try {
+            const msg = await client.fetchOne(uid, { source: true }, { uid: true });
+            if (!msg || !msg.source) continue;
+            const mail = await simpleParser(msg.source);
+            const ok = await storeItem(userId, {
+              message_id: mail.messageId || `uid:${uid}:${src.id}`,
+              sender: mail.from?.text || src.sender_match, fromName: mail.from?.value?.[0]?.name || src.name,
+              subject: mail.subject || '', text: mail.text || stripHtml(mail.html), html: mail.html, url: '',
+              date: mail.date, sourceName: src.name,
+            }, ctx, anthropic, src.id, insert);
+            if (ok) added++;
+          } catch { /* skip message */ }
+        }
+      }
+    } finally { lock.release(); }
+  } finally { try { await client.logout(); } catch {} }
+  return { added };
+}
+
+// Main entry — pull every enabled source (RSS + email senders).
+async function fetchAllSources(userId) {
+  const sources = db.prepare(
+    "SELECT * FROM newsletter_sources WHERE user_id = ? AND enabled = 1 AND is_deleted = 0"
+  ).all(userId);
+  if (sources.length === 0) {
+    return { ok: false, error: 'No newsletter sources yet. Add some in Settings → Newsletters.' };
+  }
+  const anthropic = getAnthropic(userId);
+  const ctx = buildRelevanceContext(userId);
+  const insert = itemInsertStmt();
+
+  let added = 0;
+  const errors = [];
+  const rssSources = sources.filter(s => s.type === 'rss' && s.feed_url);
+  const emailSources = sources.filter(s => s.type === 'email' && s.sender_match);
+
+  for (const src of rssSources) {
+    try {
+      const r = await fetchRssSource(src, userId, ctx, anthropic, insert);
+      added += r.added;
+      db.prepare('UPDATE newsletter_sources SET last_fetched = CURRENT_TIMESTAMP, last_status = ? WHERE id = ?')
+        .run(`ok: +${r.added}`, src.id);
+    } catch (e) {
+      errors.push(`${src.name}: ${e.message}`);
+      db.prepare('UPDATE newsletter_sources SET last_fetched = CURRENT_TIMESTAMP, last_status = ? WHERE id = ?')
+        .run(`error: ${e.message}`.slice(0, 200), src.id);
+    }
+  }
+
+  if (emailSources.length) {
+    const r = await fetchEmailSenders(emailSources, userId, ctx, anthropic, insert);
+    added += r.added || 0;
+    if (r.error) errors.push(r.error);
+  }
+
+  return { ok: true, added, errors, sources: sources.length };
+}
+
+module.exports = {
+  fetchAndProcess, loadNewsletterConfig, scoreRelevance, buildRelevanceContext,
+  fetchAllSources, discoverFeedUrl,
+};

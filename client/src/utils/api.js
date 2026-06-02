@@ -159,10 +159,14 @@ export const api = {
   completeOnboarding: () => request('/settings/complete-onboarding', { method: 'POST' }),
 
   // Newsletter / Daily Brief
-  getNewsletterBrief: (date) => request('/newsletter/brief' + (date ? `?date=${date}` : '')),
+  getNewsletterBrief: (days) => request('/newsletter/brief' + (days ? `?days=${days}` : '')),
   getNewsletterStatus: () => request('/newsletter/status'),
   syncNewsletter: () => request('/newsletter/sync', { method: 'POST' }),
   dismissNewsletterItem: (id) => request(`/newsletter/${id}`, { method: 'DELETE' }),
+  getNewsletterSources: () => request('/newsletter/sources'),
+  addNewsletterSource: (data) => request('/newsletter/sources', { method: 'POST', body: JSON.stringify(data) }),
+  updateNewsletterSource: (id, data) => request(`/newsletter/sources/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  deleteNewsletterSource: (id) => request(`/newsletter/sources/${id}`, { method: 'DELETE' }),
 
   // Stu tool-use chat
   stuChat: async function* (messages) {
