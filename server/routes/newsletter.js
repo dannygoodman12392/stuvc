@@ -212,16 +212,18 @@ router.get('/today', async (req, res) => {
     const date = new Date().toISOString().slice(0, 10);
     const newsletters = latestNewsletters(userId);
     const emailed = db.prepare("SELECT sent_at, recipient FROM daily_brief_log WHERE user_id=? AND brief_date=? AND status='sent' ORDER BY sent_at DESC LIMIT 1").get(userId, date) || null;
+    // Most recent send ATTEMPT (any status) so the page can persistently show a failure.
+    const lastSend = db.prepare("SELECT status, error, recipient, sent_at FROM daily_brief_log WHERE user_id=? ORDER BY sent_at DESC LIMIT 1").get(userId) || null;
 
     const row = db.prepare('SELECT payload FROM daily_brief WHERE user_id=? AND brief_date=?').get(userId, date);
     if (row?.payload) {
       let classics = [];
       try { classics = JSON.parse(row.payload).classics || []; } catch {}
-      return res.json({ date, classics, newsletters, emailed, building: false });
+      return res.json({ date, classics, newsletters, emailed, lastSend, building: false });
     }
     // Not built yet — start it in the background (the in-build lock dedupes) and return now.
     getOrBuildDigest(userId).catch(e => console.error('[Brief] background build:', e.message));
-    res.json({ date, classics: [], newsletters, emailed, building: true });
+    res.json({ date, classics: [], newsletters, emailed, lastSend, building: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
