@@ -82,4 +82,15 @@ async function extractFromPDF(buffer, anthropicApiKey) {
   })).filter(f => f.name || f.company); // Must have at least a name or company
 }
 
-module.exports = { extractFromPDF };
+// Extract raw text from a PDF buffer (for assessment deck ingestion — no LLM).
+// Throws on image-only/unreadable PDFs so callers can flag the deck as not ingested.
+async function extractPdfText(buffer) {
+  const pdfData = await pdfParse(buffer);
+  const text = (pdfData.text || '').trim();
+  if (text.length < 20) {
+    throw new Error('PDF produced no extractable text (likely image-only/scanned). Export a text-based PDF.');
+  }
+  return text;
+}
+
+module.exports = { extractFromPDF, extractPdfText };

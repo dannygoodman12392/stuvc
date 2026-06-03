@@ -170,6 +170,14 @@ export default function AssessmentDetail() {
           {assessment.founder_company && <span className="text-gray-400">/ {assessment.founder_company}</span>}
         </div>
 
+        {/* Deck-integrity warning — score is suspect when the deck couldn't be ingested */}
+        {assessment.deck_status === 'suspect' && (
+          <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-2.5">
+            <p className="text-sm font-semibold text-red-700">⚠ Deck not ingested — this score is suspect</p>
+            <p className="text-xs text-red-600 mt-0.5">{assessment.deck_status_reason || 'The pitch deck could not be read.'} Re-run this assessment with a PDF export of the deck for a trustworthy score.</p>
+          </div>
+        )}
+
         {/* Header */}
         <div className="flex items-start justify-between mb-6">
           <div>

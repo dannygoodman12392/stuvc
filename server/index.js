@@ -120,6 +120,18 @@ seedIfEmpty();
         console.error('[Migration] Sourcing accuracy cleanup error:', err.message);
       }
     }
+
+    // One-time: flag historical assessments whose decks were corrupted/un-ingested.
+    const deckFlag = db.prepare("SELECT * FROM migration_flags WHERE key = 'flag_suspect_decks_v1'").get();
+    if (!deckFlag) {
+      try {
+        console.log('[Migration] Flagging assessments with corrupted/un-ingested decks...');
+        require('./migrations/flag-suspect-decks')();
+        db.prepare("INSERT INTO migration_flags (key) VALUES ('flag_suspect_decks_v1')").run();
+      } catch (err) {
+        console.error('[Migration] Suspect-deck flagging error:', err.message);
+      }
+    }
   } catch (err) {
     console.error('[Migration] Airtable import error:', err.message);
   }
@@ -159,7 +171,7 @@ app.use('/api/ai', rateLimit({ windowMs: 15 * 60 * 1000, max: 50, standardHeader
 app.use('/api/auth/register', rateLimit({ windowMs: 15 * 60 * 1000, max: 5, standardHeaders: true, legacyHeaders: false }));
 
 // Public routes
-app.get('/api/health', (req, res) => res.json({ status: 'ok', app: 'Stu', version: '2.7.3' }));
+app.get('/api/health', (req, res) => res.json({ status: 'ok', app: 'Stu', version: '2.8.0' }));
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/payments', payments.router);
 

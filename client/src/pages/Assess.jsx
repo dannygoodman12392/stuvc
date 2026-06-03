@@ -64,11 +64,31 @@ export default function Assess() {
   function handleFileUpload(e) {
     const files = Array.from(e.target.files);
     for (const file of files) {
+      const name = (file.name || '').toLowerCase();
+      const isPdf = file.type === 'application/pdf' || name.endsWith('.pdf');
+      const isPptx = name.endsWith('.pptx') || name.endsWith('.ppt') || (file.type || '').includes('presentation');
+      const isText = name.endsWith('.txt') || name.endsWith('.md') || name.endsWith('.csv') || (file.type || '').startsWith('text/');
+
+      if (isPptx) {
+        // Decision 2: don't build a PPTX parser; reject loudly so we never score on garbage.
+        alert(`PowerPoint isn't supported. Please export "${file.name}" to PDF and upload that — Stu won't run an assessment on a deck it can't read.`);
+        continue;
+      }
       const reader = new FileReader();
-      reader.onload = () => {
-        setDecks(d => [...d, { label: file.name, content: reader.result, fileName: file.name }]);
-      };
-      reader.readAsText(file);
+      if (isPdf) {
+        // Send the real bytes (base64) so the server can extract text. readAsText would
+        // corrupt the binary — the old bug that fed garbage to the agents.
+        reader.onload = () => {
+          const base64 = String(reader.result || '').split(',')[1] || '';
+          setDecks(d => [...d, { label: file.name, fileName: file.name, mimeType: 'application/pdf', base64, content: '' }]);
+        };
+        reader.readAsDataURL(file);
+      } else if (isText) {
+        reader.onload = () => setDecks(d => [...d, { label: file.name, fileName: file.name, content: reader.result }]);
+        reader.readAsText(file);
+      } else {
+        alert(`"${file.name}" is an unsupported file type. Upload a PDF or paste text — Stu won't assess a deck it can't read.`);
+      }
     }
     e.target.value = '';
   }
@@ -142,7 +162,7 @@ export default function Assess() {
       const payload = {
         founder_id: founderId ? parseInt(founderId) : null,
         inputs: {
-          decks: decks.map(d => ({ label: d.label, content: d.content, fileName: d.fileName })),
+          decks: decks.map(d => ({ label: d.label, content: d.content, fileName: d.fileName, mimeType: d.mimeType, base64: d.base64 })),
           transcripts: transcripts.filter(t => t.content).map(t => ({ label: t.label, content: t.content })),
           urls: urls,
           notes: notes.filter(n => n.content).map(n => ({ label: n.label, content: n.content })),

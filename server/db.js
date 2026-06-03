@@ -389,6 +389,11 @@ addColumn('sourced_founders', 'caliber_signals', 'TEXT');             // JSON â€
 addColumn('sourced_founders', 'affinity_score', 'INTEGER DEFAULT 0'); // -5..+5
 addColumn('sourced_founders', 'affinity_reason', 'TEXT');
 
+// Deck-integrity flag: marks assessments whose deck input was corrupted (PDF read as
+// text by the old client bug) or was an un-ingested link â€” so suspect scores are visible.
+addColumn('opportunity_assessments', 'deck_status', 'TEXT');        // 'ok' | 'suspect'
+addColumn('opportunity_assessments', 'deck_status_reason', 'TEXT');
+
 // R2: entity filings source (new)
 db.exec(`
   CREATE TABLE IF NOT EXISTS entity_filings (

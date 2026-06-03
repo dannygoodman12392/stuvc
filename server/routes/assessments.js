@@ -341,10 +341,33 @@ router.post('/:id/rerun', async (req, res) => {
 async function processInputsAndRun(assessmentId, inputs, founderId, previousAssessmentId) {
   const insertInput = db.prepare('INSERT INTO assessment_inputs (assessment_id, input_type, label, content, source_url, file_name) VALUES (?, ?, ?, ?, ?, ?)');
 
-  // Process deck text entries
+  // Process decks. HARD RULE: never store unreadable deck data silently. A PDF is
+  // extracted to text server-side; a link (DocSend/Slides) or unreadable/empty file
+  // becomes an explicit "[NOT INGESTED]" marker so agents see the gap instead of garbage.
   if (inputs.decks && Array.isArray(inputs.decks)) {
+    const { extractPdfText } = require('../services/pdf-extractor');
+    const { planDeck, notIngestedMarker } = require('../agents/deck-ingest');
     for (const deck of inputs.decks) {
-      insertInput.run(assessmentId, 'deck', deck.label || 'Pitch Deck', deck.content, null, deck.fileName || null);
+      const label = deck.label || 'Pitch Deck';
+      const plan = planDeck(deck);
+
+      if (plan.mode === 'pdf') {
+        try {
+          const text = await extractPdfText(Buffer.from(deck.base64, 'base64'));
+          insertInput.run(assessmentId, 'deck', label, text, null, deck.fileName || null);
+          console.log(`[Assessment ${assessmentId}] Deck "${label}" ingested: ${text.length} chars from PDF`);
+        } catch (err) {
+          insertInput.run(assessmentId, 'deck', `${label} (NOT INGESTED)`, notIngestedMarker(`PDF could not be read: ${err.message}`), null, deck.fileName || null);
+          console.warn(`[Assessment ${assessmentId}] Deck "${label}" PDF extraction failed: ${err.message}`);
+        }
+      } else if (plan.mode === 'link') {
+        insertInput.run(assessmentId, 'deck', `${label} (NOT INGESTED)`, notIngestedMarker(`link (${plan.content}) is behind an access wall and was not retrieved — upload a PDF export`), plan.content, deck.fileName || null);
+        console.warn(`[Assessment ${assessmentId}] Deck link not ingested: ${plan.content}`);
+      } else if (plan.mode === 'empty') {
+        insertInput.run(assessmentId, 'deck', `${label} (NOT INGESTED)`, notIngestedMarker('no readable text was provided'), null, deck.fileName || null);
+      } else {
+        insertInput.run(assessmentId, 'deck', label, plan.content, null, deck.fileName || null);
+      }
     }
   }
   // Legacy: single deck_text
