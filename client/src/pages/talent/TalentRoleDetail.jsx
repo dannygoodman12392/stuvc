@@ -109,6 +109,7 @@ export default function TalentRoleDetail() {
           <select value={role.role_function || 'engineering'} onChange={e => patch({ role_function: e.target.value })} className="select w-full mt-1">
             <option value="engineering">Engineering</option>
             <option value="gtm">Go-to-Market (Sales/Mktg/Growth)</option>
+            <option value="success">Customer Success</option>
             <option value="product">Product</option>
             <option value="design">Design</option>
             <option value="operations">Operations / Chief of Staff</option>

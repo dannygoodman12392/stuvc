@@ -6,6 +6,19 @@
 
 const RELEASES = [
   {
+    version: 'v3.0.0',
+    date: 'June 3, 2026',
+    time: '3:30 PM CT',
+    title: 'Talent: one guided workspace (company → role → source)',
+    highlights: [
+      {
+        product: 'Talent',
+        change: 'Rebuilt the Talent landing into a single guided workspace. Add a company (with a one-liner of what it does), add a role to it (pick the function — Engineering, Go-to-Market, Customer Success, Product, Design, Ops, Finance), and hit "Source for this role" — all on one screen. Collapsed the confusing 7-tab nav to Companies & Roles / Candidates / Matches / Criteria. Added a proper Customer Success function so CS roles source and score on retention/expansion, not engineering or generic GTM criteria.',
+        benefit: 'The whole hiring flow is one obvious path now, and every role sources the right kind of person.',
+      },
+    ],
+  },
+  {
     version: 'v2.9.4',
     date: 'June 3, 2026',
     time: '2:30 PM CT',

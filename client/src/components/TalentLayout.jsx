@@ -1,9 +1,7 @@
 import { NavLink, Outlet } from 'react-router-dom';
 
 const TABS = [
-  { to: '/talent', label: 'Home', end: true },
-  { to: '/talent/portfolio', label: 'Companies' },
-  { to: '/talent/roles', label: 'Roles' },
+  { to: '/talent', label: 'Companies & Roles', end: true },
   { to: '/talent/candidates', label: 'Candidates' },
   { to: '/talent/matches', label: 'Matches' },
   { to: '/talent/criteria', label: 'Criteria' },

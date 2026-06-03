@@ -19,6 +19,7 @@ function parseJSON(s, fallback = []) {
 // circular require). Maps a role's function string to a canonical archetype.
 function normalizeFn(v) {
   const s = String(v || '').toLowerCase();
+  if (/customer success|customer experience|\bcsm\b|account management|account manager|post.?sales|renewals/.test(s)) return 'success';
   if (/gtm|sales|marketing|growth|revenue|cmo|cro|demand/.test(s)) return 'gtm';
   if (/product|cpo|\bpm\b/.test(s)) return 'product';
   if (/design|ux|ui|brand/.test(s)) return 'design';
@@ -34,6 +35,7 @@ function normalizeFn(v) {
 function inferCandidateFunction(c) {
   const text = [c.current_role, c.headline, c.one_liner].filter(Boolean).join(' ').toLowerCase();
   const hasStack = (parseJSON(c.tech_stack) || []).length > 0;
+  if (/\b(customer success|\bcsm\b|account manager|account management|customer experience|renewals)\b/.test(text)) return 'success';
   if (/\b(sales|marketing|growth|cmo|cro|revenue|demand gen|account executive|\bae\b|\bbd\b|biz dev|gtm)\b/.test(text)) return 'gtm';
   if (/\b(product manager|head of product|cpo|group pm|\bpm\b|product lead)\b/.test(text)) return 'product';
   if (/\b(designer|design lead|head of design|ux|ui|brand)\b/.test(text)) return 'design';
@@ -48,6 +50,7 @@ function inferCandidateFunction(c) {
 // the TITLE is the strongest signal, not a config field.
 function inferFunctionFromText(text) {
   const s = String(text || '').toLowerCase();
+  if (/\b(customer success|head of cs|vp customer success|\bcsm\b|account management|account manager|customer experience|renewals|post.?sales)\b/.test(s)) return 'success';
   if (/\b(cmo|chief marketing|vp marketing|head of marketing|marketing lead|growth|demand gen|sales|cro|chief revenue|account executive|\bae\b|gtm|go.to.market|brand|partnerships)\b/.test(s)) return 'gtm';
   if (/\b(cpo|chief product|head of product|product manager|product lead|group pm|\bpm\b)\b/.test(s)) return 'product';
   if (/\b(head of design|design lead|product designer|\bux\b|\bui\b|brand designer|creative director)\b/.test(s)) return 'design';

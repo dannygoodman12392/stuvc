@@ -141,6 +141,8 @@ function matchesLocation(candidate, locationTokens) {
 // redefined per archetype. Engineering is the default and preserves prior behavior.
 function normalizeArchetype(v) {
   const s = String(v || '').toLowerCase();
+  // CS before gtm/finance — "account management" must not fall into finance's /account/.
+  if (/customer success|customer experience|\bcsm\b|\bcs lead\b|account management|account manager|post.?sales|renewals/.test(s)) return 'success';
   if (/gtm|sales|marketing|growth|revenue|cmo|cro|demand/.test(s)) return 'gtm';
   if (/product|^pm$|\bpm\b|cpo/.test(s)) return 'product';
   if (/design|ux|ui|brand/.test(s)) return 'design';
@@ -239,6 +241,20 @@ ownership and big-co managers who only ran mature machines.`,
     seniority: `Reward a startup finance chapter, not just banking. PENALIZE pure-banking resumes with no operating finance.`,
     caliberDef: '9–10 if (P)+(L) or (F)+(L); 7–8 one strong; ≤5 if banking-only / no operating finance',
   },
+  success: {
+    label: 'Customer Success',
+    caliberName: 'CS CALIBER',
+    mission: 'A customer success leader who can retain and grow accounts for a portfolio company (Head of CS / first CSM / post-sales lead).',
+    bar: `  (P) RETENTION / EXPANSION OWNED — owned net revenue retention, churn, or expansion with a QUOTED result
+      (e.g. took NRR from 95% → 120%, cut churn, drove upsell/expansion revenue).
+  (F) ELITE CS ORG — customer success / account management role at a category-defining SaaS company
+      (Salesforce, HubSpot, Gainsight, Snowflake, Datadog, Notion, Ramp) — owned a book of business, not a support queue.
+  (L) BUILT CS 0→1 — first CS hire who built the onboarding/retention motion and the team from scratch at an early startup.
+  (R) PLAYBOOK / RECOGNITION — created the CS playbook, recognized voice in customer success, or scaled a CS org through hypergrowth.`,
+    seniority: `Reward operators who built a CS function and own retention/expansion numbers. PENALIZE pure tier-1
+support reps with no ownership of renewals/expansion, and big-co CSMs who only managed an existing book.`,
+    caliberDef: '9–10 only if (P)+(L) or (P)+(F) with quoted retention/expansion metrics; 7–8 one strong; ≤5 if no owned-number evidence',
+  },
   generalist: {
     label: 'Generalist / Business',
     caliberName: 'OPERATOR CALIBER',
@@ -289,6 +305,13 @@ function archetypeQueries(archKey, locSuffix, isChicago) {
       q('A', 'Startup CFO / Head of Finance', `site:linkedin.com/in ("CFO" OR "Head of Finance" OR "VP Finance" OR "FP&A") startup ("raised" OR "0 to 1" OR "first finance hire")${locSuffix}`),
       q('A', 'Banking-to-operator finance', `site:linkedin.com/in ("Goldman Sachs" OR "Morgan Stanley" OR "private equity") ("startup" OR "CFO" OR "Head of Finance")${locSuffix}`),
       ...(isChicago ? [q('A', 'Chicago finance leaders', `site:linkedin.com/in ("CFO" OR "Head of Finance" OR "VP Finance") Chicago startup`)] : []),
+    ],
+    success: [
+      q('A', 'CS leader, retention owner', `site:linkedin.com/in ("Head of Customer Success" OR "VP Customer Success" OR "Customer Success") ("net revenue retention" OR "NRR" OR "churn" OR "expansion" OR "renewals")${locSuffix}`),
+      q('A', 'Ex-elite CS org', `site:linkedin.com/in ("Salesforce" OR "HubSpot" OR "Gainsight" OR "Snowflake" OR "Notion" OR "Ramp") ("Customer Success" OR "Account Management") (lead OR director OR VP OR head)${locSuffix}`),
+      q('A', 'First CS hire 0→1', `site:linkedin.com/in ("first customer success hire" OR "founding customer success" OR "built the CS team" OR "built customer success") startup${locSuffix}`),
+      q('B', 'CSM startup-ready', `site:linkedin.com/in ("customer success manager" OR "CSM") startup "early-stage"${locSuffix}`),
+      ...(isChicago ? [q('A', 'Chicago CS leaders', `site:linkedin.com/in ("Head of Customer Success" OR "VP Customer Success") Chicago startup`)] : []),
     ],
     generalist: [
       q('A', 'First business hire', `site:linkedin.com/in ("Chief of Staff" OR "first business hire" OR "founding team" OR "General Manager") startup${locSuffix}`),
