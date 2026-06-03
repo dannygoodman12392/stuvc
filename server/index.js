@@ -191,7 +191,7 @@ app.use('/api/auth/register', rateLimit({ windowMs: 15 * 60 * 1000, max: 5, stan
 
 // Public routes
 app.get('/api/health', (req, res) => res.json({
-  status: 'ok', app: 'Stu', version: '3.9.1',
+  status: 'ok', app: 'Stu', version: '3.9.2',
   pipeline: {
     // Armed = the daily sourcing/talent/filings crons will actually run tonight.
     sourcing_armed: process.env.PIPELINE_ENABLED === 'true'
@@ -309,18 +309,23 @@ app.listen(PORT, () => {
 
     console.log('Daily sourcing engine scheduled (6:00 AM CT)');
 
-    // Daily talent sourcing — 30 min offset so logs don't interleave
+    // Daily talent sourcing — source EACH open role against its own function + JD, so
+    // marketing/product/CS roles get fresh candidates automatically (not just engineering).
     const { runTalentEngine } = require('./pipeline/talent-engine');
     cron.schedule('30 12 * * *', async () => {
-      console.log('[Cron] Starting daily talent sourcing run...');
-      try {
-        const result = await runTalentEngine({ userId: 1 });
-        console.log(`[Cron] Talent sourcing complete:`, result);
-      } catch (err) {
-        console.error('[Cron] Talent sourcing failed:', err.message);
+      const dbi = require('./db');
+      const roles = dbi.prepare("SELECT id, user_id, title FROM talent_roles WHERE is_deleted = 0 AND status = 'open' ORDER BY user_id, updated_at DESC LIMIT 25").all();
+      console.log(`[Cron] Daily talent sourcing across ${roles.length} open role(s)`);
+      for (const role of roles) {
+        try {
+          const r = await runTalentEngine({ userId: role.user_id, roleId: role.id });
+          console.log(`[Cron][Talent] role ${role.id} "${role.title}": found ${r.candidatesFound}, added ${r.candidatesAdded}, ${r.matchesCreated} matches`);
+        } catch (err) {
+          console.error(`[Cron][Talent] role ${role.id} failed:`, err.message);
+        }
       }
     });
-    console.log('Daily talent sourcing engine scheduled (6:30 AM CT)');
+    console.log('Daily talent sourcing engine scheduled (6:30 AM CT, per open role)');
 
     // R2: Daily SEC Form D IL filings pull — 11 AM UTC (pre-sourcing run so any
     // new filings are available for matching when sourcing runs at 12 UTC).
