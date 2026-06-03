@@ -132,6 +132,18 @@ seedIfEmpty();
         console.error('[Migration] Suspect-deck flagging error:', err.message);
       }
     }
+
+    // One-time: backfill sourcing evidence onto already-promoted founders.
+    const promoMetaFlag = db.prepare("SELECT * FROM migration_flags WHERE key = 'promote_metadata_backfill_v1'").get();
+    if (!promoMetaFlag) {
+      try {
+        console.log('[Migration] Backfilling sourcing evidence onto promoted founders...');
+        require('./migrations/backfill-promote-metadata')();
+        db.prepare("INSERT INTO migration_flags (key) VALUES ('promote_metadata_backfill_v1')").run();
+      } catch (err) {
+        console.error('[Migration] Promote-metadata backfill error:', err.message);
+      }
+    }
   } catch (err) {
     console.error('[Migration] Airtable import error:', err.message);
   }
@@ -171,7 +183,7 @@ app.use('/api/ai', rateLimit({ windowMs: 15 * 60 * 1000, max: 50, standardHeader
 app.use('/api/auth/register', rateLimit({ windowMs: 15 * 60 * 1000, max: 5, standardHeaders: true, legacyHeaders: false }));
 
 // Public routes
-app.get('/api/health', (req, res) => res.json({ status: 'ok', app: 'Stu', version: '2.8.2' }));
+app.get('/api/health', (req, res) => res.json({ status: 'ok', app: 'Stu', version: '2.9.0' }));
 // Full healthcheck board (authed) — green/red status across datastores, keys, jobs, integrity.
 app.get('/api/health/full', requireAuth, (req, res) => {
   try { res.json(require('./services/health').buildHealthReport(req.user.id)); }

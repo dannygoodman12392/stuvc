@@ -213,6 +213,13 @@ addColumn('sourced_founders', 'website_url', 'TEXT');
 
 // Caliber tier carried forward from sourcing into the pipeline
 addColumn('founders', 'caliber_tier', 'TEXT');
+// Full sourcing evidence carried on promotion — losing this on promote is unacceptable
+// for a sourcing tool (you must be able to see WHY a founder was surfaced).
+addColumn('founders', 'caliber_score', 'INTEGER');
+addColumn('founders', 'caliber_signals', 'TEXT');     // JSON
+addColumn('founders', 'evidence_map', 'TEXT');        // JSON — verbatim tie/caliber/stage evidence
+addColumn('founders', 'red_flags', 'TEXT');           // JSON
+addColumn('founders', 'sourced_from_id', 'INTEGER');  // back-ref to sourced_founders.id
 
 // Airtable record IDs (for one-way Stu → Airtable sync)
 addColumn('founders', 'airtable_founder_record_id', 'TEXT');

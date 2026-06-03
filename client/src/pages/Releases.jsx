@@ -6,6 +6,19 @@
 
 const RELEASES = [
   {
+    version: 'v2.9.0',
+    date: 'June 3, 2026',
+    time: '10:30 AM CT',
+    title: 'Tier 2: atomic approvals + evidence carried on promotion',
+    highlights: [
+      {
+        product: 'Sourcing',
+        change: 'Approving a founder from the inbox is now a single atomic operation — a crash or double-click can no longer create a duplicate or an orphaned record. And the full sourcing evidence (caliber tier/score, signals, the verbatim evidence map, red flags) now travels with the founder into the pipeline instead of being dropped. Existing promoted founders were backfilled with their evidence where the source still exists.',
+        benefit: 'No duplicate/lost founders on approval, and you keep the proof of why each founder was surfaced.',
+      },
+    ],
+  },
+  {
     version: 'v2.8.2',
     date: 'June 3, 2026',
     time: '9:30 AM CT',
