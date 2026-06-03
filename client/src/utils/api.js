@@ -184,6 +184,10 @@ export const api = {
   addNewsletterSource: (data) => request('/newsletter/sources', { method: 'POST', body: JSON.stringify(data) }),
   updateNewsletterSource: (id, data) => request(`/newsletter/sources/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   deleteNewsletterSource: (id) => request(`/newsletter/sources/${id}`, { method: 'DELETE' }),
+  seedBriefDefaults: () => request('/newsletter/seed-defaults', { method: 'POST' }),
+  sendBriefNow: () => request('/newsletter/send-now', { method: 'POST' }),
+  getBriefDigestPreview: () => request('/newsletter/digest-preview'),
+  getBriefArchive: () => request('/newsletter/archive'),
 
   // Stu tool-use chat
   stuChat: async function* (messages) {

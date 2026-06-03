@@ -141,4 +141,81 @@ router.delete('/:id', (req, res) => {
   res.json({ success: true });
 });
 
+// ── Daily Brief v2: archive blogs + email delivery ──
+
+const DEFAULT_ARCHIVES = [
+  { archive_key: 'pg', name: 'Paul Graham Essays' },
+  { archive_key: 'gurley', name: 'Above the Crowd (Bill Gurley)' },
+  { archive_key: 'chen', name: 'Andrew Chen Essays' },
+  { archive_key: 'elad', name: 'High Growth Handbook (Elad Gil)' },
+];
+const DEFAULT_NEWSLETTERS = [
+  { name: 'Upstarts (Alex Konrad)', url: 'https://www.upstartsmedia.com/' },
+  { name: 'Prof G Media', url: 'https://www.profgmedia.com/' },
+  { name: '1440', url: 'https://join1440.com/' },
+  { name: 'MTS', url: 'https://mtslive.substack.com/' },
+  { name: 'Risk Gaming (Lux Capital)', url: 'https://www.riskgaming.com/' },
+  { name: 'The AI Report', url: 'https://www.theaireport.ai/' },
+];
+
+// POST /api/newsletter/seed-defaults — install Danny's curated archive + newsletter set,
+// then backfill the archive catalogues. Idempotent (skips sources already present).
+router.post('/seed-defaults', async (req, res) => {
+  const userId = req.user.id;
+  const { discoverFeedUrl } = require('../services/newsletter');
+  const { backfillAll } = require('../services/brief-archive');
+  const added = { archives: 0, newsletters: 0, skipped: 0 };
+
+  for (const a of DEFAULT_ARCHIVES) {
+    const exists = db.prepare("SELECT id FROM newsletter_sources WHERE user_id=? AND kind='archive' AND archive_key=? AND is_deleted=0").get(userId, a.archive_key);
+    if (exists) { added.skipped++; continue; }
+    db.prepare("INSERT INTO newsletter_sources (user_id, name, type, kind, archive_key, enabled) VALUES (?,?,'archive','archive',?,1)").run(userId, a.name, a.archive_key);
+    added.archives++;
+  }
+
+  for (const n of DEFAULT_NEWSLETTERS) {
+    const exists = db.prepare("SELECT id FROM newsletter_sources WHERE user_id=? AND name=? AND is_deleted=0").get(userId, n.name);
+    if (exists) { added.skipped++; continue; }
+    let feedUrl = null;
+    try { const f = await discoverFeedUrl(n.url); feedUrl = f?.feedUrl || null; } catch {}
+    if (feedUrl) {
+      db.prepare("INSERT INTO newsletter_sources (user_id, name, type, kind, feed_url, enabled) VALUES (?,?,'rss','newsletter',?,1)").run(userId, n.name, feedUrl);
+    } else {
+      // No public RSS — store disabled with a note so Danny can attach an email sender.
+      db.prepare("INSERT INTO newsletter_sources (user_id, name, type, kind, feed_url, enabled, last_status) VALUES (?,?,'rss','newsletter',?,0,?)").run(userId, n.name, n.url, 'no RSS found — add as email sender');
+    }
+    added.newsletters++;
+  }
+
+  let backfill = {};
+  try { backfill = await backfillAll(userId); } catch (e) { backfill = { error: e.message }; }
+  res.json({ ok: true, added, backfill });
+});
+
+// POST /api/newsletter/send-now — build + email today's digest immediately (force).
+router.post('/send-now', async (req, res) => {
+  try {
+    const { sendDigest } = require('../services/email-digest');
+    const r = await sendDigest(req.user.id, { force: true });
+    res.json(r);
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// GET /api/newsletter/digest-preview — render today's digest HTML without sending.
+router.get('/digest-preview', async (req, res) => {
+  try {
+    const { buildDigest, renderHtml } = require('../services/email-digest');
+    const d = await buildDigest(req.user.id);
+    res.json({ ok: true, date: d.date, classics: d.classics, newsletters: d.newsletters, html: renderHtml(d) });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// GET /api/newsletter/archive — featured archive classics (the in-platform archive view).
+router.get('/archive', (req, res) => {
+  const rows = db.prepare(
+    "SELECT archive_key, author, title, url, summary, shown_at FROM brief_archive_posts WHERE user_id=? AND shown_at IS NOT NULL ORDER BY shown_at DESC LIMIT 100"
+  ).all(req.user.id);
+  res.json(rows.map(r => ({ ...r, summary: (() => { try { return JSON.parse(r.summary || 'null'); } catch { return null; } })() })));
+});
+
 module.exports = router;

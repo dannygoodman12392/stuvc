@@ -184,7 +184,7 @@ app.use('/api/auth/register', rateLimit({ windowMs: 15 * 60 * 1000, max: 5, stan
 
 // Public routes
 app.get('/api/health', (req, res) => res.json({
-  status: 'ok', app: 'Stu', version: '3.6.0',
+  status: 'ok', app: 'Stu', version: '3.7.0',
   pipeline: {
     // Armed = the daily sourcing/talent/filings crons will actually run tonight.
     sourcing_armed: process.env.PIPELINE_ENABLED === 'true'
@@ -256,11 +256,20 @@ app.listen(PORT, () => {
               AND setting_value IS NOT NULL AND setting_value != '' AND setting_value != '""'
           )
         `).all();
+        const { backfillAll } = require('./services/brief-archive');
+        const { sendDigest } = require('./services/email-digest');
         for (const { user_id } of users) {
           try {
-            const hasSources = dbi.prepare('SELECT COUNT(*) c FROM newsletter_sources WHERE user_id = ? AND enabled = 1 AND is_deleted = 0').get(user_id).c > 0;
+            // 1. Pull the latest newsletter issues.
+            const hasSources = dbi.prepare("SELECT COUNT(*) c FROM newsletter_sources WHERE user_id = ? AND enabled = 1 AND is_deleted = 0 AND kind != 'archive'").get(user_id).c > 0;
             const r = hasSources ? await fetchAllSources(user_id) : await fetchAndProcess(user_id, { limit: 40 });
             console.log(`[Cron][Newsletter] user ${user_id}:`, r.ok ? `${r.added} added` : r.error);
+            // 2. Keep archive catalogues fresh (idempotent; cheap).
+            const hasArchives = dbi.prepare("SELECT COUNT(*) c FROM newsletter_sources WHERE user_id=? AND kind='archive' AND enabled=1 AND is_deleted=0").get(user_id).c > 0;
+            if (hasArchives) { try { await backfillAll(user_id); } catch (e) { console.error(`[Cron][Brief] backfill ${user_id}:`, e.message); } }
+            // 3. Build + email the digest.
+            const sent = await sendDigest(user_id);
+            console.log(`[Cron][Brief] user ${user_id}:`, sent.ok ? (sent.skipped ? `skipped (${sent.reason})` : `sent → ${sent.recipient} (${sent.archive} classics, ${sent.newsletters} newsletters)`) : sent.error);
           } catch (e) { console.error(`[Cron][Newsletter] user ${user_id} failed:`, e.message); }
         }
       } catch (e) { console.error('[Cron][Newsletter] run failed:', e.message); }

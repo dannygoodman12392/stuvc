@@ -859,6 +859,47 @@ db.exec(`CREATE INDEX IF NOT EXISTS idx_news_sources ON newsletter_sources(user_
 // Track which source an item came from
 addColumn('newsletter_items', 'source_id', 'INTEGER');
 
+// Daily Brief v2 — archive blogs + email delivery.
+// A source can be a 'newsletter' (latest issue, via RSS/email) or an 'archive' (a treasure
+// trove of evergreen posts we resurface one-at-a-time daily, e.g. Paul Graham essays).
+addColumn('newsletter_sources', 'kind', "TEXT DEFAULT 'newsletter'");  // 'newsletter' | 'archive'
+addColumn('newsletter_sources', 'archive_key', 'TEXT');                // 'pg' | 'gurley' | 'chen' | 'elad'
+
+// Every post discovered in an archive. We rotate through them (shown_at IS NULL first),
+// so Danny works through the full back-catalogue without repeats.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS brief_archive_posts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    archive_key TEXT NOT NULL,
+    url TEXT NOT NULL,
+    title TEXT,
+    author TEXT,
+    content TEXT,                  -- cached full text (filled lazily on first feature)
+    summary TEXT,                  -- Claude takeaways (filled on first feature)
+    shown_at DATETIME,             -- NULL = never featured yet
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+`);
+db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_archive_url ON brief_archive_posts(user_id, url);`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_archive_rotation ON brief_archive_posts(user_id, archive_key, shown_at);`);
+
+// Log of digest emails sent — so we never double-send and can show send history.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS daily_brief_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    brief_date TEXT,
+    recipient TEXT,
+    archive_count INTEGER DEFAULT 0,
+    newsletter_count INTEGER DEFAULT 0,
+    status TEXT,                   -- 'sent' | 'error' | 'skipped'
+    error TEXT,
+    sent_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_brief_log ON daily_brief_log(user_id, brief_date);`);
+
 // Talent criteria (sourcing config — global or per-portfolio-co)
 db.exec(`
   CREATE TABLE IF NOT EXISTS talent_criteria (

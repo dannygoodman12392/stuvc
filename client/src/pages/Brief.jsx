@@ -57,14 +57,20 @@ export default function Brief() {
   const [status, setStatus] = useState(null);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
+  const [seeding, setSeeding] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [archive, setArchive] = useState([]);
   const pollRef = useRef(null);
   const { toast } = useToast();
 
   async function load() {
     try {
-      const [brief, st] = await Promise.all([api.getNewsletterBrief(), api.getNewsletterStatus()]);
+      const [brief, st, arch] = await Promise.all([
+        api.getNewsletterBrief(), api.getNewsletterStatus(), api.getBriefArchive().catch(() => []),
+      ]);
       setData(brief);
       setStatus(st);
+      setArchive(Array.isArray(arch) ? arch : []);
     } catch (err) {
       toast({ message: err.message, tone: 'error' });
     } finally {
@@ -101,6 +107,28 @@ export default function Brief() {
     }
   }
 
+  async function seedDefaults() {
+    setSeeding(true);
+    try {
+      const r = await api.seedBriefDefaults();
+      toast({ message: `Set up: ${r.added.archives} archive blogs + ${r.added.newsletters} newsletters. Backfilling the greats…`, duration: 5000 });
+      await load();
+    } catch (e) { toast({ message: e.message, tone: 'error', duration: 6000 }); }
+    finally { setSeeding(false); }
+  }
+
+  async function emailMeNow() {
+    setSending(true);
+    try {
+      const r = await api.sendBriefNow();
+      if (r.ok && !r.skipped) toast({ message: `Sent to ${r.recipient} — ${r.archive} classics + ${r.newsletters} newsletters.`, duration: 6000 });
+      else if (r.skipped) toast({ message: `Nothing to send: ${r.reason}.`, tone: 'error', duration: 5000 });
+      else toast({ message: r.error || 'Send failed', tone: 'error', duration: 7000 });
+      await load();
+    } catch (e) { toast({ message: e.message, tone: 'error', duration: 7000 }); }
+    finally { setSending(false); }
+  }
+
   async function dismiss(id) {
     try {
       await api.dismissNewsletterItem(id);
@@ -128,11 +156,30 @@ export default function Brief() {
             {data?.total ? ` · ${data.total} item${data.total === 1 ? '' : 's'}` : ''}
           </p>
         </div>
-        {status?.configured && (
-          <button onClick={sync} disabled={syncing} className="btn-primary text-xs px-3 py-1.5 disabled:opacity-50">
-            {syncing ? 'Pulling…' : 'Sync now'}
+        <div className="flex items-center gap-2 flex-shrink-0">
+          <button onClick={emailMeNow} disabled={sending} className="btn-secondary text-xs px-3 py-1.5 disabled:opacity-50" title="Build and email today's digest now">
+            {sending ? 'Sending…' : '✉ Email me today\'s brief'}
           </button>
-        )}
+          {status?.configured && (
+            <button onClick={sync} disabled={syncing} className="btn-primary text-xs px-3 py-1.5 disabled:opacity-50">
+              {syncing ? 'Pulling…' : 'Sync now'}
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* One-tap setup of Danny's curated set */}
+      <div className="card p-4 mb-5 flex items-center justify-between gap-4">
+        <div>
+          <div className="text-sm font-semibold text-gray-900">Learn from the greats, every morning</div>
+          <p className="text-xs text-gray-500 mt-0.5">
+            Archived essays from Paul Graham, Bill Gurley, Andrew Chen & Elad Gil — plus your key newsletters —
+            distilled into one daily email. The platform keeps a searchable archive.
+          </p>
+        </div>
+        <button onClick={seedDefaults} disabled={seeding} className="btn-primary text-xs px-3 py-1.5 whitespace-nowrap disabled:opacity-50">
+          {seeding ? 'Setting up…' : 'Set up my Daily Brief'}
+        </button>
       </div>
 
       {notConfigured && (
@@ -172,6 +219,28 @@ export default function Brief() {
           )
         ))}
       </div>
+
+      {archive.length > 0 && (
+        <div className="mt-8">
+          <h2 className="text-sm font-semibold text-gray-700 mb-3">Recently featured from the greats</h2>
+          <div className="space-y-3">
+            {archive.map((a, i) => (
+              <div key={i} className="card p-4">
+                <div className="text-[10px] uppercase tracking-wide text-gray-400">{a.author}</div>
+                <a href={a.url} target="_blank" rel="noopener" className="text-sm font-semibold text-gray-900 hover:text-amber-700">{a.title}</a>
+                {a.summary?.one_liner && <p className="text-xs text-gray-500 mt-1">{a.summary.one_liner}</p>}
+                {a.summary?.takeaways?.length > 0 && (
+                  <ul className="mt-2 space-y-1">
+                    {a.summary.takeaways.map((t, j) => (
+                      <li key={j} className="text-xs text-gray-600 flex gap-2"><span className="text-gray-300">•</span><span>{t}</span></li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
