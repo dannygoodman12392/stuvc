@@ -133,6 +133,13 @@ seedIfEmpty();
       }
     }
 
+    // One-time: replace the Elad whole-book brief row with individual chapters.
+    const eladFlag = db.prepare("SELECT * FROM migration_flags WHERE key = 'fix_elad_chapters_v1'").get();
+    if (!eladFlag) {
+      db.prepare("INSERT INTO migration_flags (key) VALUES ('fix_elad_chapters_v1')").run();
+      require('./migrations/fix-elad-chapters')().catch(err => console.error('[fix-elad-chapters] error:', err.message));
+    }
+
     // One-time: backfill sourcing evidence onto already-promoted founders.
     const promoMetaFlag = db.prepare("SELECT * FROM migration_flags WHERE key = 'promote_metadata_backfill_v1'").get();
     if (!promoMetaFlag) {
@@ -184,7 +191,7 @@ app.use('/api/auth/register', rateLimit({ windowMs: 15 * 60 * 1000, max: 5, stan
 
 // Public routes
 app.get('/api/health', (req, res) => res.json({
-  status: 'ok', app: 'Stu', version: '3.8.1',
+  status: 'ok', app: 'Stu', version: '3.8.2',
   pipeline: {
     // Armed = the daily sourcing/talent/filings crons will actually run tonight.
     sourcing_armed: process.env.PIPELINE_ENABLED === 'true'

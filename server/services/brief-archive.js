@@ -88,12 +88,22 @@ const ARCHIVE_DEFS = {
   elad: {
     author: 'Elad Gil',
     label: 'High Growth Handbook (Elad Gil)',
-    // The handbook is a JS-rendered custom-theme site with no enumerable chapter list.
-    // Best-effort: treat the homepage as the corpus (one rotating "lesson of the day").
+    // The handbook's chapters/sections live at /book/... URLs, listed in the homepage nav.
+    // We rotate through them one per day (a chapter/excerpt a day), not the whole book.
     async discover() {
       const html = await fetchPage('https://growth.eladgil.com/');
-      if (!html || stripHtml(html).length < 1000) return [];
-      return [{ url: 'https://growth.eladgil.com/', title: 'High Growth Handbook' }];
+      if (!html) return [];
+      const seen = new Set();
+      const out = [];
+      for (const m of html.matchAll(/<a[^>]+href="(https:\/\/growth\.eladgil\.com\/book\/[^"#]+)"[^>]*>([\s\S]*?)<\/a>/gi)) {
+        const url = m[1].replace(/\/+$/, '/') ;
+        const norm = url.replace(/\/+$/, '');
+        if (seen.has(norm)) continue;
+        seen.add(norm);
+        const title = stripHtml(m[2]).slice(0, 200);
+        out.push({ url, title: title || titleFromSlug(url) });
+      }
+      return out;
     },
   },
 };
@@ -183,25 +193,21 @@ async function pickDailyClassic(userId, key, anthropic) {
   }
   if (!row) return null;
 
-  // Elad (single-doc corpus): always re-summarize asking for a fresh lesson.
-  const isCorpus = key === 'elad';
-  let article = (row.content && !isCorpus) ? { title: row.title, text: row.content } : await extractArticle(row.url);
+  let article = row.content ? { title: row.title, text: row.content } : await extractArticle(row.url);
   if (!article) {
     // Mark as shown so a permanently-broken URL doesn't jam the rotation.
     db.prepare('UPDATE brief_archive_posts SET shown_at = CURRENT_TIMESTAMP WHERE id = ?').run(row.id);
     return null;
   }
   const title = (article.title && article.title.length > 3) ? article.title : row.title;
-  const shownCount = db.prepare('SELECT COUNT(*) c FROM brief_archive_posts WHERE user_id=? AND archive_key=? AND shown_at IS NOT NULL').get(userId, key).c;
-  const variety = isCorpus ? `This is the ${shownCount + 1}th time featuring this handbook — surface a DIFFERENT chapter/lesson than an obvious first pick.` : '';
-  const summary = await summarize(anthropic, { author: def.author, title, text: article.text }, { variety });
+  const summary = await summarize(anthropic, { author: def.author, title, text: article.text });
   if (!summary) {
     db.prepare('UPDATE brief_archive_posts SET shown_at = CURRENT_TIMESTAMP WHERE id = ?').run(row.id);
     return null;
   }
 
   db.prepare('UPDATE brief_archive_posts SET shown_at = CURRENT_TIMESTAMP, title = ?, content = ?, summary = ? WHERE id = ?')
-    .run(title.slice(0, 240), isCorpus ? null : article.text.slice(0, 20000), JSON.stringify(summary), row.id);
+    .run(title.slice(0, 240), article.text.slice(0, 20000), JSON.stringify(summary), row.id);
 
   return { author: def.author, label: def.label, title, url: row.url, one_liner: summary.one_liner, takeaways: summary.takeaways };
 }
