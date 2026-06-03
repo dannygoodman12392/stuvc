@@ -46,6 +46,42 @@ export default function Health() {
           </div>
         ))}
       </div>
+
+      <NotionDrift />
+    </div>
+  );
+}
+
+function NotionDrift() {
+  const [state, setState] = useState(null);
+  const [busy, setBusy] = useState(false);
+  async function run(repair) {
+    setBusy(true);
+    try { setState(await api.checkNotionDrift(repair)); } catch (e) { setState({ error: e.message }); }
+    finally { setBusy(false); }
+  }
+  return (
+    <div className="card p-4 mt-5">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-sm font-semibold text-gray-900">Notion mirror</h2>
+          <p className="text-xs text-gray-400 mt-0.5">Check that every investment-track founder exists in your Notion mirror. Repair re-pushes any missing from SQLite (canonical).</p>
+        </div>
+        <div className="flex gap-2">
+          <button onClick={() => run(false)} disabled={busy} className="text-xs font-medium px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:border-gray-300 disabled:opacity-50">{busy ? 'Checking…' : 'Check drift'}</button>
+          {state && state.missing && state.missing.length > 0 && (
+            <button onClick={() => run(true)} disabled={busy} className="text-xs font-medium px-3 py-1.5 rounded-lg bg-gray-900 text-white hover:bg-gray-800 disabled:opacity-50">Repair {state.missing.length}</button>
+          )}
+        </div>
+      </div>
+      {state && (
+        <div className="mt-3 text-xs">
+          {state.error ? <span className="text-red-600">{state.error}</span>
+            : !state.configured ? <span className="text-gray-400">Notion not configured.</span>
+            : state.missing.length === 0 ? <span className="text-emerald-600">In sync — {state.checked} founders verified{state.repaired ? `, ${state.repaired} repaired` : ''}.</span>
+            : <span className="text-amber-600">{state.missing.length} of {state.checked} missing from Notion{state.repaired ? ` · ${state.repaired} repaired` : ''}: {state.missing.slice(0, 8).map(m => m.name).join(', ')}</span>}
+        </div>
+      )}
     </div>
   );
 }

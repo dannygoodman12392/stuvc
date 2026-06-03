@@ -183,11 +183,16 @@ app.use('/api/ai', rateLimit({ windowMs: 15 * 60 * 1000, max: 50, standardHeader
 app.use('/api/auth/register', rateLimit({ windowMs: 15 * 60 * 1000, max: 5, standardHeaders: true, legacyHeaders: false }));
 
 // Public routes
-app.get('/api/health', (req, res) => res.json({ status: 'ok', app: 'Stu', version: '2.9.0' }));
+app.get('/api/health', (req, res) => res.json({ status: 'ok', app: 'Stu', version: '2.9.1' }));
 // Full healthcheck board (authed) — green/red status across datastores, keys, jobs, integrity.
 app.get('/api/health/full', requireAuth, (req, res) => {
   try { res.json(require('./services/health').buildHealthReport(req.user.id)); }
   catch (e) { res.status(500).json({ overall: 'red', checks: [{ name: 'Healthcheck', status: 'red', detail: e.message }] }); }
+});
+// Notion mirror drift check (authed, async). ?repair=1 re-pushes missing founders from canonical SQLite.
+app.get('/api/health/drift', requireAuth, async (req, res) => {
+  try { res.json(await require('./services/notion-sync').checkNotionDrift(req.user.id, { repair: req.query.repair === '1' })); }
+  catch (e) { res.status(500).json({ error: e.message }); }
 });
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/payments', payments.router);

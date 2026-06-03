@@ -171,6 +171,7 @@ export const api = {
 
   // Healthcheck board
   getHealthFull: () => request('/health/full'),
+  checkNotionDrift: (repair) => request('/health/drift' + (repair ? '?repair=1' : '')),
 
   // Newsletter / Daily Brief
   getNewsletterBrief: (days) => request('/newsletter/brief' + (days ? `?days=${days}` : '')),

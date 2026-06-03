@@ -155,40 +155,76 @@ function buildProperties(founder, isCreate) {
   return props;
 }
 
+// Retry transient failures (network/5xx/429) with backoff; surface the rest.
+async function withRetry(fn, label, tries = 3) {
+  let lastErr;
+  for (let i = 0; i < tries; i++) {
+    try { return await fn(); }
+    catch (e) {
+      lastErr = e;
+      const transient = /timeout|etimedout|econnreset|fetch failed|socket|\b5\d\d\b|429/i.test(e.message || '');
+      if (!transient || i === tries - 1) throw e;
+      console.warn(`[NotionSync] transient failure (${label}), retry ${i + 1}/${tries - 1}: ${e.message}`);
+      await new Promise(r => setTimeout(r, 400 * (i + 1)));
+    }
+  }
+  throw lastErr;
+}
+
 async function pushFounderToNotion(founder) {
   if (!NOTION_TOKEN || !NOTION_FOUNDERS_DB_ID) {
     console.warn('[NotionSync] NOTION_API_KEY/NOTION_TOKEN or NOTION_FOUNDERS_DB_ID not set — skipping');
     return null;
   }
-  if (!founder || !founder.id) {
-    console.warn('[NotionSync] Invalid founder payload — skipping');
-    return null;
-  }
-  if (!founder.name) {
-    console.warn(`[NotionSync] Founder ${founder.id} has no name — skipping`);
+  if (!founder || !founder.id || !founder.name) {
+    console.warn(`[NotionSync] Invalid founder payload (id=${founder && founder.id}) — skipping`);
     return null;
   }
 
   try {
-    const existing = await findFounderByStuId(founder.id);
+    const existing = await withRetry(() => findFounderByStuId(founder.id), 'lookup');
     if (existing) {
-      const props = buildProperties(founder, false);
-      const result = await notionRequest('PATCH', `/v1/pages/${existing.id}`, { properties: props });
-      console.log(`[NotionSync] ✓ updated ${founder.name} (Notion ${existing.id})`);
-      return result;
+      await withRetry(() => notionRequest('PATCH', `/v1/pages/${existing.id}`, { properties: buildProperties(founder, false) }), 'update');
     } else {
-      const props = buildProperties(founder, true);
-      const result = await notionRequest('POST', '/v1/pages', {
+      await withRetry(() => notionRequest('POST', '/v1/pages', {
         parent: { database_id: NOTION_FOUNDERS_DB_ID },
-        properties: props,
-      });
-      console.log(`[NotionSync] ✓ created ${founder.name} (Notion ${result.id})`);
-      return result;
+        properties: buildProperties(founder, true),
+      }), 'create');
     }
+    // Read-back verification: confirm the page is actually there after the write.
+    const verify = await withRetry(() => findFounderByStuId(founder.id), 'verify');
+    if (!verify) throw new Error('read-back verification failed: page not found after push');
+    console.log(`[NotionSync] ✓ ${existing ? 'updated' : 'created'} + verified ${founder.name}`);
+    return verify;
   } catch (err) {
     console.error(`[NotionSync] ✗ ${founder.name} sync failed: ${err.message}`);
     throw err;
   }
 }
 
-module.exports = { pushFounderToNotion, findFounderByStuId };
+// Drift check: every investment-track founder in SQLite (canonical) should have a Notion
+// page. Returns missing/errored ones. With { repair: true }, re-pushes the missing from
+// canonical (SQLite is always the source of truth — we never pull Notion edits back here).
+async function checkNotionDrift(userId, { repair = false } = {}) {
+  if (!NOTION_TOKEN || !NOTION_FOUNDERS_DB_ID) return { configured: false, checked: 0, missing: [], repaired: 0 };
+  const db = require('../db');
+  const founders = db.prepare(
+    "SELECT * FROM founders WHERE created_by = ? AND is_deleted = 0 AND pipeline_tracks LIKE '%investment%'"
+  ).all(userId);
+  const missing = [];
+  let repaired = 0;
+  for (const f of founders) {
+    try {
+      const page = await withRetry(() => findFounderByStuId(f.id), 'drift-lookup');
+      if (!page) {
+        missing.push({ id: f.id, name: f.name });
+        if (repair) { try { await pushFounderToNotion(f); repaired++; } catch (e) { /* leave in missing */ } }
+      }
+    } catch (e) {
+      missing.push({ id: f.id, name: f.name, error: e.message });
+    }
+  }
+  return { configured: true, checked: founders.length, missing, repaired, ok: missing.length === 0 || repaired === missing.length };
+}
+
+module.exports = { pushFounderToNotion, findFounderByStuId, checkNotionDrift };

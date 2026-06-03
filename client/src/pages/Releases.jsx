@@ -6,6 +6,19 @@
 
 const RELEASES = [
   {
+    version: 'v2.9.1',
+    date: 'June 3, 2026',
+    time: '11:40 AM CT',
+    title: 'Tier 2 complete: mirror integrity',
+    highlights: [
+      {
+        product: 'Platform',
+        change: 'Confirmed (and locked with a test) that the startup Airtable import is additive-only — it never overwrites your canonical SQLite data. Hardened the Notion mirror: pushes now retry transient failures and verify the page exists afterward (read-back). Added a Notion drift check on the Health page — see any investment-track founder missing from Notion and one-click re-push them from SQLite.',
+        benefit: 'Your data stays canonical in Stu, your Notion mirror stays in sync, and you can see/repair any drift in seconds.',
+      },
+    ],
+  },
+  {
     version: 'v2.9.0',
     date: 'June 3, 2026',
     time: '10:30 AM CT',
