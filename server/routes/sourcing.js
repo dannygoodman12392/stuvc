@@ -152,8 +152,12 @@ router.post('/unstar/:id', (req, res) => {
 router.post('/run', async (req, res) => {
   try {
     const { runSourcingEngine } = require('../pipeline/sourcing-engine');
+    const { recordJobRun } = require('../services/health');
+    const uid = req.user.id;
     res.json({ message: 'Full sweep sourcing run started — running all query groups' });
-    runSourcingEngine({ fullSweep: true, userId: req.user.id }).catch(err => console.error('[Sourcing] Run error:', err));
+    runSourcingEngine({ fullSweep: true, userId: uid })
+      .then(r => recordJobRun('sourcing_run', (r.errors && r.errors.length) ? 'partial' : 'ok', `+${r.totalAdded} added, ${r.totalFiltered} filtered${r.errors && r.errors.length ? `, ${r.errors.length} errors` : ''}`, uid))
+      .catch(err => { recordJobRun('sourcing_run', 'error', err.message, uid); console.error('[Sourcing] Run error:', err); });
   } catch (err) {
     res.status(500).json({ error: 'Failed to start sourcing run: ' + err.message });
   }

@@ -169,6 +169,9 @@ export const api = {
   // Home dashboard
   getHome: () => request('/home'),
 
+  // Healthcheck board
+  getHealthFull: () => request('/health/full'),
+
   // Newsletter / Daily Brief
   getNewsletterBrief: (days) => request('/newsletter/brief' + (days ? `?days=${days}` : '')),
   getNewsletterStatus: () => request('/newsletter/status'),

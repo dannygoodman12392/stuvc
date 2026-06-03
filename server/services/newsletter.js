@@ -500,7 +500,13 @@ async function fetchAllSources(userId) {
     if (r.error) errors.push(r.error);
   }
 
-  return { ok: true, added, errors, sources: sources.length };
+  // ok ONLY when every source succeeded — a partial failure must not read as green.
+  const ok = errors.length === 0;
+  return {
+    ok, added, errors, sources: sources.length,
+    failed: errors.length,
+    error: ok ? null : `${errors.length} of ${sources.length} source(s) failed: ${errors.slice(0, 3).join(' | ')}`,
+  };
 }
 
 module.exports = {

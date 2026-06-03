@@ -6,6 +6,32 @@
 
 const RELEASES = [
   {
+    version: 'v2.8.1',
+    date: 'June 3, 2026',
+    time: '8:45 AM CT',
+    title: 'No more silent failures + a Health board',
+    highlights: [
+      {
+        product: 'Platform',
+        change: 'Newsletter sync now reports failure honestly — if any source fails, the run is no longer "green." Every job (Brief sync, sourcing run, Notion push, publish-to-team) records its outcome to a durable log. New Health tab shows a 5-second green/red board: datastores, API keys, last run of each job, failing newsletter sources, duplicate founders, suspect decks.',
+        benefit: 'You can tell at a glance whether everything actually ran — and exactly what to fix when it didn\'t.',
+      },
+    ],
+  },
+  {
+    version: 'v2.8.0',
+    date: 'June 3, 2026',
+    time: '7:10 AM CT',
+    title: 'Assessment decks: real ingestion, never a silent corrupt score',
+    highlights: [
+      {
+        product: 'Founder Assessment',
+        change: 'PDF decks are now extracted to text server-side (they were being corrupted before upload). PowerPoint is rejected with a clear "export to PDF" message. A deck that\'s a DocSend/Slides link or an unreadable file is explicitly marked "not ingested" so the agents never score on garbage. Past assessments with corrupted/un-ingested decks are flagged "suspect" with a banner.',
+        benefit: 'Assessment scores are trustworthy because they\'re based on the real deck — or clearly flagged when they aren\'t.',
+      },
+    ],
+  },
+  {
     version: 'v2.7.3',
     date: 'June 3, 2026',
     time: '3:30 AM CT',

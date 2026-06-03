@@ -170,11 +170,12 @@ router.put('/:id', (req, res) => {
     const newHasInvestment = (nextTracks || '').includes('investment');
     if (newHasInvestment) {
       const notionSync = require('../services/notion-sync');
+      const { recordJobRun } = require('../services/health');
       const action = oldHasInvestment ? 'update' : 'create';
       console.log(`[NotionSync] PUT /founders/${updated.id} → ${action} (${updated.name})`);
-      notionSync.pushFounderToNotion(updated).catch(err =>
-        console.error('[NotionSync] Push failed:', err.message)
-      );
+      notionSync.pushFounderToNotion(updated)
+        .then(() => recordJobRun('notion_push', 'ok', `${action} ${updated.name}`, req.user.id))
+        .catch(err => { recordJobRun('notion_push', 'error', `${updated.name}: ${err.message}`, req.user.id); console.error('[NotionSync] Push failed:', err.message); });
     }
   } catch (syncErr) {
     console.error('[NotionSync] Module load failed:', syncErr.message);
@@ -221,8 +222,10 @@ router.post('/:id/publish-to-team', async (req, res) => {
     }
     // Surface a real status — the caller learns if the team base actually received it.
     const ok = !(results.admissions && results.admissions.error) && !(results.deal && results.deal.error);
+    require('../services/health').recordJobRun('publish_to_team', ok ? 'ok' : 'error', `${founder.name}`, req.user.id);
     res.json({ ok, published: ok, results });
   } catch (err) {
+    require('../services/health').recordJobRun('publish_to_team', 'error', err.message, req.user.id);
     console.error('[PublishToTeam] failed:', err.message);
     res.status(502).json({ ok: false, error: `Publish to team failed: ${err.message}` });
   }

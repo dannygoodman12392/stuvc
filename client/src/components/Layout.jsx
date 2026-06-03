@@ -16,6 +16,7 @@ const navConfig = [
   { to: '/portfolio', label: 'Portfolio', placeholder: true },
   { to: '/fund', label: 'Fund', placeholder: true },
   { to: '/releases', label: 'Releases' },
+  { to: '/health', label: 'Health' },
   { to: '/settings', label: 'Settings' },
 ];
 

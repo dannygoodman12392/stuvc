@@ -110,16 +110,20 @@ router.post('/sync', (req, res) => {
   const runner = sourceCount > 0 ? fetchAllSources(userId) : fetchAndProcess(userId, { limit: 40 });
 
   // Fire-and-forget; record result in memory for /status.
+  const { recordJobRun } = require('../services/health');
   runner
     .then(r => {
       syncState.set(userId, {
         running: false,
         last: { at: new Date().toISOString(), ...r },
       });
-      console.log(`[Newsletter] sync user ${userId}:`, r.ok ? `${r.added}/${r.fetched} added` : r.error);
+      const status = r.ok ? 'ok' : (r.added > 0 ? 'partial' : 'error');
+      recordJobRun('newsletter_sync', status, r.ok ? `+${r.added} added` : (r.error || 'failed'), userId);
+      console.log(`[Newsletter] sync user ${userId}:`, r.ok ? `${r.added} added` : r.error);
     })
     .catch(err => {
       syncState.set(userId, { running: false, last: { at: new Date().toISOString(), ok: false, error: err.message } });
+      recordJobRun('newsletter_sync', 'error', err.message, userId);
       console.error(`[Newsletter] sync user ${userId} failed:`, err.message);
     });
 });

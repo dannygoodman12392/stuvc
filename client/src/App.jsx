@@ -17,6 +17,7 @@ import Placeholder from './pages/Placeholder';
 import Settings from './pages/Settings';
 import Brief from './pages/Brief';
 import Releases from './pages/Releases';
+import Health from './pages/Health';
 import Payment from './pages/Payment';
 import PaymentSuccess from './pages/PaymentSuccess';
 import Admin from './pages/Admin';
@@ -92,6 +93,7 @@ function AppRoutes() {
       <Route path="/brief" element={<ProtectedRoute><Brief /></ProtectedRoute>} />
       <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
       <Route path="/releases" element={<ProtectedRoute><Releases /></ProtectedRoute>} />
+      <Route path="/health" element={<ProtectedRoute><Health /></ProtectedRoute>} />
       <Route path="/admin" element={<ProtectedRoute><Admin /></ProtectedRoute>} />
       <Route path="/talent" element={<ProtectedRoute><TalentLayout /></ProtectedRoute>}>
         <Route index element={<TalentHome />} />

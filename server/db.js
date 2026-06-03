@@ -394,6 +394,20 @@ addColumn('sourced_founders', 'affinity_reason', 'TEXT');
 addColumn('opportunity_assessments', 'deck_status', 'TEXT');        // 'ok' | 'suspect'
 addColumn('opportunity_assessments', 'deck_status_reason', 'TEXT');
 
+// Job run log — every scheduled/triggered job records its outcome here so failures are
+// durable and surfaced (not swallowed in console). Powers the healthcheck board.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS job_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    job TEXT NOT NULL,
+    status TEXT NOT NULL,   -- 'ok' | 'partial' | 'error'
+    detail TEXT,
+    ran_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_job_runs ON job_runs(job, ran_at DESC);`);
+
 // R2: entity filings source (new)
 db.exec(`
   CREATE TABLE IF NOT EXISTS entity_filings (
