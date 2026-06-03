@@ -981,23 +981,19 @@ async function runTalentEngine({ userId = 1, fullSweep = false, roleId = null } 
       }
     }
 
-    // Hard band filter — role-scoped
-    if (roleScope && Array.isArray(score.band_fit) && score.band_fit.length && !score.band_fit.includes(roleScope.band)) {
-      rejectedByBand++;
-      console.log(`[TalentEngine] 🚫 ${c.name} → skipped: band ${score.band_fit.join(',')} ≠ ${roleScope.band}`);
-      continue;
-    }
-
-    // Hard Tier-1 gate — Band A candidates must pass tier1_ready and min score
+    // Caliber gate — the candidate's SCORE is the real quality bar. We previously also
+    // hard-dropped on (a) the LLM's band LABEL not literally matching the role band and
+    // (b) a separate binary tier1_ready flag. Those double-filtered on top of the score
+    // and left role queues empty over label technicalities. Now: one honest threshold.
+    // A band-A role keeps a high floor (≥7); tier1_ready only *raises* a borderline case.
     if (bandAMode) {
-      if (!score.tier1_ready) {
-        rejectedByTier1++;
-        console.log(`[TalentEngine] 🚫 ${c.name} → skipped: not tier-1 ready (cats: ${(score.tier1_categories||[]).join(',') || 'none'}, flags: ${(score.red_flags||[]).join('; ') || 'none'})`);
-        continue;
-      }
-      if (score.overall_score < TIER1_MIN_SCORE) {
+      const floor = TIER1_MIN_SCORE;
+      // tier1_ready acts as a half-point boost so a strong, clearly-tier-1 candidate at
+      // 6.5-equivalent isn't lost, but it can't rescue a genuinely low score.
+      const effective = score.overall_score + (score.tier1_ready ? 0.5 : 0);
+      if (effective < floor) {
         rejectedByScore++;
-        console.log(`[TalentEngine] 🚫 ${c.name} → skipped: score ${score.overall_score} < ${TIER1_MIN_SCORE}`);
+        console.log(`[TalentEngine] 🚫 ${c.name} → skipped: score ${score.overall_score}${score.tier1_ready ? ' (+0.5 tier1)' : ''} < ${floor}`);
         continue;
       }
     }

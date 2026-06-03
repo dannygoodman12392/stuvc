@@ -442,9 +442,23 @@ function detectCaliberSignals(text, headline) {
     signals.push('Shipped at scale');
   }
 
+  // (9) Raised INSTITUTIONAL capital — third-party conviction from a real fund/accelerator.
+  //     This is the signal that defines the founders Danny actually backs: technical people
+  //     who got a credible investor to commit, usually at pre-seed/seed, often pre-traction.
+  //     Tight patterns so we don't fire on "raised awareness" / "raised the bar".
+  let institutionalRaise = false;
+  const raisedMoney = /\braised\s+(a\s+|an\s+|our\s+|its\s+|their\s+)?(\$\s?\d|pre[- ]?seed|seed|series\s+[a-d]|angel|institutional)/.test(combined);
+  const roundWord = /\b(pre[- ]?seed|seed|series\s+[a-d])\s+(round|funding|financing|raise)\b/.test(combined);
+  const backedBy = /\b(backed by|funded by|raised from|investors? include|venture[- ]backed|vc[- ]backed)\b/.test(combined);
+  const namedBackers = /\b(y[- ]?combinator|techstars|sequoia|a16z|andreessen|benchmark|founders fund|khosla|greylock|accel|first round|general catalyst|lightspeed|bessemer|index ventures|gv|google ventures|nea|8vc|craft ventures|initialized|pear vc|hustle fund|precursor|chapter one|matterhorn|m25|hyde park (angels|ventures)|chicago ventures|jump capital|hyde park)\b/.test(combined);
+  if (raisedMoney || roundWord || backedBy || namedBackers) {
+    institutionalRaise = true;
+    signals.push('Raised institutional capital');
+  }
+
   return {
     signals: [...new Set(signals)],
-    topProgram, hyperscaleDeparture, eliteCompany, traction, strongTraction,
+    topProgram, hyperscaleDeparture, eliteCompany, traction, strongTraction, institutionalRaise,
   };
 }
 
@@ -452,7 +466,7 @@ function detectCaliberSignals(text, headline) {
 // the evidence it can justify, but S requires at least one hard signal here.
 function computeCaliber(text, headline, eliteSchoolsNational = []) {
   const det = detectCaliberSignals(text, headline);
-  const { signals, topProgram, hyperscaleDeparture, eliteCompany, traction, strongTraction } = det;
+  const { signals, topProgram, hyperscaleDeparture, eliteCompany, traction, strongTraction, institutionalRaise } = det;
   const has = (frag) => signals.some(s => s.toLowerCase().includes(frag));
   const bigExit = has('exit (significant)');
   const anyExit = has('exit');
@@ -462,27 +476,41 @@ function computeCaliber(text, headline, eliteSchoolsNational = []) {
   const shipped = has('shipped at scale');
   const eliteNational = (eliteSchoolsNational || []).length > 0;
 
-  // "Elite builder" — strong evidence of building ability that does NOT depend on a
-  // brand-name credential. This is the path for the great Chicago founder with no YC badge.
-  const eliteBuilder = strongTraction || (traction && (eliteCompany || shipped || repeat || research || oss));
+  // Two distinct axes, deliberately separated to fix the leniency:
+  //   topOutcome  = a proven, top-tier RESULT (exit, top-program admit, strong traction,
+  //                 research/OSS eminence). These earn A on their own.
+  //   building    = evidence the person is ACTIVELY building something real right now
+  //                 (raised institutional capital, traction, shipped product).
+  //   credential  = an elite background WITHOUT a result (ex-elite-company, FAANG departure,
+  //                 repeat founder, elite school). A credential alone is NOT best-of-best.
+  const topOutcome = bigExit || anyExit || topProgram || strongTraction || research || oss;
+  const building = institutionalRaise || traction || strongTraction || shipped || research || oss;
+  const credential = eliteCompany || hyperscaleDeparture || repeat || eliteNational;
 
   let tier, score, rationale;
-  if (bigExit || (anyExit && repeat) || (topProgram && (hyperscaleDeparture || eliteNational)) || (strongTraction && (anyExit || topProgram || repeat))) {
+  if (bigExit
+      || (anyExit && (repeat || strongTraction || topProgram))
+      || (topProgram && strongTraction)
+      || (strongTraction && repeat)) {
     tier = 'S'; score = 9;
-    rationale = 'Top-tier: a real exit, top-program selection with pedigree, or serious traction paired with a prior win.';
-  } else if (anyExit || topProgram || hyperscaleDeparture || eliteBuilder || research || oss || repeat || (signals.length && eliteNational)) {
+    rationale = 'Top-tier: a meaningful exit, a top-program admit paired with serious traction, or strong traction paired with a prior win.';
+  } else if (topOutcome || (building && credential) || (institutionalRaise && (traction || shipped))) {
+    // A = a proven outcome, OR a credible elite founder who is demonstrably BUILDING
+    // (raised, shipping, or with traction). A bare credential no longer reaches A.
     tier = 'A'; score = 7;
-    rationale = 'Best-of-best: a prior exit/top program, OR exceptional builder evidence — real traction, scaled product, elite-company depth, or research/OSS eminence (no badge required).';
-  } else if (signals.length > 0 || traction || eliteCompany || eliteNational || research || oss) {
+    rationale = 'Best-of-best: a prior exit/top program/strong traction, OR an elite background paired with real building (institutional raise, shipped product, or traction).';
+  } else if (building || eliteCompany || hyperscaleDeparture || repeat || (eliteNational && signals.length > 0)) {
+    // B = one real building or strong-credential signal. Note: an elite SCHOOL alone is
+    // pedigree, not caliber — it only reaches B alongside another signal.
     tier = 'B'; score = 5;
-    rationale = 'Strong builder with at least one real caliber signal (traction, elite-company background, or pedigree).';
+    rationale = 'Strong builder with at least one real signal — institutional raise, early traction, elite-company background, or a repeat founder.';
   } else {
     tier = 'C'; score = 3;
-    rationale = 'Limited public signal so far — promising founder, but not enough evidence in the profile yet to grade higher.';
+    rationale = 'Limited evidence of building so far — a credential or elite school alone is not enough to grade higher.';
   }
-  // A hard signal (lets the LLM justify A/S) now includes genuine builder evidence,
-  // not just credentials — so a high-traction founder isn't capped out of the top tiers.
-  const hardSignalPresent = anyExit || topProgram || hyperscaleDeparture || strongTraction || eliteCompany || repeat;
+  // A hard signal lets the LLM justify A/S. Credential-only is intentionally NOT a hard
+  // signal anymore: a real outcome or active building is required to claim the top tiers.
+  const hardSignalPresent = anyExit || topProgram || strongTraction || research || oss || institutionalRaise;
   return { tier, score, signals, rationale, hardSignalPresent };
 }
 
@@ -753,6 +781,12 @@ const DAILY_STEALTH_QUERIES = [
   { name: 'LinkedIn Booth founder', query: `site:linkedin.com/in "Chicago Booth" ("founder" OR "co-founder") ("stealth" OR "building") ${NEG}` },
   { name: 'LinkedIn pre-seed Chicago founder', query: `site:linkedin.com/in "pre-seed" ("Chicago" OR "Illinois") "founder" ${NEG}` },
   { name: 'LinkedIn repeat founder Chicago', query: `site:linkedin.com/in ("repeat founder" OR "second-time founder" OR "serial founder") ("Chicago" OR "Illinois") ${NEG}` },
+  // ARCHETYPE-MATCHED — the founders Danny actually backs: technical people who RAISED
+  // institutional capital recently for an ambitious (often AI-native) build, in Chicago.
+  { name: 'LinkedIn raised pre-seed/seed Chicago', query: `site:linkedin.com/in ("raised" OR "backed by") ("pre-seed" OR "seed") ("Chicago" OR "Illinois") ("founder" OR "co-founder") ${NEG}` },
+  { name: 'LinkedIn AI-native founder raised Chicago', query: `site:linkedin.com/in ("AI" OR "agents" OR "LLM") ("raised" OR "pre-seed" OR "seed") ("Chicago" OR "Illinois") ("founder" OR "building") ${NEG}` },
+  { name: 'LinkedIn backed by Chicago funds', query: `site:linkedin.com/in ("backed by" OR "raised from") ("M25" OR "Hyde Park Angels" OR "Chicago Ventures" OR "Jump Capital" OR "Hyde Park Venture") "founder" ${NEG}` },
+  { name: 'LinkedIn venture-backed founder Chicago', query: `site:linkedin.com/in ("venture-backed" OR "VC-backed" OR "raised from") ("Chicago" OR "Illinois") ("founder" OR "co-founder") "building" ${NEG}` },
 ];
 
 // ELITE COHORT QUERIES — the inversion. Instead of scraping LinkedIn for "stealth
@@ -951,21 +985,35 @@ The fit score answers "is this a real, fresh, Chicago-tied founder?" Caliber ans
 question: "independent of geography, is this a best-of-best builder?" A founder can be a strong
 local fit but only B-caliber, or S-caliber but stale. Do not let one bleed into the other.
 
-CRITICAL: elite credentials (YC, a16z Speedrun, an exit) are ONE path to high caliber — NOT the only
-path. An exceptional builder with real traction or a scaled product deserves A or S even with NO
-brand-name badge. Judge building ABILITY and EVIDENCE, not pedigree alone. Do not down-tier a great
-founder just because they never did YC or sold a company.
-- S (caliber_score 9-10): Truly exceptional. A meaningful prior exit; OR top-program admit
-  (YC/a16z Speedrun/Thiel/Neo) with elite pedigree; OR serious traction (substantial revenue/users)
-  paired with a prior win.
-- A (7-8): Best-of-best. ANY of: prior exit; top-program admit; senior/Staff+ background at a
-  category-defining company (Google/Meta/Stripe/OpenAI/Anthropic/Ramp/Anduril/Scale/Databricks/
-  Citadel); real traction (paying customers, revenue, meaningful users); a shipped-and-scaled product;
-  research eminence (PhD + cited work) or notable open-source.
-- B (5-6): Strong builder with at least one real signal — early traction, elite-company experience,
-  serious technical work, or strong pedigree.
-- C (1-4): Genuinely thin public evidence so far (not a judgment that they're weak — just not enough
-  in the text to grade higher). Promising-but-unproven stealth founders can sit here.
+CRITICAL — A CREDENTIAL IS NOT CALIBER. The bar is being too lenient: a brand-name employer or
+school alone is being graded as best-of-best. It is not. What earns the top tiers is a proven OUTCOME
+or evidence the founder is ACTIVELY BUILDING something real. "Ex-Google engineer" with no startup is
+B, not A. "Ex-Google engineer who raised a pre-seed and is shipping" is A. Judge building EVIDENCE,
+not pedigree. Equally: an exceptional builder with real traction deserves A or S with NO brand badge.
+
+The single most telling builder signal for this fund is RAISED INSTITUTIONAL CAPITAL — a credible
+investor committed (pre-seed/seed/Series, "backed by", named funds/accelerators). Weight it heavily.
+
+- S (caliber_score 9-10): Truly exceptional. A meaningful prior exit; OR a top-program admit
+  (YC/a16z Speedrun/Thiel/Neo) paired with serious traction; OR substantial traction paired with a
+  prior win.
+- A (7-8): Best-of-best. EITHER a proven outcome (prior exit; top-program admit; real traction —
+  paying customers/revenue/meaningful users; shipped-and-scaled product; research eminence or notable
+  open-source) — OR an elite background (Staff+ at a category-defining company / repeat founder /
+  elite institution) PAIRED WITH active building (raised institutional capital, shipping, or traction).
+  A bare credential with no building does NOT reach A.
+- B (5-6): One real signal — raised institutional capital, early traction, elite-company background,
+  a repeat founder, or serious technical work. A founder who is clearly building but pre-validation.
+- C (1-4): A credential or elite school ALONE, or genuinely thin evidence. Not a judgment that they're
+  weak — just not enough evidence of an outcome or active building to grade higher.
+
+CALIBRATION ANCHOR — these are real founders Danny rates as best-of-best (A/S). Grade relative to
+this bar, not to a generic "impressive resume" bar: Sid Sinha (Avant Health — AI-native TPA for
+health benefits, raised seed); Samuel Oh (Concorda — AI for litigation teams, raised seed); Ashtyn
+Bell (Gil — command center for finance agents); Jensen Coonradt (Crebit Pay). The common DNA:
+technical founders building ambitious, category-defining products (often AI-native, in hard
+verticals), early-stage, usually with institutional backing — NOT necessarily a prior exit or a YC
+badge. A founder who looks like this archetype belongs in A even without a marquee credential.
 Only claim a caliber_signal you can support with a verbatim quote. Never invent an exit, program,
 title, or traction number.
 
