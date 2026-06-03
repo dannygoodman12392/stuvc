@@ -11,6 +11,7 @@ export default function TalentRoleDetail() {
   const [saving, setSaving] = useState(false);
   const [rematching, setRematching] = useState(false);
   const [sourcing, setSourcing] = useState(false);
+  const [lastRun, setLastRun] = useState(null);
   const { toast } = useToast();
 
   async function load() {
@@ -21,7 +22,10 @@ export default function TalentRoleDetail() {
       toast({ message: err.message, tone: 'error' });
     }
   }
-  useEffect(() => { load(); }, [id]);
+  async function loadRun() {
+    try { setLastRun(await api.getRoleLastRun(id)); } catch {}
+  }
+  useEffect(() => { load(); loadRun(); }, [id]);
 
   async function patch(fields) {
     setSaving(true);
@@ -55,7 +59,13 @@ export default function TalentRoleDetail() {
       const locMsg = role.location_pref
         ? ` (strict: ${role.location_pref}${role.remote_ok ? ' or remote' : ''})`
         : '';
-      toast({ message: `Sourcing started for this role${locMsg}. Check candidates in a few minutes.` });
+      toast({ message: `Sourcing started for this role${locMsg}. Results appear below in ~1-2 min.` });
+      // Poll the run diagnostic so the outcome is visible (found / added / why dropped).
+      let n = 0;
+      const t = setInterval(async () => {
+        n++; await loadRun();
+        if (n >= 12) clearInterval(t);
+      }, 12000);
     } catch (err) {
       toast({ message: err.message, tone: 'error' });
     } finally {
@@ -90,6 +100,18 @@ export default function TalentRoleDetail() {
           <button onClick={remove} className="btn-danger text-xs">Delete</button>
         </div>
       </div>
+
+      {lastRun && (
+        <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-2.5 text-xs text-gray-600">
+          <span className="font-semibold text-gray-700">Last sourcing run</span>
+          {lastRun.summary?.role?.function && <span className="ml-1 text-gray-400">({lastRun.summary.role.function})</span>}
+          {' · '}searched {lastRun.summary?.queries ?? '–'} queries · found <strong>{lastRun.candidates_found}</strong> · added <strong>{lastRun.candidates_added}</strong> · {lastRun.matches_generated} matches
+          {lastRun.summary?.rejected && (lastRun.summary.rejected.location || lastRun.summary.rejected.score)
+            ? <span className="text-gray-400"> · dropped {lastRun.summary.rejected.location || 0} on location, {lastRun.summary.rejected.score || 0} too weak</span> : null}
+          {lastRun.summary?.exaErrors?.length > 0 && <div className="text-amber-600 mt-1">Search warnings: {lastRun.summary.exaErrors.join(' | ')}</div>}
+          {lastRun.candidates_found === 0 && <div className="text-amber-600 mt-1">No profiles came back from search — the role title/JD may be too narrow, or try adding target companies in the JD.</div>}
+        </div>
+      )}
 
       <div>
         <input

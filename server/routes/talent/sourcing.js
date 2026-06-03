@@ -8,6 +8,15 @@ router.get('/runs', (req, res) => {
   res.json(rows);
 });
 
+// GET /api/talent/sourcing/last-run/:roleId — the most recent sourcing run for a role,
+// with its diagnostic summary (found / added / why dropped). Powers the role-page status.
+router.get('/last-run/:roleId', (req, res) => {
+  const row = db.prepare('SELECT * FROM talent_sourcing_runs WHERE user_id = ? AND role_id = ? ORDER BY run_at DESC LIMIT 1').get(req.user.id, req.params.roleId);
+  if (!row) return res.json(null);
+  let summary = null; try { summary = JSON.parse(row.summary || 'null'); } catch {}
+  res.json({ run_at: row.run_at, candidates_found: row.candidates_found, candidates_added: row.candidates_added, matches_generated: row.matches_generated, summary });
+});
+
 // GET /api/talent/sourcing/stats — high-level digest for Talent Home
 router.get('/stats', (req, res) => {
   const u = req.user.id;

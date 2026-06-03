@@ -247,6 +247,7 @@ export const api = {
   // Talent — Roles
   getTalentRoles: (params) => request('/talent/roles?' + new URLSearchParams(params || {})),
   getTalentRole: (id) => request(`/talent/roles/${id}`),
+  getRoleLastRun: (roleId) => request(`/talent/sourcing/last-run/${roleId}`),
   createTalentRole: (data) => request('/talent/roles', { method: 'POST', body: JSON.stringify(data) }),
   updateTalentRole: (id, data) => request(`/talent/roles/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteTalentRole: (id) => request(`/talent/roles/${id}`, { method: 'DELETE' }),

@@ -859,6 +859,11 @@ db.exec(`CREATE INDEX IF NOT EXISTS idx_news_sources ON newsletter_sources(user_
 // Track which source an item came from
 addColumn('newsletter_items', 'source_id', 'INTEGER');
 
+// Talent run diagnostics — which role, and a breakdown of why candidates were dropped,
+// so a "not finding anyone" complaint becomes a visible "found 35, 30 below bar" answer.
+addColumn('talent_sourcing_runs', 'role_id', 'INTEGER');
+addColumn('talent_sourcing_runs', 'summary', 'TEXT');
+
 // Daily Brief v2 — archive blogs + email delivery.
 // A source can be a 'newsletter' (latest issue, via RSS/email) or an 'archive' (a treasure
 // trove of evergreen posts we resurface one-at-a-time daily, e.g. Paul Graham essays).

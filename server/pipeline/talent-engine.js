@@ -981,19 +981,16 @@ async function runTalentEngine({ userId = 1, fullSweep = false, roleId = null } 
       }
     }
 
-    // Caliber gate — the candidate's SCORE is the real quality bar. We previously also
-    // hard-dropped on (a) the LLM's band LABEL not literally matching the role band and
-    // (b) a separate binary tier1_ready flag. Those double-filtered on top of the score
-    // and left role queues empty over label technicalities. Now: one honest threshold.
-    // A band-A role keeps a high floor (≥7); tier1_ready only *raises* a borderline case.
-    if (bandAMode) {
-      const floor = TIER1_MIN_SCORE;
-      // tier1_ready acts as a half-point boost so a strong, clearly-tier-1 candidate at
-      // 6.5-equivalent isn't lost, but it can't rescue a genuinely low score.
-      const effective = score.overall_score + (score.tier1_ready ? 0.5 : 0);
-      if (effective < floor) {
+    // Caliber: keep every function- and location-fit candidate that isn't junk, and let
+    // the MATCH SCORE rank them (tier1/score still shows in the UI). Why not a hard band-A
+    // floor? LinkedIn snippets from Exa are thin, so a real CMO/GTM leader often can't clear
+    // a "2-of-4 with verbatim evidence" bar — that left role queues EMPTY. Better to surface
+    // the best available, ranked, than to show nothing. Only truly weak profiles are dropped.
+    {
+      const JUNK_FLOOR = 4;
+      if (score.overall_score < JUNK_FLOOR) {
         rejectedByScore++;
-        console.log(`[TalentEngine] 🚫 ${c.name} → skipped: score ${score.overall_score}${score.tier1_ready ? ' (+0.5 tier1)' : ''} < ${floor}`);
+        console.log(`[TalentEngine] 🚫 ${c.name} → skipped: weak (${score.overall_score} < ${JUNK_FLOOR})`);
         continue;
       }
     }
@@ -1037,16 +1034,25 @@ async function runTalentEngine({ userId = 1, fullSweep = false, roleId = null } 
   if (added > 0) {
     try {
       const { runMatchEngine } = require('./match-engine');
-      const result = await runMatchEngine({ userId, onlyNewCandidates: true, roleId: roleScope?.id });
+      // Lower threshold for a role-scoped run: these candidates were already function- and
+      // location-gated for THIS role, so surface them ranked rather than hiding any at 50.
+      const result = await runMatchEngine({ userId, onlyNewCandidates: true, roleId: roleScope?.id, minScore: roleScope ? 35 : 50 });
       matchesCreated = result.matches_created || 0;
     } catch (err) {
       errors.push({ stage: 'match', error: err.message });
     }
   }
 
-  // Update run log
-  db.prepare('UPDATE talent_sourcing_runs SET sources_hit = ?, candidates_found = ?, candidates_added = ?, candidates_deduplicated = ?, matches_generated = ?, errors = ? WHERE id = ?').run(
-    JSON.stringify(sourcesHit), found, added, deduped, matchesCreated, JSON.stringify(errors), runId
+  // Update run log + a human-readable diagnostic summary (per role).
+  const summary = {
+    role: roleScope ? { id: roleScope.id, title: roleScope.title, function: arch.key } : null,
+    queries: queries.length,
+    found, added, deduped, matchesCreated,
+    rejected: { location: rejectedByLocation, score: rejectedByScore },
+    exaErrors: errors.filter(e => e.q).map(e => `${e.q}: ${e.error}`).slice(0, 5),
+  };
+  db.prepare('UPDATE talent_sourcing_runs SET sources_hit = ?, candidates_found = ?, candidates_added = ?, candidates_deduplicated = ?, matches_generated = ?, errors = ?, role_id = ?, summary = ? WHERE id = ?').run(
+    JSON.stringify(sourcesHit), found, added, deduped, matchesCreated, JSON.stringify(errors), roleScope?.id || null, JSON.stringify(summary), runId
   );
 
   const rejectedBits = [];
