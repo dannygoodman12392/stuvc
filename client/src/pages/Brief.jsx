@@ -94,8 +94,10 @@ export default function Brief() {
     setSeeding(true);
     try {
       const r = await api.seedBriefDefaults();
-      toast({ message: `Set up: ${r.added.archives} archive blogs + ${r.added.newsletters} newsletters. Building today's brief…`, duration: 5000 });
-      await load();
+      toast({ message: `Added ${r.added.archives} blogs + ${r.added.newsletters} newsletters. Picking today's classics…`, duration: 5000 });
+      // Today's digest may have been frozen earlier with no classics — rebuild so the
+      // "Learn from the greats" section appears immediately.
+      setDigest(await api.rebuildBrief());
     } catch (e) { toast({ message: e.message, tone: 'error', duration: 6000 }); }
     finally { setSeeding(false); }
   }
@@ -155,8 +157,8 @@ export default function Brief() {
             and summaries of the newsletters you receive. The same digest you see here is emailed to you each morning.
           </p>
         </div>
-        <button onClick={seedDefaults} disabled={seeding} className="btn-primary text-xs px-3 py-1.5 whitespace-nowrap disabled:opacity-50">
-          {seeding ? 'Setting up…' : (status?.configured ? 'Reset sources' : 'Set up my Daily Brief')}
+        <button onClick={seedDefaults} disabled={seeding} className="btn-primary text-xs px-3 py-1.5 whitespace-nowrap disabled:opacity-50" title="Adds Paul Graham, Bill Gurley, Andrew Chen & Elad Gil plus the key newsletters. Safe to click — it never removes anything you already have.">
+          {seeding ? 'Setting up…' : 'Add the greats & newsletters'}
         </button>
       </div>
 
