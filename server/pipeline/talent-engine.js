@@ -334,8 +334,10 @@ function buildTalentQueries(criteria, fullSweep, roleScope = null) {
     const loc0 = (locs[0] || 'chicago').toLowerCase();
     const locSuffix = ` ${loc0}`;
     const isChicago = /chicago|illinois|\bil\b/.test(loc0);
-    const bands = criteria.bands || ['A', 'B', 'C'];
-    let queries = archetypeQueries(arch.key, locSuffix, isChicago).filter(q => bands.includes(q.band));
+    // Use the WHOLE archetype pool — do NOT filter by the role's band. Band is the
+    // seniority of the hire (handled in scoring/ranking); filtering queries by it shrank
+    // a Band-B CMO search to a single query and returned almost nobody.
+    let queries = archetypeQueries(arch.key, locSuffix, isChicago);
     for (const cq of (criteria.customQueries || [])) {
       if (cq.query) queries.push({ name: cq.name || 'Custom query', query: cq.query, band: cq.band || null });
     }
