@@ -1,13 +1,21 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../db');
+const { VALID_TIE_TYPES } = require('../pipeline/sourcing-engine');
+
+// Hard rule: the Pipeline only ever shows founders with a VERIFIED Chicago/IL tie.
+// If a row's tie is null, empty, 'none', or anything outside the canonical set, it is
+// considered "unclear" and is hidden — never shown. Single source of truth is the
+// engine's VALID_TIE_TYPES so the display filter can't drift from the intake gate.
+const TIE_IN = VALID_TIE_TYPES.map(() => '?').join(',');
+const TIE_CLAUSE = `location_type IN (${TIE_IN})`;
 
 // GET /api/sourcing/queue — pending sourced founders with enhanced data
 router.get('/queue', (req, res) => {
   const { sort, source, minScore, search, caliber } = req.query;
-  let where = "status = 'pending' AND user_id = ?";
+  let where = `status = 'pending' AND user_id = ? AND ${TIE_CLAUSE}`;
   const params = [];
-  params.push(req.user.id);
+  params.push(req.user.id, ...VALID_TIE_TYPES);
 
   if (source) { where += ' AND source = ?'; params.push(source); }
   if (minScore) { where += ' AND confidence_score >= ?'; params.push(parseInt(minScore)); }
@@ -41,7 +49,7 @@ router.get('/queue', (req, res) => {
 
 // GET /api/sourcing/starred — starred for later review
 router.get('/starred', (req, res) => {
-  const founders = db.prepare("SELECT * FROM sourced_founders WHERE status = 'starred' AND user_id = ? ORDER BY confidence_score DESC").all(req.user.id);
+  const founders = db.prepare(`SELECT * FROM sourced_founders WHERE status = 'starred' AND user_id = ? AND ${TIE_CLAUSE} ORDER BY confidence_score DESC`).all(req.user.id, ...VALID_TIE_TYPES);
   res.json(founders);
 });
 
@@ -171,18 +179,21 @@ router.post('/run', async (req, res) => {
 
 // GET /api/sourcing/stats — enhanced stats
 router.get('/stats', (req, res) => {
-  const pending = db.prepare("SELECT COUNT(*) as c FROM sourced_founders WHERE status = 'pending' AND user_id = ?").get(req.user.id).c;
-  const starred = db.prepare("SELECT COUNT(*) as c FROM sourced_founders WHERE status = 'starred' AND user_id = ?").get(req.user.id).c;
+  // Counts that feed VISIBLE surfaces (pending inbox, starred) honor the tie rule so the
+  // headline number always matches what's actually shown. Historical approved/dismissed do not.
+  const TP = [req.user.id, ...VALID_TIE_TYPES];
+  const pending = db.prepare(`SELECT COUNT(*) as c FROM sourced_founders WHERE status = 'pending' AND user_id = ? AND ${TIE_CLAUSE}`).get(...TP).c;
+  const starred = db.prepare(`SELECT COUNT(*) as c FROM sourced_founders WHERE status = 'starred' AND user_id = ? AND ${TIE_CLAUSE}`).get(...TP).c;
   const approved = db.prepare("SELECT COUNT(*) as c FROM sourced_founders WHERE status = 'approved' AND user_id = ?").get(req.user.id).c;
   const dismissed = db.prepare("SELECT COUNT(*) as c FROM sourced_founders WHERE status = 'dismissed' AND user_id = ?").get(req.user.id).c;
-  const bySrc = db.prepare("SELECT source, COUNT(*) as count FROM sourced_founders WHERE status = 'pending' AND user_id = ? GROUP BY source").all(req.user.id);
-  const byScore = db.prepare("SELECT CASE WHEN confidence_score >= 8 THEN 'high' WHEN confidence_score >= 6 THEN 'medium' ELSE 'low' END as tier, COUNT(*) as count FROM sourced_founders WHERE status = 'pending' AND user_id = ? GROUP BY tier").all(req.user.id);
+  const bySrc = db.prepare(`SELECT source, COUNT(*) as count FROM sourced_founders WHERE status = 'pending' AND user_id = ? AND ${TIE_CLAUSE} GROUP BY source`).all(...TP);
+  const byScore = db.prepare(`SELECT CASE WHEN confidence_score >= 8 THEN 'high' WHEN confidence_score >= 6 THEN 'medium' ELSE 'low' END as tier, COUNT(*) as count FROM sourced_founders WHERE status = 'pending' AND user_id = ? AND ${TIE_CLAUSE} GROUP BY tier`).all(...TP);
   // Caliber breakdown — how many best-of-best are sitting in the inbox right now.
-  const byCaliberRows = db.prepare("SELECT COALESCE(caliber_tier, 'C') as tier, COUNT(*) as count FROM sourced_founders WHERE status = 'pending' AND user_id = ? GROUP BY tier").all(req.user.id);
+  const byCaliberRows = db.prepare(`SELECT COALESCE(caliber_tier, 'C') as tier, COUNT(*) as count FROM sourced_founders WHERE status = 'pending' AND user_id = ? AND ${TIE_CLAUSE} GROUP BY tier`).all(...TP);
   const byCaliber = { S: 0, A: 0, B: 0, C: 0 };
   for (const r of byCaliberRows) { if (byCaliber[r.tier] != null) byCaliber[r.tier] = r.count; }
   const lastRun = db.prepare('SELECT * FROM sourcing_runs WHERE user_id = ? ORDER BY run_at DESC LIMIT 1').get(req.user.id);
-  const todayAdded = db.prepare("SELECT COUNT(*) as c FROM sourced_founders WHERE status = 'pending' AND user_id = ? AND DATE(created_at) = DATE('now')").get(req.user.id).c;
+  const todayAdded = db.prepare(`SELECT COUNT(*) as c FROM sourced_founders WHERE status = 'pending' AND user_id = ? AND ${TIE_CLAUSE} AND DATE(created_at) = DATE('now')`).get(...TP).c;
 
   // Learning loop status — how much taste signal Stu has, and what it's learned.
   let learning = { likedN: 0, passedN: 0, favored: [], disfavored: [] };
@@ -200,9 +211,9 @@ router.get('/stats', (req, res) => {
     exploration = db.prepare(`
       SELECT id, name, company, company_one_liner, caliber_tier, confidence_score, chicago_connection, linkedin_url
       FROM sourced_founders
-      WHERE user_id = ? AND status = 'pending' AND caliber_tier IN ('S','A') AND COALESCE(affinity_score, 0) <= 0
+      WHERE user_id = ? AND status = 'pending' AND ${TIE_CLAUSE} AND caliber_tier IN ('S','A') AND COALESCE(affinity_score, 0) <= 0
       ORDER BY (CASE caliber_tier WHEN 'S' THEN 2 ELSE 1 END) DESC, confidence_score DESC LIMIT 3
-    `).all(req.user.id);
+    `).all(req.user.id, ...VALID_TIE_TYPES);
   } catch {}
 
   res.json({ pending, starred, approved, dismissed, bySource: bySrc, byScore, byCaliber, learning, exploration, lastRun, todayAdded });
