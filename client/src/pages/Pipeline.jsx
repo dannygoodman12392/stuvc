@@ -557,17 +557,39 @@ function InboxTab({ queue, starred, stats, loading, onApprove, onDismiss, onHide
 
 // ── Inbox Card (rich founder preview) ──
 
+// One attribute with its verbatim proof + source. No quote = shown as unverified, never as fact.
+function EvidenceRow({ label, value, quote, sourceUrl }) {
+  if (!value && !quote) return null;
+  const verified = !!(quote && String(quote).trim());
+  return (
+    <div className="text-[11px]">
+      <div className="flex items-center gap-1.5 flex-wrap">
+        <span className="font-semibold text-gray-600">{label}:</span>
+        <span className="text-gray-700">{value || '—'}</span>
+        {verified
+          ? <span className="text-[9px] font-medium text-emerald-600">✓ verbatim</span>
+          : <span className="text-[9px] font-medium text-amber-600">⚠ unverified</span>}
+        {sourceUrl && <a href={sourceUrl} target="_blank" rel="noopener" onClick={e => e.stopPropagation()} className="text-[9px] text-blue-500 hover:underline">source</a>}
+      </div>
+      {verified && <p className="text-[11px] text-gray-400 italic mt-0.5">&ldquo;{String(quote).slice(0, 220)}&rdquo;</p>}
+    </div>
+  );
+}
+
 function InboxCard({ founder: f, onApprove, onDismiss, onHideForever, onStar, onUnstar, compact }) {
   const [expanded, setExpanded] = useState(false);
+  const [showEvidence, setShowEvidence] = useState(false);
 
   let tags = [];
   let pedigree = [];
   let builder = [];
   let caliberSignals = [];
+  let evidenceMap = {};
   try { tags = JSON.parse(f.tags || '[]'); } catch {}
   try { pedigree = JSON.parse(f.pedigree_signals || '[]'); } catch {}
   try { builder = JSON.parse(f.builder_signals || '[]'); } catch {}
   try { caliberSignals = JSON.parse(f.caliber_signals || '[]'); } catch {}
+  try { evidenceMap = JSON.parse(f.evidence_map || '{}') || {}; } catch {}
 
   const tier = f.caliber_tier || 'C';
   const TIER_META = {
@@ -714,6 +736,19 @@ function InboxCard({ founder: f, onApprove, onDismiss, onHideForever, onStar, on
         )}
         {expanded && f.headline && (
           <p className="text-xs text-gray-400 mt-1 italic">{f.headline}</p>
+        )}
+
+        {/* Evidence & sources — every key attribute with its verbatim proof + source */}
+        <button onClick={() => setShowEvidence(!showEvidence)} className="block text-[10px] font-medium text-violet-500 mt-2 hover:text-violet-700">
+          {showEvidence ? 'Hide evidence' : 'Show evidence & sources'}
+        </button>
+        {showEvidence && (
+          <div className="mt-2 space-y-2 border-l-2 border-violet-100 pl-3">
+            <EvidenceRow label="Chicago/IL tie" value={f.chicago_connection || (f.location_type ? f.location_type.replace('_', ' ') : null)} quote={evidenceMap.tie_evidence} sourceUrl={f.linkedin_url} />
+            <EvidenceRow label="Caliber" value={caliberSignals.join(', ') || (f.caliber_tier ? `Tier ${f.caliber_tier}` : null)} quote={evidenceMap.caliber_evidence} sourceUrl={f.linkedin_url} />
+            <EvidenceRow label="Stage / what they're building" value={f.company_one_liner} quote={evidenceMap.stage_evidence} sourceUrl={f.linkedin_url} />
+            <EvidenceRow label="Sector" value={(tags[0] || null)} quote={evidenceMap.sector_evidence} sourceUrl={f.linkedin_url} />
+          </div>
         )}
       </div>
 

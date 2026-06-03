@@ -6,6 +6,19 @@
 
 const RELEASES = [
   {
+    version: 'v2.9.2',
+    date: 'June 3, 2026',
+    time: '12:30 PM CT',
+    title: 'Tier 3: evidence + sources on every founder',
+    highlights: [
+      {
+        product: 'Sourcing',
+        change: 'Each founder card now has a "Show evidence & sources" view: the Chicago/IL tie, caliber, stage, and sector each show the verbatim quote behind them, a ✓ verbatim / ⚠ unverified marker, and a link to the source profile. Attributes without a real quote are flagged unverified — never presented as fact.',
+        benefit: 'You can see the proof behind every founder at a glance — only the best, with receipts.',
+      },
+    ],
+  },
+  {
     version: 'v2.9.1',
     date: 'June 3, 2026',
     time: '11:40 AM CT',
