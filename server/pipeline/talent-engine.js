@@ -93,6 +93,7 @@ function loadRoleScope(userId, roleId) {
     title: role.title,
     band: role.band || 'A',
     function: resolveRoleFunction(role),
+    jd_content: role.jd_content || '',
     location_pref: role.location_pref || null,
     remote_ok: !!role.remote_ok,
     stacks: p(role.stack_requirements),
@@ -328,9 +329,11 @@ function buildTalentQueries(criteria, fullSweep, roleScope = null) {
   const arch = getArchetype(roleScope, criteria);
   if (roleScope && arch.key !== 'engineering') {
     const locs = (criteria.locations || []).slice(0, 5);
-    const hasLoc = locs.length > 0;
-    const locSuffix = hasLoc ? ` ${locs[0]}` : '';
-    const isChicago = /chicago|illinois|\bil\b/.test((locs[0] || '').toLowerCase());
+    // This fund hires in Chicago first — if no location is set on the role, bias the
+    // search to Chicago rather than searching nowhere.
+    const loc0 = (locs[0] || 'chicago').toLowerCase();
+    const locSuffix = ` ${loc0}`;
+    const isChicago = /chicago|illinois|\bil\b/.test(loc0);
     const bands = criteria.bands || ['A', 'B', 'C'];
     let queries = archetypeQueries(arch.key, locSuffix, isChicago).filter(q => bands.includes(q.band));
     for (const cq of (criteria.customQueries || [])) {
@@ -339,6 +342,60 @@ function buildTalentQueries(criteria, fullSweep, roleScope = null) {
     return fullSweep ? queries : queries.slice(0, 12);
   }
   return buildEngineeringQueries(criteria, fullSweep);
+}
+
+// JD-DRIVEN QUERIES — turn the actual job description into targeted LinkedIn searches.
+// The canned archetype pool gives breadth; this gives PRECISION for the specific role
+// (its seniority, domain, target companies, and must-haves). This is what lets "paste a
+// JD → get best-fit first hires" actually work. Returns [] on any failure (we keep the
+// canned queries as a floor) so a flaky LLM call never zeroes out a run.
+async function deriveJdQueries(anthropic, roleScope, archKey, locSuffix) {
+  if (!anthropic || !roleScope) return [];
+  const jd = (roleScope.jd_content || '').slice(0, 4000);
+  const mustHaves = (roleScope.must_haves || []).join('; ');
+  const domains = (roleScope.domains || []).join(', ');
+  if (!jd && !mustHaves && !roleScope.title) return [];
+  try {
+    const resp = await anthropic.messages.create({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 700,
+      system: `You convert a startup job description into precise LinkedIn people-search queries for sourcing the BEST first hires.
+Rules:
+- Every query MUST start with: site:linkedin.com/in
+- Encode the role's seniority, FUNCTION (${archKey}), domain, and named target companies from the JD.
+- Use boolean OR groups in parentheses for synonyms and peer companies.
+- Append the location"${locSuffix}" to every query unless the JD is explicitly remote.
+- Prefer specifics from the JD (named companies, domain terms, concrete skills) over generic titles.
+- Return ONLY JSON: {"queries":[{"band":"A|B|C","name":"<short label>","query":"<query>"}]} with 4-6 queries.
+- Band A = ideal best-of-best fit; B = strong startup-ready; C = adjacent/crossover.`,
+      messages: [{
+        role: 'user',
+        content: `ROLE TITLE: ${roleScope.title || '(none)'}
+FUNCTION: ${archKey}
+TARGET LOCATION SUFFIX: ${locSuffix || '(none)'}
+MUST-HAVES: ${mustHaves || '(none)'}
+DOMAINS: ${domains || '(none)'}
+
+JOB DESCRIPTION:
+${jd || '(no long-form JD; use the title and must-haves)'}`
+      }]
+    });
+    const text = resp.content[0].text.trim();
+    const m = text.match(/\{[\s\S]*\}/);
+    if (!m) return [];
+    const parsed = JSON.parse(m[0]);
+    const out = [];
+    for (const q of (parsed.queries || [])) {
+      let query = String(q.query || '').trim();
+      if (!query) continue;
+      if (!/site:linkedin\.com\/in/i.test(query)) query = `site:linkedin.com/in ${query}`;
+      out.push({ band: /^[ABC]$/.test(q.band) ? q.band : 'B', name: `JD: ${String(q.name || 'targeted').slice(0, 40)}`, query });
+    }
+    return out.slice(0, 6);
+  } catch (e) {
+    console.error('[TalentEngine] JD query derivation failed:', e.message);
+    return [];
+  }
 }
 
 function buildEngineeringQueries(criteria, fullSweep) {
@@ -792,8 +849,30 @@ async function runTalentEngine({ userId = 1, fullSweep = false, roleId = null } 
 
   const candidates = [];
 
-  // Phase 1: Exa
-  const queries = buildTalentQueries(criteria, fullSweep, roleScope);
+  // Anthropic client — built early so the JD can drive the search, not just the scoring.
+  let anthropic = null;
+  if (apiKeys.anthropic) {
+    try {
+      const Anthropic = require('@anthropic-ai/sdk');
+      anthropic = new Anthropic({ apiKey: apiKeys.anthropic });
+    } catch {}
+  }
+
+  const arch = getArchetype(roleScope, criteria);
+  const isEngineering = arch.key === 'engineering';
+
+  // Phase 1: Exa — canned archetype queries (breadth) + JD-derived queries (precision).
+  let queries = buildTalentQueries(criteria, fullSweep, roleScope);
+  if (roleScope && (roleScope.jd_content || roleScope.must_haves?.length || roleScope.title)) {
+    const loc0 = ((criteria.locations || [])[0] || 'chicago').toLowerCase();
+    const jdQueries = await deriveJdQueries(anthropic, roleScope, arch.key, ` ${loc0}`);
+    if (jdQueries.length) {
+      // JD-derived queries lead (most targeted); canned pool fills remaining breadth.
+      const cap = fullSweep ? 18 : 12;
+      queries = [...jdQueries, ...queries].slice(0, cap);
+      console.log(`[TalentEngine] +${jdQueries.length} JD-derived queries from "${roleScope.title}"`);
+    }
+  }
   console.log(`[TalentEngine] Running ${queries.length} Exa queries`);
 
   for (const q of queries) {
@@ -825,14 +904,19 @@ async function runTalentEngine({ userId = 1, fullSweep = false, roleId = null } 
     found += results.length;
   }
 
-  // Phase 2: GitHub
-  const gh = await searchGitHubTalent(criteria, apiKeys.github);
-  console.log(`[TalentEngine] GitHub found ${gh.length}`);
-  sourcesHit.push('github');
-  for (const g of gh) {
-    candidates.push({ ...g, search_query: 'github', search_band_hint: null });
+  // Phase 2: GitHub — ONLY for engineering roles. GitHub surfaces engineers; running it
+  // for a CMO/GTM/CS role just floods the pool with off-function profiles.
+  if (isEngineering) {
+    const gh = await searchGitHubTalent(criteria, apiKeys.github);
+    console.log(`[TalentEngine] GitHub found ${gh.length}`);
+    sourcesHit.push('github');
+    for (const g of gh) {
+      candidates.push({ ...g, search_query: 'github', search_band_hint: null });
+    }
+    found += gh.length;
+  } else {
+    console.log(`[TalentEngine] Skipping GitHub (non-engineering role: ${arch.key})`);
   }
-  found += gh.length;
 
   // Phase 3: Dedup
   const seen = new Set();
@@ -847,14 +931,7 @@ async function runTalentEngine({ userId = 1, fullSweep = false, roleId = null } 
   }
   console.log(`[TalentEngine] ${unique.length} unique to score (${deduped} deduped)`);
 
-  // Phase 4: Score with Claude
-  let anthropic = null;
-  if (apiKeys.anthropic) {
-    try {
-      const Anthropic = require('@anthropic-ai/sdk');
-      anthropic = new Anthropic({ apiKey: apiKeys.anthropic });
-    } catch {}
-  }
+  // Phase 4: Score with Claude (client built in Phase 1)
   const prompt = buildTalentScoringPrompt(criteria, roleScope);
   const { inferCandidateFunction } = require('./match-engine');
   const insert = db.prepare(`
@@ -993,4 +1070,6 @@ module.exports = {
   getArchetype,
   buildTalentScoringPrompt,
   buildTalentQueries,
+  deriveJdQueries,
+  archetypeQueries,
 };
