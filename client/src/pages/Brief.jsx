@@ -51,11 +51,16 @@ export default function Brief() {
   const pollRef = useRef(null);
   const { toast } = useToast();
 
+  const buildPollRef = useRef(null);
+
   async function load() {
     try {
       const [d, st] = await Promise.all([api.getBriefToday(), api.getNewsletterStatus()]);
       setDigest(d);
       setStatus(st);
+      // If the classics are still being built in the background, poll until they're ready.
+      clearTimeout(buildPollRef.current);
+      if (d?.building) buildPollRef.current = setTimeout(load, 4000);
     } catch (err) {
       toast({ message: err.message, tone: 'error' });
     } finally {
@@ -63,7 +68,7 @@ export default function Brief() {
     }
   }
 
-  useEffect(() => { load(); return () => clearInterval(pollRef.current); }, []);
+  useEffect(() => { load(); return () => { clearInterval(pollRef.current); clearTimeout(buildPollRef.current); }; }, []);
 
   async function sync() {
     setSyncing(true);
@@ -172,10 +177,12 @@ export default function Brief() {
         </div>
       )}
 
-      {classics.length > 0 && (
+      {(classics.length > 0 || digest?.building) && (
         <section className="mb-8">
           <h2 className="text-sm font-semibold uppercase tracking-wide text-gray-500 mb-3">Learn from the greats</h2>
-          <div className="space-y-3">{classics.map((c, i) => <ClassicCard key={i} c={c} />)}</div>
+          {digest?.building && classics.length === 0
+            ? <div className="card p-6 text-center text-sm text-gray-500">Reading today's essays from Paul Graham, Bill Gurley, Andrew Chen & Elad Gil and distilling the takeaways… this takes a few seconds.</div>
+            : <div className="space-y-3">{classics.map((c, i) => <ClassicCard key={i} c={c} />)}</div>}
         </section>
       )}
 

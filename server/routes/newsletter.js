@@ -202,13 +202,26 @@ router.post('/send-now', async (req, res) => {
 });
 
 // GET /api/newsletter/today — THE single digest the tab renders. Same object that gets
-// emailed (frozen classics + live newsletters). Builds today's classics once if missing.
+// emailed (frozen classics + live newsletters). Returns INSTANTLY: if today's classics
+// aren't built yet, it kicks the build in the background and returns building:true so the
+// page never hangs on the multi-second build (the client polls until it's ready).
 router.get('/today', async (req, res) => {
   try {
-    const { getOrBuildDigest } = require('../services/email-digest');
-    const d = await getOrBuildDigest(req.user.id);
-    const sent = db.prepare("SELECT sent_at, recipient FROM daily_brief_log WHERE user_id=? AND brief_date=? AND status='sent' ORDER BY sent_at DESC LIMIT 1").get(req.user.id, d.date);
-    res.json({ ...d, emailed: sent || null });
+    const userId = req.user.id;
+    const { getOrBuildDigest, latestNewsletters } = require('../services/email-digest');
+    const date = new Date().toISOString().slice(0, 10);
+    const newsletters = latestNewsletters(userId);
+    const emailed = db.prepare("SELECT sent_at, recipient FROM daily_brief_log WHERE user_id=? AND brief_date=? AND status='sent' ORDER BY sent_at DESC LIMIT 1").get(userId, date) || null;
+
+    const row = db.prepare('SELECT payload FROM daily_brief WHERE user_id=? AND brief_date=?').get(userId, date);
+    if (row?.payload) {
+      let classics = [];
+      try { classics = JSON.parse(row.payload).classics || []; } catch {}
+      return res.json({ date, classics, newsletters, emailed, building: false });
+    }
+    // Not built yet — start it in the background (the in-build lock dedupes) and return now.
+    getOrBuildDigest(userId).catch(e => console.error('[Brief] background build:', e.message));
+    res.json({ date, classics: [], newsletters, emailed, building: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

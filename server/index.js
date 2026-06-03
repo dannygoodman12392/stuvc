@@ -191,7 +191,7 @@ app.use('/api/auth/register', rateLimit({ windowMs: 15 * 60 * 1000, max: 5, stan
 
 // Public routes
 app.get('/api/health', (req, res) => res.json({
-  status: 'ok', app: 'Stu', version: '3.8.2',
+  status: 'ok', app: 'Stu', version: '3.8.3',
   pipeline: {
     // Armed = the daily sourcing/talent/filings crons will actually run tonight.
     sourcing_armed: process.env.PIPELINE_ENABLED === 'true'
