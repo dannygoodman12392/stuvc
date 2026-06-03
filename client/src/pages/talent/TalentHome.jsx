@@ -68,6 +68,15 @@ export default function TalentHome() {
     finally { setTimeout(() => setSourcing(null), 1500); }
   }
 
+  async function deleteRole(role) {
+    if (!confirm(`Delete the "${role.title}" role? It moves to Trash and can be restored.`)) return;
+    try {
+      await api.deleteTalentRole(role.id);
+      toast({ message: `Deleted "${role.title}"` });
+      load();
+    } catch (e) { toast({ message: e.message, tone: 'error' }); }
+  }
+
   if (loading) return <div className="text-center py-12 text-gray-500 text-sm">Loading…</div>;
 
   return (
@@ -149,9 +158,11 @@ export default function TalentHome() {
                       <Link to={`/talent/matches?role=${r.id}`} className="text-[11px] text-gray-500 hover:text-amber-700">
                         {r.pending_matches > 0 ? `${r.pending_matches} to review` : 'matches'}
                       </Link>
+                      <Link to={`/talent/roles/${r.id}`} className="text-[11px] text-gray-500 hover:text-amber-700">Edit</Link>
                       <button onClick={() => sourceRole(r)} disabled={sourcing === r.id} className="btn-primary text-xs px-3 py-1 disabled:opacity-50">
                         {sourcing === r.id ? 'Starting…' : 'Source for this role'}
                       </button>
+                      <button onClick={() => deleteRole(r)} title="Delete role" className="text-gray-300 hover:text-red-500 text-sm leading-none px-1">✕</button>
                     </div>
                   </div>
                 ))}
