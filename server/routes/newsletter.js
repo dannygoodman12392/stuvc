@@ -201,11 +201,31 @@ router.post('/send-now', async (req, res) => {
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
-// GET /api/newsletter/digest-preview — render today's digest HTML without sending.
+// GET /api/newsletter/today — THE single digest the tab renders. Same object that gets
+// emailed (frozen classics + live newsletters). Builds today's classics once if missing.
+router.get('/today', async (req, res) => {
+  try {
+    const { getOrBuildDigest } = require('../services/email-digest');
+    const d = await getOrBuildDigest(req.user.id);
+    const sent = db.prepare("SELECT sent_at, recipient FROM daily_brief_log WHERE user_id=? AND brief_date=? AND status='sent' ORDER BY sent_at DESC LIMIT 1").get(req.user.id, d.date);
+    res.json({ ...d, emailed: sent || null });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /api/newsletter/rebuild — re-pick today's classics (e.g. after adding a source).
+router.post('/rebuild', async (req, res) => {
+  try {
+    const { getOrBuildDigest } = require('../services/email-digest');
+    const d = await getOrBuildDigest(req.user.id, { rebuild: true });
+    res.json(d);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /api/newsletter/digest-preview — the rendered HTML of today's digest (for QA).
 router.get('/digest-preview', async (req, res) => {
   try {
-    const { buildDigest, renderHtml } = require('../services/email-digest');
-    const d = await buildDigest(req.user.id);
+    const { getOrBuildDigest, renderHtml } = require('../services/email-digest');
+    const d = await getOrBuildDigest(req.user.id);
     res.json({ ok: true, date: d.date, classics: d.classics, newsletters: d.newsletters, html: renderHtml(d) });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });

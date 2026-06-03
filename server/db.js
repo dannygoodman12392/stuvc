@@ -884,6 +884,19 @@ db.exec(`
 db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_archive_url ON brief_archive_posts(user_id, url);`);
 db.exec(`CREATE INDEX IF NOT EXISTS idx_archive_rotation ON brief_archive_posts(user_id, archive_key, shown_at);`);
 
+// The single source of truth for a day's digest. Built ONCE (the build advances the
+// archive rotation + marks classics shown), then both the in-platform Daily Brief tab and
+// the emailed copy read this exact row — so the two are always identical.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS daily_brief (
+    user_id INTEGER NOT NULL,
+    brief_date TEXT NOT NULL,
+    payload TEXT,                  -- JSON: { date, classics:[...], newsletters:[...] }
+    built_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (user_id, brief_date)
+  );
+`);
+
 // Log of digest emails sent — so we never double-send and can show send history.
 db.exec(`
   CREATE TABLE IF NOT EXISTS daily_brief_log (

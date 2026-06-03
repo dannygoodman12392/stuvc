@@ -47,7 +47,7 @@ function latestNewsletters(userId, days = 2) {
   }));
 }
 
-// ── Build the full digest object ──
+// ── Build the full digest object (MUTATES: advances archive rotation) ──
 async function buildDigest(userId) {
   const anthropic = getAnthropic(userId);
   const archiveSources = db.prepare(
@@ -61,6 +61,50 @@ async function buildDigest(userId) {
       if (c) classics.push(c);
     } catch (e) { console.error(`[Digest] archive ${s.archive_key} failed:`, e.message); }
   }
+  const newsletters = latestNewsletters(userId);
+  return { date: todayStr(), classics, newsletters };
+}
+
+// ── The single source of truth ──
+// The "classics" selection MUTATES (advances the archive rotation, marks posts shown), so
+// it must be built exactly once per day and frozen — both the tab and the email read that
+// same frozen set. The "newsletters" section is a pure read of today's ingested items, so
+// it's assembled LIVE each time (always fresh, never drifts, no mutation). Result: the two
+// surfaces show identical classics, and identical newsletters as of the moment viewed.
+const _buildLocks = new Map();
+async function getFrozenClassics(userId, { rebuild = false } = {}) {
+  const date = todayStr();
+  const readRow = () => db.prepare('SELECT payload FROM daily_brief WHERE user_id=? AND brief_date=?').get(userId, date);
+  const parse = (row) => { try { return JSON.parse(row.payload).classics || []; } catch { return null; } };
+
+  if (!rebuild) { const r = readRow(); if (r?.payload) { const c = parse(r); if (c) return c; } }
+
+  const lockKey = `${userId}:${date}`;
+  if (_buildLocks.has(lockKey)) return _buildLocks.get(lockKey);
+
+  const promise = (async () => {
+    if (!rebuild) { const again = readRow(); if (again?.payload) { const c = parse(again); if (c) return c; } }
+    const anthropic = getAnthropic(userId);
+    const sources = db.prepare(
+      "SELECT archive_key FROM newsletter_sources WHERE user_id=? AND kind='archive' AND enabled=1 AND is_deleted=0"
+    ).all(userId);
+    const classics = [];
+    for (const s of sources) {
+      try { const c = await pickDailyClassic(userId, s.archive_key, anthropic); if (c) classics.push(c); }
+      catch (e) { console.error(`[Digest] archive ${s.archive_key} failed:`, e.message); }
+    }
+    db.prepare('INSERT OR REPLACE INTO daily_brief (user_id, brief_date, payload, built_at) VALUES (?,?,?,CURRENT_TIMESTAMP)')
+      .run(userId, date, JSON.stringify({ classics }));
+    return classics;
+  })();
+
+  _buildLocks.set(lockKey, promise);
+  try { return await promise; } finally { _buildLocks.delete(lockKey); }
+}
+
+// Assemble the digest both surfaces render: frozen classics + live newsletters.
+async function getOrBuildDigest(userId, { rebuild = false } = {}) {
+  const classics = await getFrozenClassics(userId, { rebuild });
   const newsletters = latestNewsletters(userId);
   return { date: todayStr(), classics, newsletters };
 }
@@ -120,7 +164,8 @@ async function sendDigest(userId, { force = false } = {}) {
     if (already) return { ok: true, skipped: true, reason: 'already sent today' };
   }
 
-  const digest = await buildDigest(userId);
+  // Read (or build) THE one digest for today — the same object the tab shows.
+  const digest = await getOrBuildDigest(userId);
   if (!digest.classics.length && !digest.newsletters.length) {
     log('skipped', 'nothing to send');
     return { ok: true, skipped: true, reason: 'no content today' };
@@ -143,4 +188,4 @@ async function sendDigest(userId, { force = false } = {}) {
   }
 }
 
-module.exports = { buildDigest, renderHtml, sendDigest, latestNewsletters };
+module.exports = { buildDigest, getOrBuildDigest, renderHtml, sendDigest, latestNewsletters };

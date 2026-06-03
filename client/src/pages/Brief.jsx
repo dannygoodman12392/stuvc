@@ -3,74 +3,59 @@ import { Link } from 'react-router-dom';
 import { api } from '../utils/api';
 import { useToast } from '../components/Toast';
 
-const GROUP_META = {
-  book: { title: 'Touches Your Pipeline', accent: 'text-violet-700', dot: 'bg-violet-500' },
-  thesis: { title: 'On Your Thesis', accent: 'text-amber-700', dot: 'bg-amber-500' },
-  general: { title: 'Worth Knowing', accent: 'text-gray-600', dot: 'bg-gray-300' },
-};
+function Takeaways({ items }) {
+  if (!items?.length) return null;
+  return (
+    <ul className="mt-2 space-y-1">
+      {items.slice(0, 5).map((t, i) => (
+        <li key={i} className="text-sm text-gray-700 flex gap-2 leading-snug"><span className="text-gray-300">•</span><span>{t}</span></li>
+      ))}
+    </ul>
+  );
+}
 
-function Item({ it, onDismiss }) {
+function ClassicCard({ c }) {
   return (
     <div className="card p-4">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-sm font-semibold text-gray-900">{it.source_name || 'Newsletter'}</span>
-            {it.received_at && (
-              <span className="text-[10px] text-gray-400">{new Date(it.received_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>
-            )}
-            {it.relevance_score >= 65 && (
-              <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-violet-50 text-violet-700 border border-violet-200">
-                Relevant
-              </span>
-            )}
-          </div>
-          {it.subject && <div className="text-xs text-gray-400 mt-0.5 truncate">{it.subject}</div>}
-        </div>
-        <button onClick={() => onDismiss(it.id)} className="text-gray-300 hover:text-gray-500 text-xs flex-shrink-0" title="Dismiss">✕</button>
-      </div>
+      <div className="text-[10px] uppercase tracking-wide text-gray-400">{c.author}</div>
+      <a href={c.url} target="_blank" rel="noopener" className="text-base font-semibold text-gray-900 hover:text-amber-700">{c.title}</a>
+      {c.one_liner && <p className="text-xs text-gray-500 mt-1">{c.one_liner}</p>}
+      <Takeaways items={c.takeaways} />
+      <a href={c.url} target="_blank" rel="noopener" className="inline-block mt-2 text-xs font-medium text-amber-700 hover:text-amber-800">Read the full piece →</a>
+    </div>
+  );
+}
 
-      {it.summary && <p className="text-sm text-gray-800 mt-2">{it.summary}</p>}
-
-      {it.key_points?.length > 0 && (
-        <ul className="mt-2 space-y-1">
-          {it.key_points.map((p, i) => (
-            <li key={i} className="text-xs text-gray-600 flex gap-2"><span className="text-gray-300">•</span><span>{p}</span></li>
-          ))}
-        </ul>
-      )}
-
-      <div className="flex items-center justify-between mt-3">
-        {it.relevance_reason && <span className="text-[11px] text-gray-400">{it.relevance_reason}</span>}
-        {it.url && (
-          <a href={it.url} target="_blank" rel="noopener" className="text-xs font-medium text-amber-700 hover:text-amber-800 flex-shrink-0">
-            Read full issue →
-          </a>
-        )}
-      </div>
+function NewsletterCard({ n }) {
+  return (
+    <div className="card p-4">
+      <div className="text-[10px] uppercase tracking-wide text-gray-400">{n.source}</div>
+      {n.url
+        ? <a href={n.url} target="_blank" rel="noopener" className="text-base font-semibold text-gray-900 hover:text-amber-700">{n.subject}</a>
+        : <div className="text-base font-semibold text-gray-900">{n.subject}</div>}
+      {n.summary && <p className="text-sm text-gray-700 mt-1.5 leading-snug">{n.summary}</p>}
+      <Takeaways items={n.key_points} />
+      {n.url && <a href={n.url} target="_blank" rel="noopener" className="inline-block mt-2 text-xs font-medium text-amber-700 hover:text-amber-800">Open →</a>}
     </div>
   );
 }
 
 export default function Brief() {
-  const [data, setData] = useState(null);
+  const [digest, setDigest] = useState(null);
   const [status, setStatus] = useState(null);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [seeding, setSeeding] = useState(false);
   const [sending, setSending] = useState(false);
-  const [archive, setArchive] = useState([]);
+  const [rebuilding, setRebuilding] = useState(false);
   const pollRef = useRef(null);
   const { toast } = useToast();
 
   async function load() {
     try {
-      const [brief, st, arch] = await Promise.all([
-        api.getNewsletterBrief(), api.getNewsletterStatus(), api.getBriefArchive().catch(() => []),
-      ]);
-      setData(brief);
+      const [d, st] = await Promise.all([api.getBriefToday(), api.getNewsletterStatus()]);
+      setDigest(d);
       setStatus(st);
-      setArchive(Array.isArray(arch) ? arch : []);
     } catch (err) {
       toast({ message: err.message, tone: 'error' });
     } finally {
@@ -86,7 +71,6 @@ export default function Brief() {
       const r = await api.syncNewsletter();
       if (r.started === false && !r.running) { setSyncing(false); return; }
       toast({ message: 'Pulling your newsletters…', duration: 2000 });
-      // Poll status until the background sync finishes, then reload the brief.
       pollRef.current = setInterval(async () => {
         try {
           const st = await api.getNewsletterStatus();
@@ -95,9 +79,8 @@ export default function Brief() {
             clearInterval(pollRef.current);
             setSyncing(false);
             await load();
-            const last = st.last;
-            if (last && last.ok) toast({ message: `Added ${last.added} item${last.added === 1 ? '' : 's'} to today's brief.` });
-            else if (last && last.error) toast({ message: last.error, tone: 'error', duration: 6000 });
+            if (st.last?.ok) toast({ message: `Pulled ${st.last.added} newsletter item${st.last.added === 1 ? '' : 's'}.` });
+            else if (st.last?.error) toast({ message: st.last.error, tone: 'error', duration: 6000 });
           }
         } catch { /* keep polling */ }
       }, 4000);
@@ -111,10 +94,17 @@ export default function Brief() {
     setSeeding(true);
     try {
       const r = await api.seedBriefDefaults();
-      toast({ message: `Set up: ${r.added.archives} archive blogs + ${r.added.newsletters} newsletters. Backfilling the greats…`, duration: 5000 });
+      toast({ message: `Set up: ${r.added.archives} archive blogs + ${r.added.newsletters} newsletters. Building today's brief…`, duration: 5000 });
       await load();
     } catch (e) { toast({ message: e.message, tone: 'error', duration: 6000 }); }
     finally { setSeeding(false); }
+  }
+
+  async function rebuild() {
+    setRebuilding(true);
+    try { setDigest(await api.rebuildBrief()); toast({ message: 'Rebuilt today\'s brief.' }); }
+    catch (e) { toast({ message: e.message, tone: 'error' }); }
+    finally { setRebuilding(false); }
   }
 
   async function emailMeNow() {
@@ -129,22 +119,12 @@ export default function Brief() {
     finally { setSending(false); }
   }
 
-  async function dismiss(id) {
-    try {
-      await api.dismissNewsletterItem(id);
-      setData(d => {
-        const g = { ...d.groups };
-        for (const k of Object.keys(g)) g[k] = g[k].filter(x => x.id !== id);
-        return { ...d, groups: g, total: d.total - 1 };
-      });
-    } catch (err) { toast({ message: err.message, tone: 'error' }); }
-  }
+  if (loading) return <div className="text-center py-12 text-gray-500 text-sm">Building today's brief…</div>;
 
-  if (loading) return <div className="text-center py-12 text-gray-500 text-sm">Loading...</div>;
-
-  const notConfigured = status && !status.configured;
-  const groups = data?.groups || { book: [], thesis: [], general: [] };
-  const empty = (data?.total || 0) === 0;
+  const classics = digest?.classics || [];
+  const newsletters = digest?.newsletters || [];
+  const isEmpty = !classics.length && !newsletters.length;
+  const dateLabel = digest?.date ? new Date(digest.date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' }) : '';
 
   return (
     <div className="max-w-3xl mx-auto px-4 py-6">
@@ -152,94 +132,59 @@ export default function Brief() {
         <div>
           <h1 className="text-2xl font-semibold text-gray-900 tracking-tight">Daily Brief</h1>
           <p className="text-sm text-gray-500 mt-1">
-            {data?.date ? new Date(data.date + 'T00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' }) : ''}
-            {data?.total ? ` · ${data.total} item${data.total === 1 ? '' : 's'}` : ''}
+            {dateLabel}
+            {digest?.emailed && <span className="ml-2 text-emerald-600">· emailed to {digest.emailed.recipient}</span>}
           </p>
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
-          <button onClick={emailMeNow} disabled={sending} className="btn-secondary text-xs px-3 py-1.5 disabled:opacity-50" title="Build and email today's digest now">
-            {sending ? 'Sending…' : '✉ Email me today\'s brief'}
+          <button onClick={emailMeNow} disabled={sending} className="btn-secondary text-xs px-3 py-1.5 disabled:opacity-50" title="Email this exact digest to your inbox">
+            {sending ? 'Sending…' : '✉ Email it to me'}
           </button>
-          {status?.configured && (
-            <button onClick={sync} disabled={syncing} className="btn-primary text-xs px-3 py-1.5 disabled:opacity-50">
-              {syncing ? 'Pulling…' : 'Sync now'}
-            </button>
-          )}
+          <button onClick={sync} disabled={syncing} className="btn-primary text-xs px-3 py-1.5 disabled:opacity-50">
+            {syncing ? 'Pulling…' : 'Sync newsletters'}
+          </button>
         </div>
       </div>
 
-      {/* One-tap setup of Danny's curated set */}
-      <div className="card p-4 mb-5 flex items-center justify-between gap-4">
+      {/* One-tap setup */}
+      <div className="card p-4 mb-6 flex items-center justify-between gap-4">
         <div>
-          <div className="text-sm font-semibold text-gray-900">Learn from the greats, every morning</div>
+          <div className="text-sm font-semibold text-gray-900">One digest — here and in your inbox</div>
           <p className="text-xs text-gray-500 mt-0.5">
-            Archived essays from Paul Graham, Bill Gurley, Andrew Chen & Elad Gil — plus your key newsletters —
-            distilled into one daily email. The platform keeps a searchable archive.
+            A daily classic from Paul Graham, Bill Gurley & Andrew Chen, a chapter from Elad Gil's High Growth Handbook,
+            and summaries of the newsletters you receive. The same digest you see here is emailed to you each morning.
           </p>
         </div>
         <button onClick={seedDefaults} disabled={seeding} className="btn-primary text-xs px-3 py-1.5 whitespace-nowrap disabled:opacity-50">
-          {seeding ? 'Setting up…' : 'Set up my Daily Brief'}
+          {seeding ? 'Setting up…' : (status?.configured ? 'Reset sources' : 'Set up my Daily Brief')}
         </button>
       </div>
 
-      {notConfigured && (
-        <div className="card p-6 text-center">
-          <h3 className="text-sm font-semibold text-gray-800 mb-1">Add your newsletters</h3>
-          <p className="text-xs text-gray-500 mb-4 max-w-md mx-auto">
-            Add the newsletters you follow once — paste each one's website or Substack URL and Stu finds its feed.
-            They'll flow into a daily brief of key takeaways automatically, no Gmail labeling needed.
-          </p>
-          <Link to="/settings" className="btn-primary text-xs">Add sources in Settings →</Link>
-        </div>
-      )}
-
-      {status?.configured && empty && (
+      {isEmpty && (
         <div className="card p-8 text-center">
           <div className="text-3xl mb-2">📬</div>
-          <h3 className="text-sm font-semibold text-gray-700 mb-1">No items yet</h3>
-          <p className="text-xs text-gray-400 mb-4">
-            {status.sourceCount > 0 ? 'Hit Sync to pull the latest from your sources.' : 'Add newsletter sources in Settings, then sync.'}
+          <h3 className="text-sm font-semibold text-gray-700 mb-1">Nothing here yet</h3>
+          <p className="text-xs text-gray-400 mb-4 max-w-sm mx-auto">
+            Click <strong>Set up my Daily Brief</strong> to add the blogs and newsletters, then <strong>Sync newsletters</strong> to pull the latest issues.
           </p>
-          <button onClick={sync} disabled={syncing} className="btn-primary text-xs">{syncing ? 'Pulling…' : 'Sync now'}</button>
         </div>
       )}
 
-      <div className="space-y-6">
-        {['book', 'thesis', 'general'].map(key => (
-          groups[key]?.length > 0 && (
-            <div key={key}>
-              <h2 className={`text-sm font-semibold mb-3 flex items-center gap-2 ${GROUP_META[key].accent}`}>
-                <span className={`w-2 h-2 rounded-full ${GROUP_META[key].dot}`} />
-                {GROUP_META[key].title} ({groups[key].length})
-              </h2>
-              <div className="space-y-3">
-                {groups[key].map(it => <Item key={it.id} it={it} onDismiss={dismiss} />)}
-              </div>
-            </div>
-          )
-        ))}
-      </div>
+      {classics.length > 0 && (
+        <section className="mb-8">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-gray-500 mb-3">Learn from the greats</h2>
+          <div className="space-y-3">{classics.map((c, i) => <ClassicCard key={i} c={c} />)}</div>
+        </section>
+      )}
 
-      {archive.length > 0 && (
-        <div className="mt-8">
-          <h2 className="text-sm font-semibold text-gray-700 mb-3">Recently featured from the greats</h2>
-          <div className="space-y-3">
-            {archive.map((a, i) => (
-              <div key={i} className="card p-4">
-                <div className="text-[10px] uppercase tracking-wide text-gray-400">{a.author}</div>
-                <a href={a.url} target="_blank" rel="noopener" className="text-sm font-semibold text-gray-900 hover:text-amber-700">{a.title}</a>
-                {a.summary?.one_liner && <p className="text-xs text-gray-500 mt-1">{a.summary.one_liner}</p>}
-                {a.summary?.takeaways?.length > 0 && (
-                  <ul className="mt-2 space-y-1">
-                    {a.summary.takeaways.map((t, j) => (
-                      <li key={j} className="text-xs text-gray-600 flex gap-2"><span className="text-gray-300">•</span><span>{t}</span></li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            ))}
+      {newsletters.length > 0 && (
+        <section>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-gray-500">Newsletters</h2>
+            <button onClick={rebuild} disabled={rebuilding} className="text-[11px] text-gray-400 hover:text-gray-600 disabled:opacity-50">{rebuilding ? 'Rebuilding…' : 'Regenerate'}</button>
           </div>
-        </div>
+          <div className="space-y-3">{newsletters.map((n, i) => <NewsletterCard key={i} n={n} />)}</div>
+        </section>
       )}
     </div>
   );
