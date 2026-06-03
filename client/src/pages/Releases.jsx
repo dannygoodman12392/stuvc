@@ -6,6 +6,19 @@
 
 const RELEASES = [
   {
+    version: 'v2.8.2',
+    date: 'June 3, 2026',
+    time: '9:30 AM CT',
+    title: 'Sourcing inbox: clearer caliber vs. fit',
+    highlights: [
+      {
+        product: 'Sourcing',
+        change: 'Removed the confusing double-score on founder cards. The big mark is now the caliber tier (S/A/B/C — matching the section it\'s in), and the 1–10 number is clearly labeled "Fit." Added a one-line legend explaining the two axes — a top-caliber founder can still have a modest Fit if their public signal is thin.',
+        benefit: 'No more "why is there a 4 in Best-of-Best?" — the card reads cleanly at a glance.',
+      },
+    ],
+  },
+  {
     version: 'v2.8.1',
     date: 'June 3, 2026',
     time: '8:45 AM CT',

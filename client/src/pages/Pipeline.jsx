@@ -431,6 +431,11 @@ function InboxTab({ queue, starred, stats, loading, onApprove, onDismiss, onHide
         )}
       </div>
 
+      {/* Two-axis legend — caliber (grouping) vs fit (the number) */}
+      <p className="text-[11px] text-gray-400 mb-3">
+        Grouped by <span className="text-gray-500 font-medium">caliber</span> (how elite a builder: S/A/B/C). The <span className="text-gray-500 font-medium">Fit</span> chip (1–10) is a separate axis — how strong &amp; fresh the Chicago/IL tie + relevance signal is. A top-caliber founder can have a modest Fit if their public signal is thin.
+      </p>
+
       {/* Learning loop status — quiet, only once there's enough signal */}
       {stats?.learning?.likedN >= 3 && (
         <div className="text-[11px] text-gray-400 mb-3">
@@ -586,13 +591,13 @@ function InboxCard({ founder: f, onApprove, onDismiss, onHideForever, onStar, on
       <div className={`card px-4 py-3 ring-1 ${scoreRing}`}>
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0">
-            <div className={`w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold border flex-shrink-0 ${scoreColor}`}>
-              {f.confidence_score}
+            <div className={`w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold border flex-shrink-0 ${tierMeta.cls}`} title={tierMeta.title}>
+              {tierMeta.label}
             </div>
             <div className="min-w-0">
               <div className="flex items-center gap-1.5">
-                <span className={`text-[10px] font-bold px-1 py-0 rounded border ${tierMeta.cls}`} title={tierMeta.title}>{tierMeta.label}</span>
                 <p className="text-sm font-medium text-gray-900 truncate">{f.name}</p>
+                <span className={`text-[9px] font-semibold px-1 py-0 rounded border ${scoreColor}`} title="Fit score 1–10 (separate from caliber tier)">Fit {f.confidence_score}</span>
               </div>
               <p className="text-xs text-gray-500 truncate">{f.company || f.company_one_liner || 'Stealth'}{f.chicago_connection ? ` · ${f.chicago_connection}` : ''}</p>
             </div>
@@ -615,13 +620,14 @@ function InboxCard({ founder: f, onApprove, onDismiss, onHideForever, onStar, on
         {/* Top row */}
         <div className="flex items-start justify-between gap-3">
           <div className="flex items-start gap-3 min-w-0">
-            <div className={`w-11 h-11 rounded-xl flex items-center justify-center text-lg font-bold border flex-shrink-0 ${scoreColor}`}>
-              {f.confidence_score}
+            <div className={`w-11 h-11 rounded-xl flex flex-col items-center justify-center border flex-shrink-0 ${tierMeta.cls}`} title={tierMeta.title}>
+              <span className="text-lg font-bold leading-none">{tierMeta.label}</span>
+              <span className="text-[8px] font-medium uppercase tracking-wide opacity-70">tier</span>
             </div>
             <div className="min-w-0">
               <div className="flex items-center gap-2 mb-0.5">
-                <span className={`text-[11px] font-bold px-1.5 py-0.5 rounded border ${tierMeta.cls}`} title={tierMeta.title}>{tierMeta.label}</span>
                 <p className="text-sm font-semibold text-gray-900">{f.name}</p>
+                <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border ${scoreColor}`} title="Fit score (1–10): how strong & fresh the Chicago/IL tie + relevance signal is. Separate from caliber tier.">Fit {f.confidence_score}/10</span>
                 {f.source && (
                   <span className="text-[9px] font-medium px-1.5 py-0.5 rounded bg-gray-100 text-gray-500 uppercase">{f.source}</span>
                 )}

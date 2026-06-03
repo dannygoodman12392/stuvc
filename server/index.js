@@ -171,7 +171,7 @@ app.use('/api/ai', rateLimit({ windowMs: 15 * 60 * 1000, max: 50, standardHeader
 app.use('/api/auth/register', rateLimit({ windowMs: 15 * 60 * 1000, max: 5, standardHeaders: true, legacyHeaders: false }));
 
 // Public routes
-app.get('/api/health', (req, res) => res.json({ status: 'ok', app: 'Stu', version: '2.8.1' }));
+app.get('/api/health', (req, res) => res.json({ status: 'ok', app: 'Stu', version: '2.8.2' }));
 // Full healthcheck board (authed) — green/red status across datastores, keys, jobs, integrity.
 app.get('/api/health/full', requireAuth, (req, res) => {
   try { res.json(require('./services/health').buildHealthReport(req.user.id)); }
