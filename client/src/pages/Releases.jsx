@@ -6,6 +6,19 @@
 
 const RELEASES = [
   {
+    version: 'v2.7.3',
+    date: 'June 3, 2026',
+    time: '3:30 AM CT',
+    title: 'P0: stop auto-pushing unvetted founders to the team Airtable',
+    highlights: [
+      {
+        product: 'Platform',
+        change: 'Airtable (the team\'s shared base) was being auto-written on every stage change and on every Sourcing approval — putting in-progress founder data in front of the team. All auto-pushes are removed and the Airtable writers now refuse unless called via a deliberate "publish to team" action. SQLite stays canonical; nothing reaches the team base by accident.',
+        benefit: 'Your team only sees founders you deliberately publish — never half-baked pipeline data.',
+      },
+    ],
+  },
+  {
     version: 'v2.7.2',
     date: 'June 3, 2026',
     time: '2:00 AM CT',

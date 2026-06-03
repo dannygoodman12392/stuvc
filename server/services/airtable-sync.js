@@ -57,10 +57,22 @@ function logSync(founderId, tableName, fieldName, oldValue, newValue, recordId, 
   }
 }
 
+// GATE: Airtable is the TEAM's shared base. Nothing writes to it except a deliberate
+// "publish to team" action. Both writers refuse unless opts.explicit === true, so an
+// accidental auto-push (the old fire-and-forget behavior) can never leak in-progress
+// founder data to the team. SQLite stays canonical; Airtable self-heals on next publish.
+function gatedOut(opts, founder, kind) {
+  if (opts && opts.explicit === true) return false;
+  console.warn(`[AirtableSync] BLOCKED non-explicit ${kind} push for "${founder && founder.name}" — Airtable writes require an explicit publish-to-team action.`);
+  return true;
+}
+
 /**
- * Push admissions_status change to Airtable Founder Ecosystem table
+ * Push admissions_status change to Airtable Founder Ecosystem table.
+ * GATED: only runs when called with { explicit: true } (publish-to-team).
  */
-async function pushAdmissionsChange(founder, oldStatus) {
+async function pushAdmissionsChange(founder, oldStatus, opts = {}) {
+  if (gatedOut(opts, founder, 'admissions')) return { skipped: 'not_explicit' };
   const recordId = founder.airtable_founder_record_id;
   if (!recordId) {
     console.warn(`[AirtableSync] No Airtable record ID for founder ${founder.id} (${founder.name}), skipping admissions push`);
@@ -90,9 +102,11 @@ async function pushAdmissionsChange(founder, oldStatus) {
 }
 
 /**
- * Push deal_status change to Airtable Investment Pipeline table
+ * Push deal_status change to Airtable Investment Pipeline table.
+ * GATED: only runs when called with { explicit: true } (publish-to-team).
  */
-async function pushDealChange(founder, oldStatus) {
+async function pushDealChange(founder, oldStatus, opts = {}) {
+  if (gatedOut(opts, founder, 'deal')) return { skipped: 'not_explicit' };
   const recordId = founder.airtable_deal_record_id;
   if (!recordId) {
     console.warn(`[AirtableSync] No Airtable deal record ID for founder ${founder.id} (${founder.name}), skipping deal push`);

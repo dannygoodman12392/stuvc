@@ -104,16 +104,9 @@ router.post('/approve/:id', (req, res) => {
   // Update sourced record
   db.prepare('UPDATE sourced_founders SET status = ?, promoted_to_founder_id = ? WHERE id = ?').run('approved', result.lastInsertRowid, req.params.id);
 
-  // Fire-and-forget Airtable sync for new founder
-  try {
-    const airtableSync = require('../services/airtable-sync');
-    const founder = db.prepare('SELECT * FROM founders WHERE id = ?').get(result.lastInsertRowid);
-    if (founder) {
-      airtableSync.pushAdmissionsChange(founder, null).catch(err =>
-        console.error('[AirtableSync] New founder push failed:', err.message)
-      );
-    }
-  } catch {}
+  // NOTE: We do NOT push to Airtable here. Airtable is the team's shared base and is
+  // only written via an explicit "publish to team" action. Approving from the inbox
+  // keeps the founder in SQLite (canonical) only — no in-progress data reaches the team.
 
   const founder = db.prepare('SELECT * FROM founders WHERE id = ?').get(result.lastInsertRowid);
   res.json(founder);
