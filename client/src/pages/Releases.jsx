@@ -6,6 +6,19 @@
 
 const RELEASES = [
   {
+    version: 'v2.9.3',
+    date: 'June 3, 2026',
+    time: '1:30 PM CT',
+    title: 'Tier 4: IL-tie gate stress-tested + hardened',
+    highlights: [
+      {
+        product: 'Sourcing',
+        change: 'Stress-tested the Chicago/IL tie gate against a battery of adversarial profiles and caught a false positive: a "Chicago Bears superfan" building in SF was being accepted because a sports-team mention tripped the location match. Now brand/team/media phrases ("Chicago Bears", "Chicago Tribune", etc.) can no longer count as a tie. Locked with 10 regression cases.',
+        benefit: 'Only genuine Chicago/Illinois connections count — no founder slips in on an incidental mention of the city.',
+      },
+    ],
+  },
+  {
     version: 'v2.9.2',
     date: 'June 3, 2026',
     time: '12:30 PM CT',

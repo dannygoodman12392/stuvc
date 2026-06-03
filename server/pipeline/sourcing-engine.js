@@ -112,7 +112,7 @@ const HYPERSCALE_COMPANIES = [
 // Tie must come from: (a) current location, (b) strict work-context, (c) Illinois school,
 // (d) grew up / from / raised in IL, (e) worked at Chicago-HQ company.
 function verifyIllinois(text, headline) {
-  const combined = ((headline || '') + ' ' + (text || '')).toLowerCase();
+  const combined = stripFalseGeo(((headline || '') + ' ' + (text || '')).toLowerCase());
 
   // (a) Current location — "City, Illinois" or "City, IL" patterns
   for (const loc of ILLINOIS_LOCATIONS) {
@@ -177,8 +177,16 @@ function verifyIllinois(text, headline) {
 // Raw substring match on a user location is rejected unless it has structural
 // context (comma pattern, "based in", etc.) — too many false positives like
 // "Chicago Bears fan" or "Illinois tax law".
+// Strip phrases where a location word is NOT a geographic tie — sports teams, media,
+// etc. ("Chicago Bears", "Chicago Tribune") so they can't trigger a false tie.
+function stripFalseGeo(s) {
+  return s
+    .replace(/\bchicago\s+(bears|bulls|cubs|white\s*sox|blackhawks|fire|sky|red\s*stars|marathon|tribune|sun[-\s]?times|magazine|pizza|style|hope|med)\b/g, ' ')
+    .replace(/\billinois\s+(lottery|tollway)\b/g, ' ');
+}
+
 function verifyLocation(text, headline, criteria) {
-  const combined = ((headline || '') + ' ' + (text || '')).toLowerCase();
+  const combined = stripFalseGeo(((headline || '') + ' ' + (text || '')).toLowerCase());
   const userLocations = (criteria.locations || []).map(l => l.toLowerCase());
   const userSchools = (criteria.schools || []).map(s => s.toLowerCase());
 
@@ -1687,4 +1695,7 @@ module.exports = {
   VALID_TIE_TYPES,
   extractSignals,
   verifyPedigree,
+  verifyLocation,
+  verifyIllinois,
+  isTooFarAlong,
 };
