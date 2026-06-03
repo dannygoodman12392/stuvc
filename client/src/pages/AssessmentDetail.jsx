@@ -49,12 +49,14 @@ export default function AssessmentDetail() {
   const [rubric, setRubric] = useState(null);
   const [rubricLoading, setRubricLoading] = useState(false);
   const [notionState, setNotionState] = useState({ status: 'idle', url: null, error: null });
+  const [divergence, setDivergence] = useState(null);
   const pollRef = useRef(null);
   const rubricPollRef = useRef(null);
 
   useEffect(() => {
     loadAssessment();
     loadRubric();
+    api.getAssessmentTasteDivergence(id).then(setDivergence).catch(() => {});
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
       if (rubricPollRef.current) clearInterval(rubricPollRef.current);
@@ -175,6 +177,16 @@ export default function AssessmentDetail() {
           <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-2.5">
             <p className="text-sm font-semibold text-red-700">⚠ Deck not ingested — this score is suspect</p>
             <p className="text-xs text-red-600 mt-0.5">{assessment.deck_status_reason || 'The pitch deck could not be read.'} Re-run this assessment with a PDF export of the deck for a trustworthy score.</p>
+          </div>
+        )}
+
+        {/* Taste divergence — how this founder sits vs. your revealed preferences */}
+        {divergence?.available && divergence.direction !== 'neutral' && (
+          <div className={`mb-4 rounded-lg border px-4 py-2.5 ${divergence.direction === 'divergent' ? 'border-violet-200 bg-violet-50' : 'border-emerald-200 bg-emerald-50'}`}>
+            <p className={`text-sm font-semibold ${divergence.direction === 'divergent' ? 'text-violet-700' : 'text-emerald-700'}`}>
+              {divergence.direction === 'divergent' ? '🧭 Counter to your usual pattern' : '✓ Matches your revealed taste'}
+            </p>
+            <p className="text-xs text-gray-600 mt-0.5">{divergence.note}</p>
           </div>
         )}
 

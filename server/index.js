@@ -183,7 +183,17 @@ app.use('/api/ai', rateLimit({ windowMs: 15 * 60 * 1000, max: 50, standardHeader
 app.use('/api/auth/register', rateLimit({ windowMs: 15 * 60 * 1000, max: 5, standardHeaders: true, legacyHeaders: false }));
 
 // Public routes
-app.get('/api/health', (req, res) => res.json({ status: 'ok', app: 'Stu', version: '3.1.0' }));
+app.get('/api/health', (req, res) => res.json({
+  status: 'ok', app: 'Stu', version: '3.2.0',
+  pipeline: {
+    // Armed = the daily sourcing/talent/filings crons will actually run tonight.
+    sourcing_armed: process.env.PIPELINE_ENABLED === 'true'
+      || (!!process.env.EXA_API_KEY && !!process.env.ANTHROPIC_API_KEY),
+    newsletter_armed: true, // ungated — runs for any user with sources/Gmail
+    has_exa: !!process.env.EXA_API_KEY,
+    has_anthropic: !!process.env.ANTHROPIC_API_KEY,
+  },
+}));
 // Full healthcheck board (authed) — green/red status across datastores, keys, jobs, integrity.
 app.get('/api/health/full', requireAuth, (req, res) => {
   try { res.json(require('./services/health').buildHealthReport(req.user.id)); }
@@ -258,8 +268,16 @@ app.listen(PORT, () => {
     console.log('Daily newsletter brief scheduled (6:00 AM CT)');
   }
 
-  // Daily sourcing cron — runs at 6:00 AM CT (12:00 UTC in CDT / 12:00 UTC in CST)
-  if (process.env.PIPELINE_ENABLED === 'true') {
+  // Daily sourcing cron — runs at 6:00 AM CT (12:00 UTC in CDT / 12:00 UTC in CST).
+  // Self-activating: we schedule whenever the pipeline can actually do work — i.e. the
+  // keys that power it (Exa for discovery + Anthropic for scoring) are present in the
+  // environment — OR when PIPELINE_ENABLED is explicitly set. This removes the silent
+  // failure mode where the engine was built and keyed but never ran because a separate
+  // flag wasn't flipped in prod.
+  const pipelineReady = process.env.PIPELINE_ENABLED === 'true'
+    || (!!process.env.EXA_API_KEY && !!process.env.ANTHROPIC_API_KEY);
+  if (pipelineReady) {
+    console.log(`[Cron] Pipeline active (${process.env.PIPELINE_ENABLED === 'true' ? 'PIPELINE_ENABLED' : 'keys present'})`);
     const cron = require('node-cron');
     const { runSourcingEngine } = require('./pipeline/sourcing-engine');
 

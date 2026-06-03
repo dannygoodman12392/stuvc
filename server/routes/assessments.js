@@ -1049,6 +1049,17 @@ router.post('/:id/push-to-notion', async (req, res) => {
   }
 });
 
+// GET /api/assessments/:id/taste-divergence — how this founder sits vs. revealed taste
+router.get('/:id/taste-divergence', (req, res) => {
+  try {
+    const a = db.prepare('SELECT founder_id FROM opportunity_assessments WHERE id = ? AND created_by = ?').get(req.params.id, req.user.id);
+    if (!a || !a.founder_id) return res.json({ available: false, reason: 'no linked founder' });
+    const f = db.prepare('SELECT tags, caliber_signals, caliber_tier FROM founders WHERE id = ?').get(a.founder_id);
+    if (!f) return res.json({ available: false, reason: 'founder not found' });
+    res.json(require('../pipeline/taste').tasteDivergence(req.user.id, f));
+  } catch (e) { res.status(500).json({ available: false, error: e.message }); }
+});
+
 // Export router + internal functions for migrations
 router._internal = { runAssessmentAgents, processRerunInputs };
 module.exports = router;

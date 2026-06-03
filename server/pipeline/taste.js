@@ -123,4 +123,29 @@ function tasteInsights(userId) {
   };
 }
 
-module.exports = { computeTasteProfile, scoreAffinity, rowSignals, tasteInsights };
+// For an assessed founder: how do they sit against the revealed taste pattern?
+// Surfaces match OR counter-signal ("you usually pass this — here's why it's worth a look").
+function tasteDivergence(userId, signalRow) {
+  const profile = computeTasteProfile(userId);
+  if (profile.likedN < MIN_LIKED) return { available: false, reason: 'not enough taste signal yet' };
+  const label = (s) => s.replace(/^(domain|ped|bld|cal|tie|tier):/, '');
+  const matched = [], counter = [];
+  for (const s of rowSignals(signalRow)) {
+    const w = profile.weights[s];
+    if (typeof w !== 'number') continue;
+    if (w > 0.12) matched.push(label(s));
+    else if (w < -0.12) counter.push(label(s));
+  }
+  const { affinity } = scoreAffinity(signalRow, profile.weights);
+  let direction = 'neutral', note = 'Roughly neutral against your revealed taste pattern.';
+  if (counter.length && affinity <= 0) {
+    direction = 'divergent';
+    note = `Counter to your usual pattern — you typically pass founders with ${counter.slice(0, 3).join(', ')}. Look deliberately at why this one is different.`;
+  } else if (matched.length && affinity > 0) {
+    direction = 'match';
+    note = `Matches your revealed taste — you tend to advance founders with ${matched.slice(0, 3).join(', ')}.`;
+  }
+  return { available: true, affinity, direction, matched, counter, note, likedN: profile.likedN };
+}
+
+module.exports = { computeTasteProfile, scoreAffinity, rowSignals, tasteInsights, tasteDivergence };

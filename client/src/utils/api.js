@@ -109,6 +109,7 @@ export const api = {
   getAssessments: () => request('/assessments'),
   getAssessment: (id) => request(`/assessments/${id}`),
   getAssessmentInputs: (id) => request(`/assessments/${id}/inputs`),
+  getAssessmentTasteDivergence: (id) => request(`/assessments/${id}/taste-divergence`),
   getAssessmentGroup: (groupId) => request(`/assessments/group/${groupId}`),
   createAssessment: (data) => request('/assessments', { method: 'POST', body: JSON.stringify(data) }),
   updateAssessment: (id, data) => request(`/assessments/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
