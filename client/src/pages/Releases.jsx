@@ -6,6 +6,19 @@
 
 const RELEASES = [
   {
+    version: 'v3.1.0',
+    date: 'June 3, 2026',
+    time: '4:45 PM CT',
+    title: 'Tier 5: a taste profile you can audit + an exploration lane',
+    highlights: [
+      {
+        product: 'Sourcing',
+        change: 'Your approve/pass history now produces a falsifiable taste profile: plain-English statements ("you advance ex-hyperscaler founders 3.2× your base rate") each linked to the specific founders behind them, with a confidence level — view it from the inbox. Added an exploration lane that surfaces a few high-caliber founders OUTSIDE your usual pattern, so the funnel never collapses into a monoculture. The learned taste re-ranks but never overrides the hard Chicago/IL-tie requirement.',
+        benefit: 'See (and correct) what Stu has learned about your taste, and keep discovering great founders you might otherwise filter out.',
+      },
+    ],
+  },
+  {
     version: 'v3.0.0',
     date: 'June 3, 2026',
     time: '3:30 PM CT',

@@ -363,6 +363,13 @@ export default function Pipeline() {
 
 function InboxTab({ queue, starred, stats, loading, onApprove, onDismiss, onHideForever, onStar, onUnstar, onTriggerSourcing, sourcingRunning, filter, setFilter }) {
   const [showStarred, setShowStarred] = useState(false);
+  const [tasteOpen, setTasteOpen] = useState(false);
+  const [taste, setTaste] = useState(null);
+
+  function openTaste() {
+    setTasteOpen(o => !o);
+    if (!taste) api.getSourcingTasteProfile().then(setTaste).catch(() => {});
+  }
 
   if (loading) return <div className="text-center py-12 text-gray-500 text-sm">Loading...</div>;
 
@@ -438,9 +445,47 @@ function InboxTab({ queue, starred, stats, loading, onApprove, onDismiss, onHide
 
       {/* Learning loop status — quiet, only once there's enough signal */}
       {stats?.learning?.likedN >= 3 && (
-        <div className="text-[11px] text-gray-400 mb-3">
+        <div className="text-[11px] text-gray-400 mb-2">
           <span className="text-gray-500 font-medium">Learning from your taste</span> · {stats.learning.likedN} approved, {stats.learning.passedN} passed
-          {stats.learning.favored?.length > 0 && <> · favoring <span className="text-violet-600">{stats.learning.favored.slice(0, 4).join(', ')}</span></>}
+          <button onClick={openTaste} className="ml-2 text-violet-600 hover:text-violet-800 font-medium">{tasteOpen ? 'hide profile' : 'view taste profile'}</button>
+        </div>
+      )}
+
+      {/* Falsifiable taste profile — each inference links to the founders behind it */}
+      {tasteOpen && taste && (
+        <div className="card p-4 mb-3 text-xs">
+          <div className="flex items-center justify-between mb-2">
+            <span className="font-semibold text-gray-900">Your taste profile</span>
+            <span className="text-[10px] text-gray-400">confidence: {taste.confidence} · {taste.likedN} approved / {taste.passedN} passed</span>
+          </div>
+          {taste.note && <p className="text-gray-500">{taste.note}</p>}
+          {taste.favored?.length > 0 && (
+            <div className="mb-2">
+              <div className="text-[10px] uppercase tracking-wide text-emerald-600 font-semibold mb-1">You advance</div>
+              {taste.favored.map((f, i) => (
+                <div key={i} className="mb-1.5">
+                  <p className="text-gray-700">{f.statement}</p>
+                  {f.founders?.length > 0 && <p className="text-[10px] text-gray-400">e.g. {f.founders.join(', ')}</p>}
+                </div>
+              ))}
+            </div>
+          )}
+          {taste.disfavored?.length > 0 && (
+            <div>
+              <div className="text-[10px] uppercase tracking-wide text-red-500 font-semibold mb-1">You pass on</div>
+              {taste.disfavored.map((f, i) => <p key={i} className="text-gray-600 mb-0.5">{f.statement}</p>)}
+            </div>
+          )}
+          <p className="text-[10px] text-gray-400 mt-2 border-t border-gray-100 pt-2">Derived only from your decisions — every claim names the founders behind it, so you can spot a wrong inference. Never overrides the Chicago/IL-tie requirement.</p>
+        </div>
+      )}
+
+      {/* Exploration lane — strong builders OUTSIDE your usual pattern, so the funnel doesn't narrow */}
+      {stats?.exploration?.length > 0 && (
+        <div className="rounded-lg border border-violet-200 bg-violet-50/50 px-4 py-2.5 mb-4">
+          <span className="text-[11px] font-semibold text-violet-700">🧭 Exploration</span>
+          <span className="text-[11px] text-gray-500"> — strong builders outside your usual pattern, worth a look so your funnel stays wide: </span>
+          <span className="text-[11px] text-gray-700">{stats.exploration.map(f => `${f.name} (${f.caliber_tier})`).join(', ')}</span>
         </div>
       )}
 

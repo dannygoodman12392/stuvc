@@ -99,6 +99,7 @@ export const api = {
   starSourced: (id) => request(`/sourcing/star/${id}`, { method: 'POST' }),
   unstarSourced: (id) => request(`/sourcing/unstar/${id}`, { method: 'POST' }),
   triggerSourcing: () => request('/sourcing/run', { method: 'POST' }),
+  getSourcingTasteProfile: () => request('/sourcing/taste-profile'),
 
   // Calls
   getCalls: (founderId) => request(`/calls/${founderId}`),

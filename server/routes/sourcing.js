@@ -193,7 +193,25 @@ router.get('/stats', (req, res) => {
     learning = { likedN: t.likedN, passedN: t.passedN, favored: t.favored.map(label), disfavored: t.disfavored.map(label) };
   } catch {}
 
-  res.json({ pending, starred, approved, dismissed, bySource: bySrc, byScore, byCaliber, learning, lastRun, todayAdded });
+  // Exploration lane — high-caliber founders that do NOT match the learned pattern, so the
+  // funnel never collapses into a monoculture. Surfaced separately, labeled exploration.
+  let exploration = [];
+  try {
+    exploration = db.prepare(`
+      SELECT id, name, company, company_one_liner, caliber_tier, confidence_score, chicago_connection, linkedin_url
+      FROM sourced_founders
+      WHERE user_id = ? AND status = 'pending' AND caliber_tier IN ('S','A') AND COALESCE(affinity_score, 0) <= 0
+      ORDER BY (CASE caliber_tier WHEN 'S' THEN 2 ELSE 1 END) DESC, confidence_score DESC LIMIT 3
+    `).all(req.user.id);
+  } catch {}
+
+  res.json({ pending, starred, approved, dismissed, bySource: bySrc, byScore, byCaliber, learning, exploration, lastRun, todayAdded });
+});
+
+// GET /api/sourcing/taste-profile — derived, falsifiable taste profile (plain-English + evidence)
+router.get('/taste-profile', (req, res) => {
+  try { res.json(require('../pipeline/taste').tasteInsights(req.user.id)); }
+  catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 module.exports = router;

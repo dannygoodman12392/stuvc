@@ -74,4 +74,53 @@ function scoreAffinity(signalRow, weights) {
   return { affinity, hits: hits.slice(0, 4) };
 }
 
-module.exports = { computeTasteProfile, scoreAffinity, rowSignals };
+const KIND_WORD = { domain: 'in', ped: 'with the pedigree', bld: 'with', cal: 'with', tie: 'with a', tier: 'at caliber' };
+
+// Plain-English, FALSIFIABLE taste profile: every inferred preference links to the
+// founders that produced it, with a base-rate multiple and a confidence level. Derived
+// only — never hand-edited.
+function tasteInsights(userId) {
+  const liked = db.prepare(`SELECT id, name, ${COLS} FROM sourced_founders WHERE user_id = ? AND status IN ('approved','starred')`).all(userId);
+  const passed = db.prepare(`SELECT id, name, ${COLS} FROM sourced_founders WHERE user_id = ? AND status = 'dismissed'`).all(userId);
+  const likedN = liked.length, passedN = passed.length;
+  const confidence = likedN < MIN_LIKED ? 'none' : likedN < 6 ? 'low' : likedN < 15 ? 'building' : 'solid';
+
+  if (likedN < MIN_LIKED) {
+    return { likedN, passedN, confidence, favored: [], disfavored: [], note: `Need ${MIN_LIKED}+ approvals before inferring your taste — you have ${likedN}. Keep approving/passing and this builds itself.` };
+  }
+
+  const collect = (rows) => { const m = {}; for (const r of rows) for (const s of rowSignals(r)) (m[s] ||= []).push(r.name); return m; };
+  const lc = collect(liked), pc = collect(passed);
+  const keys = new Set([...Object.keys(lc), ...Object.keys(pc)]);
+
+  const rows = [];
+  for (const k of keys) {
+    const likedHits = (lc[k] || []).length, passedHits = (pc[k] || []).length;
+    if (likedHits + passedHits < 2) continue;
+    const likedRate = likedHits / likedN, passedRate = passedHits / Math.max(1, passedN);
+    const lift = likedRate - passedRate;
+    const mult = passedRate > 0 ? likedRate / passedRate : (likedRate > 0 ? null : 1); // null = "∞ / only ever advanced"
+    rows.push({
+      key: k, label: k.replace(/^(domain|ped|bld|cal|tie|tier):/, ''), kind: k.split(':')[0],
+      likedHits, passedHits, lift, mult, founders: (lc[k] || []).slice(0, 6),
+    });
+  }
+  rows.sort((a, b) => b.lift - a.lift);
+
+  const mk = (r, dir) => {
+    const kw = KIND_WORD[r.kind] || 'with';
+    if (dir === 'advance') {
+      const m = r.mult == null ? ' — you\'ve never passed this profile' : r.mult > 1.3 ? ` — ${r.mult.toFixed(1)}× your base rate` : '';
+      return { ...r, statement: `You advance founders ${kw} ${r.label} (${r.likedHits} of ${likedN} approvals vs ${r.passedHits} passes)${m}.` };
+    }
+    return { ...r, statement: `You pass on founders ${kw} ${r.label} (${r.passedHits} passes vs ${r.likedHits} approvals).` };
+  };
+
+  return {
+    likedN, passedN, confidence,
+    favored: rows.filter(r => r.lift > 0.12).slice(0, 6).map(r => mk(r, 'advance')),
+    disfavored: rows.filter(r => r.lift < -0.12).slice(-6).reverse().map(r => mk(r, 'pass')),
+  };
+}
+
+module.exports = { computeTasteProfile, scoreAffinity, rowSignals, tasteInsights };
