@@ -309,6 +309,17 @@ function itemInsertStmt() {
 }
 
 // Dedupe + extract + rank + store one issue. Returns true if newly added.
+// Cross-source dedup helpers: the same story across multiple newsletters should collapse.
+function canonUrl(u) { return String(u || '').toLowerCase().split(/[?#]/)[0].replace(/\/+$/, ''); }
+function normTitle(t) { return String(t || '').toLowerCase().replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim(); }
+
+function crossSourceDuplicate(userId, url, subject) {
+  const cu = canonUrl(url);
+  const nt = normTitle(subject);
+  const recent = db.prepare("SELECT subject, url FROM newsletter_items WHERE user_id = ? AND is_deleted = 0 AND (brief_date >= date('now','localtime','-4 days') OR brief_date IS NULL)").all(userId);
+  return recent.some(r => (cu && cu.length > 8 && canonUrl(r.url) === cu) || (nt && nt.length > 12 && normTitle(r.subject) === nt));
+}
+
 async function storeItem(userId, m, ctx, anthropic, sourceId, insert) {
   const exists = db.prepare('SELECT id FROM newsletter_items WHERE user_id = ? AND message_id = ?').get(userId, m.message_id);
   if (exists) return false;
@@ -319,6 +330,8 @@ async function storeItem(userId, m, ctx, anthropic, sourceId, insert) {
   item.sender = m.sender || '';
   if (m.url && !item.url) item.url = m.url;
   if (m.sourceName) item.source_name = m.sourceName;
+  // Collapse the same story arriving from multiple newsletters (shared link or near-identical title).
+  if (crossSourceDuplicate(userId, item.url, m.subject)) return false;
   const rel = scoreRelevance(item, ctx);
   insert.run(
     userId, sourceId || null, m.message_id, item.source_name, m.sender || '', m.subject || '',
@@ -511,5 +524,5 @@ async function fetchAllSources(userId) {
 
 module.exports = {
   fetchAndProcess, loadNewsletterConfig, scoreRelevance, buildRelevanceContext,
-  fetchAllSources, discoverFeedUrl,
+  fetchAllSources, discoverFeedUrl, canonUrl, normTitle,
 };

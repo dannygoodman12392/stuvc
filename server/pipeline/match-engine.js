@@ -162,6 +162,19 @@ function heuristicMatch(candidate, role) {
   else if (rLoc) { score += 1; breakdown.location = 1; gaps.push(`Not in ${role.location_pref}`); }
   else { score += 4; breakdown.location = 4; }
 
+  // 7. Must-haves (non-negotiables) — previously loaded but ignored. Penalize when the
+  // role declares must-haves and the candidate shows no evidence of them.
+  const rMust = (parseJSON(role.must_haves) || []).map(s => s.toLowerCase()).filter(Boolean);
+  if (rMust.length > 0) {
+    const hay = [cStack.join(' '), cBuilderSignals, cPedigree,
+      (candidate.headline || '').toLowerCase(), (candidate.current_role || '').toLowerCase(),
+      (candidate.one_liner || '').toLowerCase()].join(' ');
+    const met = rMust.filter(m => hay.includes(m));
+    if (met.length === 0) { score -= 20; breakdown.mustHaves = -20; gaps.push(`Missing all must-haves: ${rMust.slice(0, 3).join(', ')}`); }
+    else if (met.length < rMust.length) { score -= 8; breakdown.mustHaves = -8; gaps.push(`Missing must-have(s): ${rMust.filter(m => !met.includes(m)).slice(0, 3).join(', ')}`); }
+    else { breakdown.mustHaves = 0; strengths.push('All must-haves met'); }
+  }
+
   const rationale = [
     strengths.length > 0 ? `Strengths: ${strengths.join('; ')}.` : '',
     gaps.length > 0 ? `Gaps: ${gaps.join('; ')}.` : '',

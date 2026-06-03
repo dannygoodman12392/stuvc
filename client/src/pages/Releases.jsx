@@ -6,6 +6,24 @@
 
 const RELEASES = [
   {
+    version: 'v2.9.4',
+    date: 'June 3, 2026',
+    time: '2:30 PM CT',
+    title: 'Tier 4: dedup the brief, enforce must-haves in Talent',
+    highlights: [
+      {
+        product: 'Daily Brief',
+        change: 'The same story arriving from multiple newsletters now collapses to one entry (matched by shared link or near-identical headline), instead of cluttering the feed with duplicates.',
+        benefit: 'A cleaner brief — one entry per story, even when three newsletters cover it.',
+      },
+      {
+        product: 'Talent',
+        change: 'A role\'s "must-haves" are now enforced in matching — candidates showing no evidence of the non-negotiables are penalized and flagged, instead of must-haves being ignored.',
+        benefit: 'Matches respect your hard requirements, not just keyword overlap.',
+      },
+    ],
+  },
+  {
     version: 'v2.9.3',
     date: 'June 3, 2026',
     time: '1:30 PM CT',
