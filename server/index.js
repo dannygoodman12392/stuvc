@@ -171,6 +171,15 @@ seedIfEmpty();
       } catch (err) { console.error('[Migration] hallucinated-labels cleanup error:', err.message); }
     }
 
+    // One-time: clean-slate Talent — clear candidates/matches sourced under the old engine.
+    const tResetFlag = db.prepare("SELECT * FROM migration_flags WHERE key = 'reset_talent_candidates_v1'").get();
+    if (!tResetFlag) {
+      try {
+        require('./migrations/reset-talent-candidates')();
+        db.prepare("INSERT INTO migration_flags (key) VALUES ('reset_talent_candidates_v1')").run();
+      } catch (err) { console.error('[Migration] talent reset error:', err.message); }
+    }
+
     // One-time: backfill sourcing evidence onto already-promoted founders.
     const promoMetaFlag = db.prepare("SELECT * FROM migration_flags WHERE key = 'promote_metadata_backfill_v1'").get();
     if (!promoMetaFlag) {
@@ -222,7 +231,7 @@ app.use('/api/auth/register', rateLimit({ windowMs: 15 * 60 * 1000, max: 5, stan
 
 // Public routes
 app.get('/api/health', (req, res) => res.json({
-  status: 'ok', app: 'Stu', version: '4.7.0',
+  status: 'ok', app: 'Stu', version: '4.8.0',
   pipeline: {
     // Armed = the daily sourcing/talent/filings crons will actually run tonight.
     sourcing_armed: process.env.PIPELINE_ENABLED === 'true'

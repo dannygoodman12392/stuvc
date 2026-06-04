@@ -14,6 +14,8 @@
 
 const db = require('../db');
 const https = require('https');
+// Reuse the Pipeline's hardened profile-hygiene guards so Talent has the same accuracy bar.
+const { cleanProfileText, isPlausiblePersonName } = require('./sourcing-engine');
 
 // ── HTTP helpers ──
 function httpPost(url, headers, body) {
@@ -728,6 +730,7 @@ async function scoreCandidate(client, candidate, scoringPrompt) {
     if (match) {
       const p = JSON.parse(match[0]);
       return {
+        scored: true,
         score_build_caliber: p.score_build_caliber || 5,
         score_leap_readiness: p.score_leap_readiness || 5,
         score_domain_fit: p.score_domain_fit || 5,
@@ -755,6 +758,7 @@ async function scoreCandidate(client, candidate, scoringPrompt) {
     console.error('[Talent][Score]', err.message);
   }
   return {
+    scored: false,
     score_build_caliber: 5, score_leap_readiness: 5, score_domain_fit: 5, score_geography: 5,
     overall_score: 5, score_rationale: 'Scoring unavailable',
     tier1_ready: false, tier1_categories: [],
@@ -884,12 +888,14 @@ async function runTalentEngine({ userId = 1, fullSweep = false, roleId = null } 
 
     for (const r of results) {
       const headline = r.title || '';
-      const text = r.text || '';
+      // Strip "People also viewed" contamination before anything reasons about this person.
+      const text = cleanProfileText(r.text || '');
       const url = r.url || '';
       const isLI = url.includes('linkedin.com/in/');
       let name = headline.split(/[|·—\-]/)[0].trim();
       if (name.length > 60) name = name.slice(0, 60);
-      if (!name || name.length < 2) continue;
+      // Name gate: must be a real person, not an article/company headline.
+      if (!isPlausiblePersonName(name)) continue;
 
       candidates.push({
         name,
@@ -956,17 +962,20 @@ async function runTalentEngine({ userId = 1, fullSweep = false, roleId = null } 
   for (const c of unique) {
     const localSignals = extractTalentSignals(c.text, c.headline, criteria);
 
-    let score = {
-      score_build_caliber: 5, score_leap_readiness: 5, score_domain_fit: 5, score_geography: 5,
-      overall_score: 5, score_rationale: 'AI scoring unavailable',
-      tier1_ready: false, tier1_categories: [],
-      tech_stack: localSignals.stack, pedigree_signals: localSignals.pedigree, pedigree_evidence: {},
-      builder_signals: localSignals.builder, leap_signals: localSignals.leap,
-      band_fit: inferBand(localSignals),
-      one_liner: '', years_experience: null, current_company: null, current_role: null,
-      current_location: null, location_match: true, red_flags: [],
-    };
-    if (anthropic) score = await scoreCandidate(anthropic, c, prompt);
+    // FAIL CLOSED: a candidate is admitted ONLY when AI verification actually ran. Without
+    // the LLM (no key or an API error like exhausted credits) we cannot judge fit or verify
+    // claims, so we SKIP rather than admit a default-5 "Scoring unavailable" candidate.
+    if (!anthropic) {
+      rejectedByScore++;
+      console.log(`[TalentEngine] ⏭️ ${c.name} → skipped: AI scoring unavailable (no Anthropic key)`);
+      continue;
+    }
+    const score = await scoreCandidate(anthropic, c, prompt);
+    if (!score.scored) {
+      rejectedByScore++;
+      console.log(`[TalentEngine] ⏭️ ${c.name} → skipped: not verified (${score.score_rationale})`);
+      continue;
+    }
 
     // Verify pedigree — drop hallucinated tags (e.g. fake "MIT")
     score.pedigree_signals = verifyPedigree(score, c.text || '');
@@ -1004,12 +1013,16 @@ async function runTalentEngine({ userId = 1, fullSweep = false, roleId = null } 
     const leap = mergeArr(localSignals.leap, score.leap_signals);
     const stack = mergeArr(localSignals.stack, score.tech_stack);
 
-    // Type the candidate by function. When sourcing is scoped to a role, default to
-    // that role's function (the queries targeted it); otherwise infer from the profile.
+    // Type the candidate by function. For a ROLE-SCOPED run we TRUST the role's function:
+    // these candidates were found by that function's targeted queries (and GitHub is skipped
+    // for non-eng), so a CMO search yields marketing leaders. Forcing the role function here
+    // is what stops a thin-LinkedIn marketer from being mis-typed and then dropped by the
+    // match-time function gate (the root cause of empty CMO/GTM queues). The function gate
+    // still protects the GLOBAL daily run, which infers from the profile.
     const candFn = inferCandidateFunction({
       current_role: score.current_role, headline: c.headline, one_liner: score.one_liner, tech_stack: JSON.stringify(stack),
     });
-    const roleFunction = (roleScope && candFn === 'generalist') ? roleScope.function : candFn;
+    const roleFunction = roleScope ? roleScope.function : candFn;
 
     try {
       insert.run(
@@ -1031,18 +1044,23 @@ async function runTalentEngine({ userId = 1, fullSweep = false, roleId = null } 
     }
   }
 
-  // Phase 5: auto-match new candidates against open roles (or just this role)
+  // Phase 5: match candidates to roles.
+  //  • Role-scoped run: match the ENTIRE function-relevant candidate pool against THIS role
+  //    (not just the last 24h), and ALWAYS run — so the role gets its matches even if every
+  //    fresh hit was a duplicate. This is the fix for "a role never matches the existing pool."
+  //  • Global daily run: only the newly-added candidates, against all open roles.
   let matchesCreated = 0;
-  if (added > 0) {
-    try {
-      const { runMatchEngine } = require('./match-engine');
-      // Lower threshold for a role-scoped run: these candidates were already function- and
-      // location-gated for THIS role, so surface them ranked rather than hiding any at 50.
-      const result = await runMatchEngine({ userId, onlyNewCandidates: true, roleId: roleScope?.id, minScore: roleScope ? 35 : 50 });
+  try {
+    const { runMatchEngine } = require('./match-engine');
+    if (roleScope) {
+      const result = await runMatchEngine({ userId, roleId: roleScope.id, onlyNewCandidates: false, minScore: 35 });
       matchesCreated = result.matches_created || 0;
-    } catch (err) {
-      errors.push({ stage: 'match', error: err.message });
+    } else if (added > 0) {
+      const result = await runMatchEngine({ userId, onlyNewCandidates: true, minScore: 50 });
+      matchesCreated = result.matches_created || 0;
     }
+  } catch (err) {
+    errors.push({ stage: 'match', error: err.message });
   }
 
   // Update run log + a human-readable diagnostic summary (per role).
