@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { api } from '../utils/api';
 import KanbanBoard from '../components/KanbanBoard';
 import ImportFoundersModal from '../components/ImportFoundersModal';
+import { PageHeader, FilterBar, FilterSelect, SearchInput, RankedList, Row, Score, Tag, DetailPanel, DetailSection, EmptyState } from '../components/ui';
 
 // Fallback defaults — used when pipeline config API is unavailable
 const DEFAULT_ADMISSIONS_STATUSES = ['All', 'Sourced', 'Outreach', 'First Call Scheduled', 'First Call Complete', 'Second Call Scheduled', 'Second Call Complete', 'Admitted', 'Active Resident', 'Density Resident', 'Alumni', 'Hold/Nurture', 'Not Admitted'];
@@ -227,38 +228,32 @@ export default function Pipeline() {
 
   return (
     <div>
-      {/* Header */}
-      <div className="flex items-center justify-between mb-4 md:mb-6">
-        <div>
-          <h1 className="text-lg md:text-xl font-bold text-gray-900">Pipeline</h1>
-          <p className="text-xs md:text-sm text-gray-500 mt-0.5">
-            {stats ? `${stats.total} founders` : 'Loading...'}
-            {stats?.admissions > 0 && <span className="ml-1 md:ml-2">· {stats.admissions} in admissions</span>}
-            {stats?.investments > 0 && <span className="ml-1 md:ml-2 hidden sm:inline">· {stats.investments} in investment pipeline</span>}
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          {(tab === 'admissions' || tab === 'investment') && (
-            <div className="flex bg-gray-100 rounded-lg p-0.5">
-              <button onClick={() => setViewMode('list')} className={`p-1.5 rounded-md transition-colors ${viewMode === 'list' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-400 hover:text-gray-600'}`} title="List view">
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3.75 12h16.5m-16.5 3.75h16.5M3.75 19.5h16.5M5.625 4.5h12.75a1.875 1.875 0 010 3.75H5.625a1.875 1.875 0 010-3.75z" /></svg>
+      <PageHeader
+        title="Pipeline"
+        count={stats?.total}
+        subtitle="The best current pre-seed & stealth builders with verified Chicago/Illinois ties — ranked by caliber × fit."
+        actions={
+          <>
+            {tab === 'sourced' && (
+              <button onClick={handleTriggerSourcing} disabled={sourcingRunning} className="btn-primary text-sm disabled:opacity-50">
+                {sourcingRunning ? 'Sourcing…' : 'Find founders'}
               </button>
-              <button onClick={() => setViewMode('kanban')} className={`p-1.5 rounded-md transition-colors ${viewMode === 'kanban' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-400 hover:text-gray-600'}`} title="Board view">
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 4.5v15m6-15v15m-10.875 0h15.75c.621 0 1.125-.504 1.125-1.125V5.625c0-.621-.504-1.125-1.125-1.125H4.125C3.504 4.5 3 5.004 3 5.625v12.75c0 .621.504 1.125 1.125 1.125z" /></svg>
-              </button>
-            </div>
-          )}
-          <button onClick={() => setShowImportModal(true)} className="btn-ghost text-xs md:text-sm border border-gray-200">
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" /></svg>
-            <span className="hidden sm:inline">Import</span>
-          </button>
-          <Link to="/founders/new" className="btn-primary text-xs md:text-sm">
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
-            <span className="hidden sm:inline">Add Founder</span>
-            <span className="sm:hidden">Add</span>
-          </Link>
-        </div>
-      </div>
+            )}
+            {(tab === 'admissions' || tab === 'investment') && (
+              <div className="flex bg-gray-100 rounded-lg p-0.5">
+                <button onClick={() => setViewMode('list')} className={`p-1.5 rounded-md transition-colors ${viewMode === 'list' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-400 hover:text-gray-600'}`} title="List view">
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3.75 12h16.5m-16.5 3.75h16.5M3.75 19.5h16.5M5.625 4.5h12.75a1.875 1.875 0 010 3.75H5.625a1.875 1.875 0 010-3.75z" /></svg>
+                </button>
+                <button onClick={() => setViewMode('kanban')} className={`p-1.5 rounded-md transition-colors ${viewMode === 'kanban' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-400 hover:text-gray-600'}`} title="Board view">
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 4.5v15m6-15v15m-10.875 0h15.75c.621 0 1.125-.504 1.125-1.125V5.625c0-.621-.504-1.125-1.125-1.125H4.125C3.504 4.5 3 5.004 3 5.625v12.75c0 .621.504 1.125 1.125 1.125z" /></svg>
+                </button>
+              </div>
+            )}
+            <button onClick={() => setShowImportModal(true)} className="btn-secondary text-sm">Import</button>
+            <Link to="/founders/new" className="btn-secondary text-sm">Add founder</Link>
+          </>
+        }
+      />
 
       {/* Tabs */}
       <div className="flex gap-1 mb-4 md:mb-6 bg-gray-100 rounded-lg p-1 w-full md:w-fit overflow-x-auto scrollbar-hide">
@@ -362,239 +357,119 @@ export default function Pipeline() {
 // ── Inbox Tab (redesigned sourcing inbox) ──
 
 function InboxTab({ queue, starred, stats, loading, onApprove, onDismiss, onHideForever, onStar, onUnstar, onTriggerSourcing, sourcingRunning, filter, setFilter }) {
-  const [showStarred, setShowStarred] = useState(false);
-  const [tasteOpen, setTasteOpen] = useState(false);
-  const [taste, setTaste] = useState(null);
+  const [selectedId, setSelectedId] = useState(null);
+  const parseArr = (s) => { try { const v = JSON.parse(s || '[]'); return Array.isArray(v) ? v : []; } catch { return []; } };
 
-  function openTaste() {
-    setTasteOpen(o => !o);
-    if (!taste) api.getSourcingTasteProfile().then(setTaste).catch(() => {});
-  }
+  if (loading) return <div className="text-center py-16 text-sm text-gray-400">Loading…</div>;
 
-  if (loading) return <div className="text-center py-12 text-gray-500 text-sm">Loading...</div>;
+  const list = queue;
+  const idx = list.findIndex(f => f.id === selectedId);
+  const selected = idx >= 0 ? list[idx] : null;
+  const go = (n) => { const t = list[n]; if (t) setSelectedId(t.id); };
 
-  // Caliber-led grouping: the unicorn-grade axis is the north star. Within each tier
-  // the route already sorts by fit score, so the freshest best-of-best lead.
-  const tierOf = (f) => f.caliber_tier || 'C';
-  const sTier = queue.filter(f => tierOf(f) === 'S');
-  const aTier = queue.filter(f => tierOf(f) === 'A');
-  const bTier = queue.filter(f => tierOf(f) === 'B');
-  const cTier = queue.filter(f => tierOf(f) === 'C');
-  const bc = stats?.byCaliber || {};
+  const tieLabel = (f) => {
+    const t = (f.location_type || '').replace(/_/g, ' ');
+    return f.chicago_connection || (t ? t : null);
+  };
+
+  const advance = (id) => { onApprove(id); if (id === selectedId) { const next = list[idx + 1]; setSelectedId(next ? next.id : null); } };
+  const pass = (id) => { onDismiss(id); if (id === selectedId) { const next = list[idx + 1]; setSelectedId(next ? next.id : null); } };
 
   return (
     <div>
-      {/* Inbox header stats */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-5">
-        <div className="flex items-center gap-4">
-          {stats?.todayAdded > 0 && (
-            <div className="flex items-center gap-1.5">
-              <div className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
-              <span className="text-sm font-medium text-gray-700">{stats.todayAdded} new today</span>
-            </div>
-          )}
-          <span className="text-xs text-gray-400">{queue.length} pending · {stats?.approved || 0} approved · {stats?.dismissed || 0} dismissed</span>
-          {stats?.lastRun && (
-            <span className="text-xs text-gray-400 hidden md:inline">Last run: {new Date(stats.lastRun.run_at).toLocaleDateString()}</span>
-          )}
-        </div>
-        <div className="flex items-center gap-2">
-          {starred.length > 0 && (
-            <button onClick={() => setShowStarred(!showStarred)} className={`text-xs px-3 py-1.5 rounded-md border transition-colors ${showStarred ? 'bg-amber-50 border-amber-200 text-amber-700' : 'border-gray-200 text-gray-500 hover:bg-gray-50'}`}>
-              <span className="mr-1">&#9733;</span> Starred ({starred.length})
-            </button>
-          )}
-          <button onClick={onTriggerSourcing} disabled={sourcingRunning} className="btn-primary text-xs px-3 py-1.5 disabled:opacity-50">
-            {sourcingRunning ? (
-              <span className="flex items-center gap-1.5"><span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" /> Running...</span>
-            ) : (
-              <span className="flex items-center gap-1.5">
-                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182" /></svg>
-                Find Founders
-              </span>
-            )}
-          </button>
-        </div>
-      </div>
-
-      {/* Caliber summary — how many best-of-best are waiting */}
-      <div className="flex items-center gap-2 mb-3">
-        {[
-          { t: 'S', label: 'Best-of-Best', cls: 'bg-violet-50 text-violet-700 border-violet-200' },
-          { t: 'A', label: 'Top Builders', cls: 'bg-amber-50 text-amber-700 border-amber-200' },
-          { t: 'B', label: 'Strong', cls: 'bg-emerald-50 text-emerald-700 border-emerald-100' },
-        ].map(({ t, label, cls }) => (
-          <button
-            key={t}
-            onClick={() => setFilter(f => ({ ...f, caliber: f.caliber === t ? '' : t }))}
-            className={`text-[11px] font-medium px-2.5 py-1 rounded-full border transition-colors ${cls} ${filter.caliber === t ? 'ring-2 ring-offset-1 ring-current' : ''}`}
-            title={`Filter to ${t}-tier${t !== 'S' ? ' and above' : ''}`}
-          >
-            {t} · {label} ({bc[t] || 0})
-          </button>
-        ))}
-        {filter.caliber && (
-          <button onClick={() => setFilter(f => ({ ...f, caliber: '' }))} className="text-[11px] text-gray-400 hover:text-gray-600">clear</button>
+      <FilterBar resultCount={list.length} dirty={!!(filter.caliber || filter.minScore || filter.search)} onClearAll={() => setFilter({ status: '', search: '', minScore: '', caliber: '' })}>
+        <div className="w-64"><SearchInput value={filter.search} onChange={(v) => setFilter(f => ({ ...f, search: v }))} placeholder="Name, company, school…" /></div>
+        <FilterSelect label="Caliber" value={filter.caliber || 'all'} onChange={(v) => setFilter(f => ({ ...f, caliber: v === 'all' ? '' : v }))}
+          options={[{ value: 'all', label: 'All tiers' }, { value: 'S', label: 'S only' }, { value: 'A', label: 'A & above' }, { value: 'B', label: 'B & above' }]} />
+        <FilterSelect label="Fit" value={filter.minScore || 'all'} onChange={(v) => setFilter(f => ({ ...f, minScore: v === 'all' ? '' : v }))}
+          options={[{ value: 'all', label: 'Any fit' }, { value: '8', label: '8+ (high conviction)' }, { value: '6', label: '6+ (worth a look)' }]} />
+        {starred.length > 0 && (
+          <FilterSelect label="View" value="pending" onChange={() => {}} options={[{ value: 'pending', label: `Pending (${queue.length})` }, { value: 'starred', label: `Starred (${starred.length})` }]} />
         )}
-      </div>
+      </FilterBar>
 
-      {/* Two-axis legend — caliber (grouping) vs fit (the number) */}
-      <p className="text-[11px] text-gray-400 mb-3">
-        Grouped by <span className="text-gray-500 font-medium">caliber</span> (how elite a builder: S/A/B/C). The <span className="text-gray-500 font-medium">Fit</span> chip (1–10) is a separate axis — how strong &amp; fresh the Chicago/IL tie + relevance signal is. A top-caliber founder can have a modest Fit if their public signal is thin.
-      </p>
-
-      {/* Learning loop status — quiet, only once there's enough signal */}
       {stats?.learning?.likedN >= 3 && (
-        <div className="text-[11px] text-gray-400 mb-2">
-          <span className="text-gray-500 font-medium">Learning from your taste</span> · {stats.learning.likedN} approved, {stats.learning.passedN} passed
-          <button onClick={openTaste} className="ml-2 text-violet-600 hover:text-violet-800 font-medium">{tasteOpen ? 'hide profile' : 'view taste profile'}</button>
-        </div>
+        <p className="text-xs text-gray-400 mb-3">Learning from your taste · {stats.learning.likedN} advanced, {stats.learning.passedN} passed. A <span className="inline-block w-2 h-2 rounded-full bg-danger align-middle" /> marks a founder that runs counter to your usual pattern.</p>
       )}
 
-      {/* Falsifiable taste profile — each inference links to the founders behind it */}
-      {tasteOpen && taste && (
-        <div className="card p-4 mb-3 text-xs">
-          <div className="flex items-center justify-between mb-2">
-            <span className="font-semibold text-gray-900">Your taste profile</span>
-            <span className="text-[10px] text-gray-400">confidence: {taste.confidence} · {taste.likedN} approved / {taste.passedN} passed</span>
+      <RankedList
+        items={list}
+        emptyState={<EmptyState title="No founders match" description="Broaden the caliber or fit filter, or run sourcing to pull fresh builders." action={{ label: sourcingRunning ? 'Sourcing…' : 'Find founders now', onClick: onTriggerSourcing }} />}
+        renderRow={(f) => (
+          <Row
+            key={f.id}
+            tier={f.caliber_tier || 'C'}
+            title={f.name}
+            subtitle={f.company ? `${f.company}${f.company_one_liner ? ' — ' + f.company_one_liner : ''}` : (f.company_one_liner || 'Stealth')}
+            meta={<>{tieLabel(f) && <Tag>{tieLabel(f)}</Tag>}{parseArr(f.tags).slice(0, 1).map((t, i) => <Tag key={i}>{t}</Tag>)}</>}
+            score={<Score value={f.confidence_score} max={10} label="Fit" />}
+            flag={(f.affinity_score ?? 0) < 0}
+            selected={f.id === selectedId}
+            onClick={() => setSelectedId(f.id)}
+            trailing={
+              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100">
+                <button onClick={(e) => { e.stopPropagation(); advance(f.id); }} className="text-xs font-medium px-2 py-1 rounded-md bg-accent text-white hover:bg-accent-hover">Advance</button>
+                <button onClick={(e) => { e.stopPropagation(); pass(f.id); }} className="text-xs font-medium px-2 py-1 rounded-md text-danger hover:bg-danger-soft border border-gray-200">Pass</button>
+              </div>
+            }
+          />
+        )}
+      />
+
+      {selected && (
+        <DetailPanel
+          open={!!selected}
+          onClose={() => setSelectedId(null)}
+          title={selected.name}
+          subtitle={selected.company ? `${selected.company}${selected.confidence_score ? ` · Fit ${selected.confidence_score}/10` : ''}` : 'Stealth'}
+          onPrev={idx > 0 ? () => go(idx - 1) : null}
+          onNext={idx < list.length - 1 ? () => go(idx + 1) : null}
+          primaryAction={{ label: 'Advance to pipeline', onClick: () => advance(selected.id), tone: 'accent' }}
+          secondaryActions={[
+            { label: 'Pass', onClick: () => pass(selected.id), tone: 'danger' },
+            ...(onStar ? [{ label: 'Star', onClick: () => onStar(selected.id) }] : []),
+          ]}
+        >
+          <div className="flex items-center gap-3 mb-5">
+            {selected.linkedin_url && <a href={selected.linkedin_url} target="_blank" rel="noopener" className="text-sm font-medium text-accent hover:text-accent-hover">LinkedIn ↗</a>}
+            {selected.github_url && <a href={selected.github_url} target="_blank" rel="noopener" className="text-sm font-medium text-accent hover:text-accent-hover">GitHub ↗</a>}
+            {selected.website && <a href={selected.website} target="_blank" rel="noopener" className="text-sm font-medium text-accent hover:text-accent-hover">Website ↗</a>}
           </div>
-          {taste.note && <p className="text-gray-500">{taste.note}</p>}
-          {taste.favored?.length > 0 && (
-            <div className="mb-2">
-              <div className="text-[10px] uppercase tracking-wide text-emerald-600 font-semibold mb-1">You advance</div>
-              {taste.favored.map((f, i) => (
-                <div key={i} className="mb-1.5">
-                  <p className="text-gray-700">{f.statement}</p>
-                  {f.founders?.length > 0 && <p className="text-[10px] text-gray-400">e.g. {f.founders.join(', ')}</p>}
-                </div>
-              ))}
+
+          {tieLabel(selected) && (
+            <DetailSection label="Chicago / Illinois tie">
+              {selected.chicago_connection || tieLabel(selected)}
+              {selected.location_type && <span className="text-gray-400"> · {selected.location_type.replace(/_/g, ' ')}</span>}
+            </DetailSection>
+          )}
+          {selected.company_one_liner && <DetailSection label="What they're building">{selected.company_one_liner}</DetailSection>}
+          {parseArr(selected.caliber_signals).length > 0 && (
+            <DetailSection label="Why this caliber">
+              <div className="flex flex-wrap gap-1.5">{parseArr(selected.caliber_signals).map((s, i) => <Tag key={i}>{s}</Tag>)}</div>
+            </DetailSection>
+          )}
+          {parseArr(selected.builder_signals).length > 0 && (
+            <DetailSection label="Builder signals">
+              <div className="flex flex-wrap gap-1.5">{parseArr(selected.builder_signals).map((s, i) => <Tag key={i}>{s}</Tag>)}</div>
+            </DetailSection>
+          )}
+          {parseArr(selected.pedigree_signals).length > 0 && (
+            <DetailSection label="Background">
+              <div className="flex flex-wrap gap-1.5">{parseArr(selected.pedigree_signals).map((s, i) => <Tag key={i}>{s}</Tag>)}</div>
+            </DetailSection>
+          )}
+          {parseArr(selected.red_flags).length > 0 && (
+            <DetailSection label="Watch-outs">
+              <ul className="list-disc pl-4 space-y-1 text-gray-600">{parseArr(selected.red_flags).map((s, i) => <li key={i}>{s}</li>)}</ul>
+            </DetailSection>
+          )}
+          {(selected.affinity_score ?? 0) < 0 && (
+            <div className="rounded-lg border border-danger/30 bg-danger-soft px-3 py-2 mt-2">
+              <p className="text-xs font-semibold text-danger">Counter to your usual pattern</p>
+              <p className="text-xs text-gray-600 mt-0.5">This founder doesn't match the signals you typically advance — worth a deliberate look at why they might still be right.</p>
             </div>
           )}
-          {taste.disfavored?.length > 0 && (
-            <div>
-              <div className="text-[10px] uppercase tracking-wide text-red-500 font-semibold mb-1">You pass on</div>
-              {taste.disfavored.map((f, i) => <p key={i} className="text-gray-600 mb-0.5">{f.statement}</p>)}
-            </div>
-          )}
-          <p className="text-[10px] text-gray-400 mt-2 border-t border-gray-100 pt-2">Derived only from your decisions — every claim names the founders behind it, so you can spot a wrong inference. Never overrides the Chicago/IL-tie requirement.</p>
-        </div>
-      )}
-
-      {/* Exploration lane — strong builders OUTSIDE your usual pattern, so the funnel doesn't narrow */}
-      {stats?.exploration?.length > 0 && (
-        <div className="rounded-lg border border-violet-200 bg-violet-50/50 px-4 py-2.5 mb-4">
-          <span className="text-[11px] font-semibold text-violet-700">🧭 Exploration</span>
-          <span className="text-[11px] text-gray-500"> — strong builders outside your usual pattern, worth a look so your funnel stays wide: </span>
-          <span className="text-[11px] text-gray-700">{stats.exploration.map(f => `${f.name} (${f.caliber_tier})`).join(', ')}</span>
-        </div>
-      )}
-
-      {/* Filters */}
-      <div className="flex flex-col sm:flex-row gap-2 sm:gap-3 mb-4">
-        <input type="text" placeholder="Search inbox..." value={filter.search} onChange={e => setFilter(f => ({ ...f, search: e.target.value }))} className="input text-sm w-full sm:w-64" />
-        <select value={filter.caliber} onChange={e => setFilter(f => ({ ...f, caliber: e.target.value }))} className="select text-sm">
-          <option value="">All caliber</option>
-          <option value="S">S only (unicorn-track)</option>
-          <option value="A">A+ (best-of-best)</option>
-          <option value="B">B+ (strong+)</option>
-        </select>
-        <select value={filter.minScore} onChange={e => setFilter(f => ({ ...f, minScore: e.target.value }))} className="select text-sm">
-          <option value="">All fit scores</option>
-          <option value="8">Fit 8+ (high conviction)</option>
-          <option value="6">Fit 6+ (worth reviewing)</option>
-        </select>
-      </div>
-
-      {/* Starred section */}
-      {showStarred && starred.length > 0 && (
-        <div className="mb-6">
-          <h3 className="text-sm font-semibold text-amber-700 mb-3 flex items-center gap-1.5">
-            <span>&#9733;</span> Starred for Review ({starred.length})
-          </h3>
-          <div className="space-y-3">
-            {starred.map(f => (
-              <InboxCard key={f.id} founder={f} onApprove={onApprove} onDismiss={onDismiss} onHideForever={onHideForever} onStar={null} onUnstar={onUnstar} />
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* S — Best-of-Best (unicorn-track) */}
-      {sTier.length > 0 && (
-        <div className="mb-6">
-          <h3 className="text-sm font-semibold text-violet-700 mb-3 flex items-center gap-2">
-            <span>&#128142;</span>
-            Best-of-Best ({sTier.length})
-            <span className="text-[10px] font-normal text-gray-400">Tier S · unicorn-track</span>
-          </h3>
-          <div className="space-y-3">
-            {sTier.map(f => (
-              <InboxCard key={f.id} founder={f} onApprove={onApprove} onDismiss={onDismiss} onHideForever={onHideForever} onStar={onStar} onUnstar={null} />
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* A — Top Builders */}
-      {aTier.length > 0 && (
-        <div className="mb-6">
-          <h3 className="text-sm font-semibold text-amber-700 mb-3 flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-amber-500" />
-            Top Builders ({aTier.length})
-            <span className="text-[10px] font-normal text-gray-400">Tier A · best-of-best signal</span>
-          </h3>
-          <div className="space-y-3">
-            {aTier.map(f => (
-              <InboxCard key={f.id} founder={f} onApprove={onApprove} onDismiss={onDismiss} onHideForever={onHideForever} onStar={onStar} onUnstar={null} />
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* B — Strong */}
-      {bTier.length > 0 && (
-        <div className="mb-6">
-          <h3 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-emerald-400" />
-            Strong ({bTier.length})
-            <span className="text-[10px] font-normal text-gray-400">Tier B · one caliber signal</span>
-          </h3>
-          <div className="space-y-3">
-            {bTier.map(f => (
-              <InboxCard key={f.id} founder={f} onApprove={onApprove} onDismiss={onDismiss} onHideForever={onHideForever} onStar={onStar} onUnstar={null} />
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* C — no hard caliber signal (collapsed by default) */}
-      {cTier.length > 0 && (
-        <div className="mb-6">
-          <details>
-            <summary className="text-sm font-semibold text-gray-400 mb-3 cursor-pointer flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-gray-300" />
-              Emerging / Limited Signal ({cTier.length})
-              <span className="text-[10px] font-normal">Tier C — thin public profile; click to expand</span>
-            </summary>
-            <div className="space-y-3 mt-3">
-              {cTier.map(f => (
-                <InboxCard key={f.id} founder={f} onApprove={onApprove} onDismiss={onDismiss} onHideForever={onHideForever} onStar={onStar} onUnstar={null} compact />
-              ))}
-            </div>
-          </details>
-        </div>
-      )}
-
-      {/* Empty state */}
-      {queue.length === 0 && starred.length === 0 && (
-        <div className="text-center py-16">
-          <div className="text-4xl mb-3">&#128269;</div>
-          <h3 className="text-sm font-semibold text-gray-700 mb-1">No founders in your inbox</h3>
-          <p className="text-xs text-gray-400 mb-4">The sourcing engine runs daily at 6 AM CT, or you can trigger a run manually.</p>
-          <button onClick={onTriggerSourcing} disabled={sourcingRunning} className="btn-primary text-xs">
-            Find Founders Now
-          </button>
-        </div>
+        </DetailPanel>
       )}
     </div>
   );

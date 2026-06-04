@@ -177,7 +177,7 @@ export function Row({ tier, title, subtitle, score, meta, trailing, flag, select
   return (
     <div
       onClick={onClick}
-      className={`flex items-center gap-3 px-4 py-3 cursor-pointer transition-colors ${selected ? 'bg-accent-soft border-l-2 border-accent' : 'border-l-2 border-transparent hover:bg-gray-50'}`}
+      className={`group flex items-center gap-3 px-4 py-3 cursor-pointer transition-colors ${selected ? 'bg-accent-soft border-l-2 border-accent' : 'border-l-2 border-transparent hover:bg-gray-50'}`}
     >
       {tier !== undefined && <div className="flex-shrink-0"><Tier tier={tier} /></div>}
       <div className="min-w-0 flex-1">
