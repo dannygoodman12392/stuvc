@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../../utils/api';
 import { useToast } from '../../components/Toast';
+import { PageHeader } from '../../components/ui';
 
 const FUNCTIONS = [
   ['engineering', 'Engineering'],
@@ -81,13 +82,16 @@ export default function TalentHome() {
 
   return (
     <div className="max-w-3xl mx-auto space-y-5">
-      <div className="flex items-start justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold text-gray-900 tracking-tight">Talent</h1>
-          <p className="text-sm text-gray-500 mt-1">Add a company → add a role → source the best local candidates for it.</p>
-        </div>
-        <button onClick={() => setAddingCo(v => !v)} className="btn-primary text-xs">+ Add company</button>
-      </div>
+      <PageHeader
+        title="Talent"
+        subtitle="Add a company → add a role → source the best local candidates for it."
+        actions={
+          <>
+            <Link to="/talent/matches" className="btn-secondary text-sm">View matches</Link>
+            <button onClick={() => setAddingCo(v => !v)} className="btn-primary text-sm">Add company</button>
+          </>
+        }
+      />
 
       {/* Add company */}
       {addingCo && (
