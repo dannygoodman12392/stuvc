@@ -1054,6 +1054,7 @@ Return ONLY valid JSON in this exact shape:
 
 function emptyScore(rationale) {
   return {
+    scored: false, // verification did NOT run — caller must fail closed (never admit)
     confidence_score: 5,
     confidence_rationale: rationale,
     tags: [],
@@ -1129,6 +1130,7 @@ async function scoreFounder(client, founder, scoringPrompt) {
     }
 
     return {
+      scored: true, // verification ran successfully
       confidence_score: score,
       raw_confidence_score: rawScore,
       confidence_rationale: parsed.confidence_rationale || '',
@@ -1577,27 +1579,20 @@ async function runSourcingEngine({ fullSweep = false, userId = 1 } = {}) {
       continue;
     }
 
-    let score;
-    if (anthropic) {
-      score = await scoreFounder(anthropic, candidate, userScoringPrompt);
-    } else {
-      // No LLM available — still compute caliber deterministically from raw text.
-      const det = computeCaliber(candidate.text, candidate.headline, candidate.elite_schools_national || []);
-      score = {
-        confidence_score: 5,
-        confidence_rationale: 'AI scoring unavailable',
-        tags: [],
-        chicago_connection: candidate.location_city || '',
-        pedigree_signals: candidate.pedigree_signals || [],
-        builder_signals: candidate.builder_signals || [],
-        company_one_liner: '',
-        evidence_map: {},
-        red_flags: [],
-        caliber_tier: det.tier,
-        caliber_score: det.score,
-        caliber_signals: det.signals,
-        caliber_rationale: det.rationale,
-      };
+    // FAIL CLOSED: a founder is admitted ONLY when AI verification actually ran and
+    // confirmed they're a founder with a real IL tie and caliber. Without the LLM (no key
+    // or an API error like an exhausted credit balance), the crude keyword layer alone
+    // would admit VCs/bloggers with false ties (e.g. Mark Suster) — so we SKIP instead.
+    if (!anthropic) {
+      console.log(`[Sourcing] ⏭️ ${candidate.name} — skipped: AI scoring unavailable (no Anthropic key)`);
+      totalFiltered++;
+      continue;
+    }
+    const score = await scoreFounder(anthropic, candidate, userScoringPrompt);
+    if (!score.scored) {
+      console.log(`[Sourcing] ⏭️ ${candidate.name} — skipped: not verified (${score.confidence_rationale})`);
+      totalFiltered++;
+      continue;
     }
 
     // Merge extracted signals with AI signals, then verify pedigree against the actual

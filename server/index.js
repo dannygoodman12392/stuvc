@@ -137,6 +137,15 @@ seedIfEmpty();
       }
     }
 
+    // One-time: purge founders admitted without AI verification (credit-outage fallback).
+    const unverFlag = db.prepare("SELECT * FROM migration_flags WHERE key = 'cleanup_unverified_sourced_v1'").get();
+    if (!unverFlag) {
+      try {
+        require('./migrations/cleanup-unverified-sourced')();
+        db.prepare("INSERT INTO migration_flags (key) VALUES ('cleanup_unverified_sourced_v1')").run();
+      } catch (err) { console.error('[Migration] unverified-sourced cleanup error:', err.message); }
+    }
+
     // One-time: replace the Elad whole-book brief row with individual chapters.
     const eladFlag = db.prepare("SELECT * FROM migration_flags WHERE key = 'fix_elad_chapters_v1'").get();
     if (!eladFlag) {
@@ -195,7 +204,7 @@ app.use('/api/auth/register', rateLimit({ windowMs: 15 * 60 * 1000, max: 5, stan
 
 // Public routes
 app.get('/api/health', (req, res) => res.json({
-  status: 'ok', app: 'Stu', version: '4.2.0',
+  status: 'ok', app: 'Stu', version: '4.2.1',
   pipeline: {
     // Armed = the daily sourcing/talent/filings crons will actually run tonight.
     sourcing_armed: process.env.PIPELINE_ENABLED === 'true'
