@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../utils/api';
 import { useToast } from '../components/Toast';
+import { PageHeader } from '../components/ui';
 
 function Takeaways({ items }) {
   if (!items?.length) return null;
@@ -18,10 +19,10 @@ function ClassicCard({ c }) {
   return (
     <div className="card p-4">
       <div className="text-[10px] uppercase tracking-wide text-gray-400">{c.author}</div>
-      <a href={c.url} target="_blank" rel="noopener" className="text-base font-semibold text-gray-900 hover:text-amber-700">{c.title}</a>
+      <a href={c.url} target="_blank" rel="noopener" className="text-base font-semibold text-gray-900 hover:text-accent">{c.title}</a>
       {c.one_liner && <p className="text-xs text-gray-500 mt-1">{c.one_liner}</p>}
       <Takeaways items={c.takeaways} />
-      <a href={c.url} target="_blank" rel="noopener" className="inline-block mt-2 text-xs font-medium text-amber-700 hover:text-amber-800">Read the full piece →</a>
+      <a href={c.url} target="_blank" rel="noopener" className="inline-block mt-2 text-xs font-medium text-accent hover:text-accent-hover">Read the full piece →</a>
     </div>
   );
 }
@@ -31,11 +32,11 @@ function NewsletterCard({ n }) {
     <div className="card p-4">
       <div className="text-[10px] uppercase tracking-wide text-gray-400">{n.source}</div>
       {n.url
-        ? <a href={n.url} target="_blank" rel="noopener" className="text-base font-semibold text-gray-900 hover:text-amber-700">{n.subject}</a>
+        ? <a href={n.url} target="_blank" rel="noopener" className="text-base font-semibold text-gray-900 hover:text-accent">{n.subject}</a>
         : <div className="text-base font-semibold text-gray-900">{n.subject}</div>}
       {n.summary && <p className="text-sm text-gray-700 mt-1.5 leading-snug">{n.summary}</p>}
       <Takeaways items={n.key_points} />
-      {n.url && <a href={n.url} target="_blank" rel="noopener" className="inline-block mt-2 text-xs font-medium text-amber-700 hover:text-amber-800">Open →</a>}
+      {n.url && <a href={n.url} target="_blank" rel="noopener" className="inline-block mt-2 text-xs font-medium text-accent hover:text-accent-hover">Open →</a>}
     </div>
   );
 }
@@ -134,24 +135,21 @@ export default function Brief() {
   const dateLabel = digest?.date ? new Date(digest.date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' }) : '';
 
   return (
-    <div className="max-w-3xl mx-auto px-4 py-6">
-      <div className="flex items-start justify-between gap-4 mb-5">
-        <div>
-          <h1 className="text-2xl font-semibold text-gray-900 tracking-tight">Daily Brief</h1>
-          <p className="text-sm text-gray-500 mt-1">
-            {dateLabel}
-            {digest?.emailed && <span className="ml-2 text-emerald-600">· emailed to {digest.emailed.recipient}</span>}
-          </p>
-        </div>
-        <div className="flex items-center gap-2 flex-shrink-0">
-          <button onClick={emailMeNow} disabled={sending} className="btn-secondary text-xs px-3 py-1.5 disabled:opacity-50" title="Email this exact digest to your inbox">
-            {sending ? 'Sending…' : '✉ Email it to me'}
-          </button>
-          <button onClick={sync} disabled={syncing} className="btn-primary text-xs px-3 py-1.5 disabled:opacity-50">
-            {syncing ? 'Pulling…' : 'Sync newsletters'}
-          </button>
-        </div>
-      </div>
+    <div className="max-w-3xl mx-auto">
+      <PageHeader
+        title="Daily Brief"
+        subtitle={`${dateLabel}${digest?.emailed ? ` · emailed to ${digest.emailed.recipient}` : ''}`}
+        actions={
+          <>
+            <button onClick={emailMeNow} disabled={sending} className="btn-secondary text-sm disabled:opacity-50" title="Email this exact digest to your inbox">
+              {sending ? 'Sending…' : 'Email it to me'}
+            </button>
+            <button onClick={sync} disabled={syncing} className="btn-primary text-sm disabled:opacity-50">
+              {syncing ? 'Pulling…' : 'Sync newsletters'}
+            </button>
+          </>
+        }
+      />
 
       {digest?.lastSend?.status === 'error' && (
         <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3">
