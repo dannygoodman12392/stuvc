@@ -4,11 +4,12 @@ const db = require('../db');
 const { VALID_TIE_TYPES } = require('../pipeline/sourcing-engine');
 
 // Hard rule: the Pipeline only ever shows founders with a VERIFIED Chicago/IL tie.
-// If a row's tie is null, empty, 'none', or anything outside the canonical set, it is
-// considered "unclear" and is hidden — never shown. Single source of truth is the
-// engine's VALID_TIE_TYPES so the display filter can't drift from the intake gate.
+// Two conditions, BOTH required: (1) a canonical tie type, AND (2) actual connection
+// evidence text — a founder with a tie type but no substantiating connection (the false
+// "Chicago · current" failure mode) is treated as unverified and hidden. Single source of
+// truth is the engine's VALID_TIE_TYPES so the display filter can't drift from intake.
 const TIE_IN = VALID_TIE_TYPES.map(() => '?').join(',');
-const TIE_CLAUSE = `location_type IN (${TIE_IN})`;
+const TIE_CLAUSE = `location_type IN (${TIE_IN}) AND chicago_connection IS NOT NULL AND TRIM(chicago_connection) != '' AND LOWER(chicago_connection) NOT LIKE '%no verified tie%' AND LOWER(chicago_connection) != 'any'`;
 
 // GET /api/sourcing/queue — pending sourced founders with enhanced data
 router.get('/queue', (req, res) => {

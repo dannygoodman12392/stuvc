@@ -336,6 +336,7 @@ function verifyPedigree(tags, text) {
 const TOP_PROGRAMS = [
   { re: /\by[- ]?combinator\b|\bycombinator\b|\byc\s?[wsf]\d{2}\b/i, label: 'YC' },
   { re: /a16z\s+speedrun|andreessen\s+speedrun|\bspeedrun\b/i, label: 'a16z Speedrun' },
+  { re: /\bz[- ]?fellows?\b|\bzfellows\b/i, label: 'ZFellows' },
   { re: /thiel\s+fellow/i, label: 'Thiel Fellow' },
   { re: /\bneo\s+(scholar|fellow|cohort|accelerator)\b/i, label: 'Neo' },
 ];
@@ -517,13 +518,13 @@ function computeCaliber(text, headline, eliteSchoolsNational = []) {
 const TIER_RANK = { S: 4, A: 3, B: 2, C: 1 };
 const TIER_BAND = { S: [9, 10], A: [7, 8], B: [5, 6], C: [1, 4] };
 
-// Reconcile the LLM's caliber claim with the deterministic floor. Take the higher
-// tier, but never allow S unless a hard signal is present. Clamp the score into
-// the chosen tier's band.
+// Reconcile caliber. The LLM (with the full rubric + verbatim evidence) is the AUTHORITY —
+// the deterministic layer must NOT inflate above it (that's how regex hits like "exit" in a
+// blog text produced a false S). The LLM tier wins when present; deterministic is only a
+// guard that CAPS S (no S unless a hard signal is genuinely detected in the text).
 function reconcileCaliber(det, llmTier, llmScore) {
-  let tier = det.tier;
-  if (llmTier && TIER_RANK[llmTier] > TIER_RANK[tier]) tier = llmTier;
-  if (tier === 'S' && !det.hardSignalPresent) tier = 'A'; // no S without hard evidence
+  let tier = (llmTier && TIER_RANK[llmTier]) ? llmTier : det.tier;
+  if (tier === 'S' && !det.hardSignalPresent) tier = 'A'; // S demands hard evidence
   const [lo, hi] = TIER_BAND[tier];
   let score = Number.isFinite(llmScore) ? llmScore : det.score;
   if (score < lo) score = lo;
@@ -577,6 +578,13 @@ function founderGate(text, headline) {
 
   if (!founderInHeadline && INVESTOR_ROLE_RE.test(h) && FUND_CONTEXT_RE.test(full)) {
     return { ok: false, reason: 'Investor / fund role, not a founder' };
+  }
+  // Self-identifying investor language anywhere in the profile (not just the headline) —
+  // a VC/angel/partner whose scraped headline happened to look innocuous (the Mark Suster
+  // case). Waived only by a clear founder signal in the headline.
+  const SELF_INVESTOR_RE = /\b(general partner|managing partner|managing director at|venture partner|founding partner|angel investor|solo ?capitalist|i invest in|we invest in|we back founders|i back founders|partner (at|@) [a-z]|invests? in (startups|founders|companies)|portfolio company of mine)\b/i;
+  if (!founderInHeadline && SELF_INVESTOR_RE.test(full)) {
+    return { ok: false, reason: 'Self-identified investor, not a founder' };
   }
   if (!founderInHeadline && /\b(at|@|with)\s+(a16z|andreessen|speedrun|sequoia|benchmark|accel|greylock|founders fund|khosla|y combinator|techstars)\b/i.test(h)) {
     return { ok: false, reason: 'Works at a fund/accelerator, not a founder' };
@@ -941,7 +949,14 @@ Who we want (the ICP):
 - Repeat founders in transition (post-exit, post-acquisition, post-shutdown, now building again)
 - High-pedigree operators with Chicago/IL ties poised to start something
 
-Hard disqualifiers (auto-score 1-3, regardless of other signals):
+Hard disqualifiers (auto-score 1-3, set caliber C, add a red_flag, regardless of other signals):
+- INVESTOR / VC. The person's primary identity is investing, not founding: general partner,
+  managing partner, venture partner, investment partner, principal at a fund, angel investor,
+  "I invest in / back / fund founders", scout, LP, or a platform/talent/community role at a VC
+  or accelerator. Examples of who to REJECT: a partner at a fund, a solo-capitalist/angel, a
+  "writer on venture" / VC blogger (e.g. someone whose profile is about investing, not building).
+  ONLY treat them as a founder if the profile CLEARLY states they are CURRENTLY building their
+  OWN startup (operator now, not "I advise/invest in startups"). When in doubt → investor → reject.
 - Company has RAISED Series A or later
 - Company has raised a large seed ($5M+)
 - Candidate is a senior exec at an established co with NO departure signal
@@ -994,28 +1009,29 @@ not pedigree. Equally: an exceptional builder with real traction deserves A or S
 The single most telling builder signal for this fund is RAISED INSTITUTIONAL CAPITAL — a credible
 investor committed (pre-seed/seed/Series, "backed by", named funds/accelerators). Weight it heavily.
 
-- S (caliber_score 9-10): Truly exceptional. A meaningful prior exit; OR a top-program admit
-  (YC/a16z Speedrun/Thiel/Neo) paired with serious traction; OR substantial traction paired with a
-  prior win.
-- A (7-8): Best-of-best. EITHER a proven outcome (prior exit; top-program admit; real traction —
-  paying customers/revenue/meaningful users; shipped-and-scaled product; research eminence or notable
-  open-source) — OR an elite background (Staff+ at a category-defining company / repeat founder /
-  elite institution) PAIRED WITH active building (raised institutional capital, shipping, or traction).
-  A bare credential with no building does NOT reach A.
-- B (5-6): One real signal — raised institutional capital, early traction, elite-company background,
-  a repeat founder, or serious technical work. A founder who is clearly building but pre-validation.
-- C (1-4): A credential or elite school ALONE, or genuinely thin evidence. Not a judgment that they're
-  weak — just not enough evidence of an outcome or active building to grade higher.
+S-TIER MUST MEAN IT. Reserve S for the rare, bona-fide unicorn-trajectory founder. Be stingy —
+when unsure between S and A, choose A. S requires HARD, VERBATIM-QUOTED evidence of ONE of these:
+  • A meaningful prior EXIT — their company was acquired or IPO'd (not a tiny acqui-hire).
+  • A top-accelerator admit with their current OR a prior company — Y Combinator, a16z Speedrun,
+    ZFellows, Neo, Thiel Fellowship (the marquee programs only).
+  • A repeat / experienced founder whose PRIOR startup was notable or venture-backed, now building again.
+  • A category-defining-company senior leader (founding/Staff+/VP at Google/Meta/Stripe/OpenAI/
+    Anthropic/Ramp/Anduril/Scale/Databricks) now building, WITH real traction or top-fund backing.
+A pedigree, an elite school, or a seed raise ALONE is NOT S. No quoted hard evidence → NOT S.
 
-CALIBRATION ANCHOR — these are real founders Danny rates as best-of-best (A/S). Grade relative to
-this bar, not to a generic "impressive resume" bar: Sid Sinha (Avant Health — AI-native TPA for
-health benefits, raised seed); Samuel Oh (Concorda — AI for litigation teams, raised seed); Ashtyn
-Bell (Gil — command center for finance agents); Jensen Coonradt (Crebit Pay). The common DNA:
-technical founders building ambitious, category-defining products (often AI-native, in hard
-verticals), early-stage, usually with institutional backing — NOT necessarily a prior exit or a YC
-badge. A founder who looks like this archetype belongs in A even without a marquee credential.
+- S (9-10): the unicorn-caliber bar above, with a verbatim quote proving it.
+- A (7-8): best-of-best builder. EITHER a proven outcome (prior exit; top-program admit; real
+  traction — paying customers/revenue/meaningful users; shipped-and-scaled product; research/OSS
+  eminence) — OR an elite background PAIRED WITH active building (raised institutional capital,
+  shipping, traction). The technical founder building an ambitious, often AI-native product in a
+  hard vertical, early-stage, usually with institutional backing — like Sid Sinha (Avant Health),
+  Samuel Oh (Concorda), Ashtyn Bell (Gil), Jensen Coonradt (Crebit Pay) — is the heart of A.
+- B (5-6): one real signal — raised institutional capital, early traction, elite-company background,
+  a repeat founder, or serious technical work. Clearly building but pre-validation.
+- C (1-4): a credential or elite school ALONE, or thin evidence — not enough to grade higher.
+
 Only claim a caliber_signal you can support with a verbatim quote. Never invent an exit, program,
-title, or traction number.
+title, or traction number. If you cannot quote it, it does not count.
 
 ACCURACY RULES — these descriptions must be TRUE to the profile (no inference, no embellishment):
 - Every pedigree_signal (school/employer) MUST be explicitly stated in the profile text. Do NOT

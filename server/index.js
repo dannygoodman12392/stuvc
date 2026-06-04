@@ -153,6 +153,15 @@ seedIfEmpty();
       require('./migrations/fix-elad-chapters')().catch(err => console.error('[fix-elad-chapters] error:', err.message));
     }
 
+    // One-time: sweep inbox to bar — dismiss investors/VCs + founders without a verified tie.
+    const pqFlag = db.prepare("SELECT * FROM migration_flags WHERE key = 'cleanup_pipeline_quality_v1'").get();
+    if (!pqFlag) {
+      try {
+        require('./migrations/cleanup-pipeline-quality')();
+        db.prepare("INSERT INTO migration_flags (key) VALUES ('cleanup_pipeline_quality_v1')").run();
+      } catch (err) { console.error('[Migration] pipeline-quality cleanup error:', err.message); }
+    }
+
     // One-time: backfill sourcing evidence onto already-promoted founders.
     const promoMetaFlag = db.prepare("SELECT * FROM migration_flags WHERE key = 'promote_metadata_backfill_v1'").get();
     if (!promoMetaFlag) {
@@ -204,7 +213,7 @@ app.use('/api/auth/register', rateLimit({ windowMs: 15 * 60 * 1000, max: 5, stan
 
 // Public routes
 app.get('/api/health', (req, res) => res.json({
-  status: 'ok', app: 'Stu', version: '4.4.0',
+  status: 'ok', app: 'Stu', version: '4.5.0',
   pipeline: {
     // Armed = the daily sourcing/talent/filings crons will actually run tonight.
     sourcing_armed: process.env.PIPELINE_ENABLED === 'true'
