@@ -242,6 +242,37 @@ function reWord(term) {
 }
 const titleCase = (s) => s.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
 
+// MANIACAL ACCURACY HELPERS ──────────────────────────────────────────────────
+// (1) Strip contamination. LinkedIn/Exa snippets frequently append OTHER people
+// ("People also viewed", "Similar profiles"). Verifying or scoring past these markers
+// attributes the wrong person's school/company/tie. Cut the text at the first marker so
+// we only ever reason about the focal person's own profile.
+const CONTAM_MARKERS = /(people also viewed|people you may know|similar profiles?|others? named|more profiles|view full profile|connections? who|recommended for you|profiles? similar|others viewed)/i;
+function cleanProfileText(text) {
+  const s = String(text || '');
+  const m = s.match(CONTAM_MARKERS);
+  return m ? s.slice(0, m.index) : s;
+}
+
+// (2) A real person name: 2–4 tokens, each capitalized (or a name particle), no digits, no
+// sentence/marketing words. Kills garbage "names" scraped from article/company titles
+// (e.g. "our new product", "Introducing Acme", "How we built X").
+const NON_NAME_WORDS = new Set(['our','the','new','product','products','building','build','stealth','founder','cofounder','ceo','cto','startup','company','launch','launching','introducing','meet','how','why','what','we','are','is','for','and','to','of','in','at','with','your','my','this','that','best','top','announcing','presenting','welcome','join']);
+const NAME_PARTICLES = new Set(['de','van','von','la','del','di','da','bin','al','der','den']);
+function isPlausiblePersonName(name) {
+  const n = String(name || '').trim();
+  if (n.length < 3 || n.length > 50 || /\d/.test(n)) return false;
+  const tokens = n.split(/\s+/);
+  if (tokens.length < 2 || tokens.length > 4) return false;
+  for (const tok of tokens) {
+    const w = tok.toLowerCase().replace(/[^a-z'’-]/g, '');
+    if (!w) return false;
+    if (NON_NAME_WORDS.has(w)) return false;
+    if (!NAME_PARTICLES.has(w) && !/^[A-ZÀ-Ý]/.test(tok)) return false; // must start uppercase
+  }
+  return true;
+}
+
 function extractSignals(text, headline) {
   const combined = ((headline || '') + ' ' + (text || '')).toLowerCase();
   const pedigree = [];
@@ -1493,13 +1524,24 @@ async function runSourcingEngine({ fullSweep = false, userId = 1 } = {}) {
 
     for (const result of results) {
       const headline = result.title || '';
-      const text = result.text || '';
+      // Strip contamination BEFORE any verification/scoring so a "People also viewed"
+      // section can never lend its school/company/tie to this person.
+      const text = cleanProfileText(result.text || '');
       const url = result.url || '';
 
       // Only interested in LinkedIn profiles or personal pages
       const isLinkedIn = url.includes('linkedin.com/in/');
 
-      // Verify location connection using user's target locations
+      // Extract name from headline (before | or — or -)
+      let name = headline.split(/[|·—\-]/)[0].trim();
+      if (name.length > 60) name = name.slice(0, 60);
+      // NAME GATE: must look like a real person, not an article/company headline.
+      if (!isPlausiblePersonName(name)) {
+        totalFiltered++;
+        continue;
+      }
+
+      // Verify location connection using user's target locations (on cleaned text)
       const il = verifyLocation(text, headline, criteria);
       if (!il.verified) {
         totalFiltered++;
@@ -1507,11 +1549,6 @@ async function runSourcingEngine({ fullSweep = false, userId = 1 } = {}) {
       }
 
       verified++;
-
-      // Extract name from headline (before | or — or -)
-      let name = headline.split(/[|·—\-]/)[0].trim();
-      if (name.length > 60) name = name.slice(0, 60);
-      if (!name || name.length < 2) continue;
 
       const company = extractCompanyInfo(text, headline);
       const signals = extractSignals(text, headline);
@@ -1692,7 +1729,7 @@ async function runSourcingEngine({ fullSweep = false, userId = 1 } = {}) {
     try {
       insertStmt.run(
         candidate.name,
-        candidate.company || score.company_one_liner?.split(' ')[0] || null,
+        candidate.company || null,
         'Founder',
         candidate.linkedin_url || null,
         candidate.email || null,
@@ -1814,4 +1851,8 @@ module.exports = {
   verifyLocation,
   verifyIllinois,
   isTooFarAlong,
+  cleanProfileText,
+  isPlausiblePersonName,
+  verbatimIn,
+  verifyTieEvidence,
 };

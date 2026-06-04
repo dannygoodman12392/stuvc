@@ -448,6 +448,22 @@ function InboxTab({ queue, starred, stats, loading, onApprove, onDismiss, onHide
               {selected.location_type && <span className="text-gray-400"> · {selected.location_type.replace(/_/g, ' ')}</span>}
             </DetailSection>
           )}
+          {(() => {
+            let ev = {}; try { ev = JSON.parse(selected.evidence_map || '{}') || {}; } catch {}
+            const quotes = [['Tie', ev.tie_evidence], ['Caliber', ev.caliber_evidence], ['Stage', ev.stage_evidence]].filter(([, q]) => q && String(q).trim());
+            if (!quotes.length) return null;
+            return (
+              <DetailSection label="Verbatim evidence (from their profile)">
+                <div className="space-y-1.5">
+                  {quotes.map(([k, q], i) => (
+                    <div key={i} className="text-xs text-gray-600 border-l-2 border-gray-200 pl-2">
+                      <span className="text-gray-400">{k}: </span>“{String(q).slice(0, 240)}”
+                    </div>
+                  ))}
+                </div>
+              </DetailSection>
+            );
+          })()}
           {selected.company_one_liner && <DetailSection label="What they're building">{selected.company_one_liner}</DetailSection>}
           {parseArr(selected.caliber_signals).length > 0 && (
             <DetailSection label="Why this caliber">
