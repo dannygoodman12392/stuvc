@@ -157,7 +157,10 @@ export default function Brief() {
         <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3">
           <div className="text-sm font-semibold text-red-700">Last email didn't send</div>
           <div className="text-xs text-red-600 mt-0.5 break-words">{digest.lastSend.error || 'Unknown error'}</div>
-          <div className="text-[11px] text-red-400 mt-1">Tried to send to {digest.lastSend.recipient || '—'}. This is usually the Gmail address or app password in Settings.</div>
+          <div className="text-[11px] text-red-400 mt-1">
+            Tried to send to {digest.lastSend.recipient || '—'}
+            {digest.lastSend.sent_at ? ` at ${new Date(digest.lastSend.sent_at + 'Z').toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}` : ''}. Click "Email it to me" to retry.
+          </div>
         </div>
       )}
 

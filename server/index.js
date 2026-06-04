@@ -2,6 +2,10 @@
 // override: true ensures .env values win over empty system env vars (e.g. ANTHROPIC_API_KEY="")
 require('dotenv').config({ path: require('path').join(__dirname, '..', '.env'), override: true });
 
+// Railway containers have no IPv6 egress — Google's SMTP/DNS often resolves to IPv6 first,
+// causing ENETUNREACH. Force IPv4 globally so all outbound connections stay reachable.
+try { require('dns').setDefaultResultOrder('ipv4first'); } catch {}
+
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -191,7 +195,7 @@ app.use('/api/auth/register', rateLimit({ windowMs: 15 * 60 * 1000, max: 5, stan
 
 // Public routes
 app.get('/api/health', (req, res) => res.json({
-  status: 'ok', app: 'Stu', version: '3.9.2',
+  status: 'ok', app: 'Stu', version: '3.9.3',
   pipeline: {
     // Armed = the daily sourcing/talent/filings crons will actually run tonight.
     sourcing_armed: process.env.PIPELINE_ENABLED === 'true'
