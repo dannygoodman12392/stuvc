@@ -313,15 +313,54 @@ function extractSignals(text, headline) {
 
 // Drop pedigree tags whose entity doesn't actually appear in the profile text
 // (catches both loose regex matches and any LLM invention like a fabricated "Ex-Stripe").
-const PEDIGREE_GENERIC = new Set(['university', 'college', 'institute', 'technology', 'school', 'graduate', 'staff', 'senior', 'principal', 'engineer', 'founder', 'former', 'phd', 'mba']);
+const normText = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
 function verifyPedigree(tags, text) {
-  const lc = String(text || '').toLowerCase();
-  if (!lc) return tags || [];
+  const t = normText(text);
+  if (!t) return tags || [];
   return (tags || []).filter(tag => {
-    const words = String(tag).toLowerCase().replace(/^ex-?\s*/, '').split(/[^a-z0-9]+/).filter(w => w.length >= 4 && !PEDIGREE_GENERIC.has(w));
-    if (words.length === 0) return true; // nothing distinctive to verify — keep
-    return words.some(w => reWord(w).test(lc));
+    const phrase = normText(String(tag).toLowerCase().replace(/^ex-?\s*/, ''));
+    if (!phrase) return false;
+    const tokens = phrase.split(' ').filter(Boolean);
+    // Single-token tag (MIT, IIT, Northwestern, Stripe): must appear as a WHOLE word —
+    // never inside another word ("MIT" must not match "submit"/"committee").
+    if (tokens.length === 1) return reWord(tokens[0]).test(t);
+    // Multi-word name (Illinois Institute of Technology, University of Chicago, Carnegie
+    // Mellon): the FULL phrase must appear. A stray "Illinois" or "Chicago" elsewhere in the
+    // text is NOT enough — this is what stops a city mention inventing a university.
+    return t.includes(phrase);
   });
+}
+
+// VERBATIM evidence gate — the core anti-hallucination tool. A claim survives ONLY if its
+// quote is genuinely present in the profile text (normalized for whitespace/punctuation).
+function verbatimIn(quote, text) {
+  const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
+  const q = norm(quote), t = norm(text);
+  if (!q || q.length < 8) return false;        // too short to be meaningful evidence
+  if (t.includes(q)) return true;
+  // Allow a long quote to match if a substantial contiguous chunk is present (LLM trims edges).
+  const words = q.split(' ');
+  if (words.length >= 8) {
+    const mid = words.slice(2, words.length - 2).join(' ');
+    return mid.length >= 12 && t.includes(mid);
+  }
+  return false;
+}
+
+// Genuine Illinois signals that a tie quote must contain to count.
+const IL_TIE_TOKENS = [
+  'chicago', 'illinois', '\\bil\\b', 'evanston', 'naperville', 'oak park', 'champaign', 'urbana',
+  'schaumburg', 'wicker park', 'river north', 'hyde park', 'lincoln park', 'west loop',
+  'northwestern', 'university of chicago', 'uchicago', 'uiuc', 'university of illinois',
+  '\\biit\\b', 'illinois institute', 'kellogg', 'booth', 'loyola', 'depaul',
+  'grubhub', 'groupon', 'avant', 'braintree', 'tempus', 'sprout social', 'cameo', 'relativity',
+];
+// A tie is VERIFIED only if its evidence quote is verbatim in the text AND names a real IL signal.
+function verifyTieEvidence(evidenceMap, text) {
+  const q = evidenceMap && evidenceMap.tie_evidence;
+  if (!verbatimIn(q, text)) return false;
+  const lc = String(q).toLowerCase();
+  return IL_TIE_TOKENS.some(tok => new RegExp(tok, 'i').test(lc));
 }
 
 // ── CALIBER: the unicorn-grade axis ──
@@ -944,10 +983,13 @@ STAGE 1 — EXTRACT. For each scoring dimension, pull the *verbatim* quote from 
 STAGE 2 — SCORE. Only score a dimension above 5 when you have a verbatim quote supporting it. If evidence is empty or ambiguous, default to 5. Do not extrapolate.
 
 Who we want (the ICP):
-- Stealth founders who just left a senior role and haven't gone public
-- Recently-departed senior ops/eng from category-defining companies (FAANG, Stripe, OpenAI, Anthropic, Ramp, Anduril, Scale, Databricks)
-- Repeat founders in transition (post-exit, post-acquisition, post-shutdown, now building again)
-- High-pedigree operators with Chicago/IL ties poised to start something
+- People who worked at TOP TECH COMPANIES with a Chicago presence in the last ~10 years
+  (Google/Meta/Stripe/etc. Chicago offices, or Chicago-grown winners — Grubhub, Groupon,
+  Braintree, Tempus, Avant, Sprout Social, Relativity, Cameo) who have now STARTED their own company
+- Founders with YC / a16z Speedrun / ZFellows or strong coastal (SF/NYC) startup experience, now in/from IL
+- Real engineers and top product leaders (founding/Staff+/VP eng or product) building something
+- Stealth founders who just left a senior role; repeat founders in transition (post-exit/acquisition)
+- High-pedigree operators with a VERIFIED Chicago/IL tie poised to start something
 
 Hard disqualifiers (auto-score 1-3, set caliber C, add a red_flag, regardless of other signals):
 - INVESTOR / VC. The person's primary identity is investing, not founding: general partner,
@@ -1033,10 +1075,16 @@ A pedigree, an elite school, or a seed raise ALONE is NOT S. No quoted hard evid
 Only claim a caliber_signal you can support with a verbatim quote. Never invent an exit, program,
 title, or traction number. If you cannot quote it, it does not count.
 
-ACCURACY RULES — these descriptions must be TRUE to the profile (no inference, no embellishment):
-- Every pedigree_signal (school/employer) MUST be explicitly stated in the profile text. Do NOT
-  tag a school or company from an ambiguous mention (e.g. "MIT Technology Review" is not MIT; a
-  client/partner named Google is not employment at Google). If unsure, omit it.
+ACCURACY RULES — ZERO hallucination. These descriptions must be TRUE to THIS person's profile:
+- Every pedigree_signal (school/employer) and the Chicago/IL tie MUST be explicitly stated in the
+  profile text, and you MUST quote it verbatim. If you cannot copy the exact words from the text,
+  DO NOT make the claim — omit it. A claim with no verbatim quote will be discarded anyway.
+- NEVER infer a school or company from a city, a similar-sounding name, a publication, a club, an
+  award, a partner/client, or "people also viewed" — e.g. "MIT Technology Review" ≠ MIT; living in
+  a city ≠ attending its university; "Illinois" appearing somewhere ≠ Illinois Institute of Technology.
+- If the profile does not clearly state where they studied or worked, leave those fields EMPTY.
+- The Chicago/IL tie must be THIS person's own (they live/work/studied/grew up there or worked at a
+  Chicago company). A mention of Chicago that isn't about them is NOT a tie — set tie_type "none".
 - company_one_liner must describe what THIS person is actually building, drawn from the text. If the
   text doesn't say, use "Stealth" or "Unclear" — never invent a company, product, or sector.
 - tags and builder_signals must reflect what the profile states, not what's plausible for the archetype.
@@ -1612,14 +1660,23 @@ async function runSourcingEngine({ fullSweep = false, userId = 1 } = {}) {
     }
 
     // Merge extracted signals with AI signals, then verify pedigree against the actual
-    // profile text so no inaccurate "Ex-X"/school tag is ever stored.
+    // profile text so no inaccurate "Ex-X"/school tag is ever stored. Schools are verified
+    // the SAME way (every distinctive token must appear), so a hallucinated "MIT" / "Illinois
+    // Institute of Technology" that isn't in the profile is dropped, not displayed as fact.
     const verifyText = (candidate.headline || '') + ' ' + (candidate.text || '');
     const allPedigree = verifyPedigree([...new Set([...(candidate.pedigree_signals || []), ...(score.pedigree_signals || [])])], verifyText);
     const allBuilder = [...new Set([...(candidate.builder_signals || []), ...(score.builder_signals || [])])];
+    const allAnchorIl = verifyPedigree([...new Set([...(candidate.anchor_schools_il || []), ...(score.anchor_schools_il || [])])], verifyText);
+    const allEliteNational = verifyPedigree([...new Set([...(candidate.elite_schools_national || []), ...(score.elite_schools_national || [])])], verifyText);
 
-    // Merge pre-extracted schools with AI-extracted schools (R10)
-    const allAnchorIl = [...new Set([...(candidate.anchor_schools_il || []), ...(score.anchor_schools_il || [])])];
-    const allEliteNational = [...new Set([...(candidate.elite_schools_national || []), ...(score.elite_schools_national || [])])];
+    // ANTI-HALLUCINATION TIE GATE: if this founder's only tie is being an IL-school alum but
+    // that school didn't survive verification (not actually in the profile), the tie is fake —
+    // drop it so they're filtered out. Prevents "from MIT & IIT" inventing a Chicago tie.
+    if (candidate.location_type === 'school_alumni' && allAnchorIl.length === 0) {
+      console.log(`[Sourcing] 🚫 ${candidate.name} — school-based tie unverified (claimed school not in profile)`);
+      totalFiltered++;
+      continue;
+    }
 
     // Affinity to Danny's revealed taste (re-rank nudge, not an override).
     const aff = scoreAffinity({
