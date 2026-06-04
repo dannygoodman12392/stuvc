@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { api } from '../utils/api';
+import { PageHeader } from '../components/ui';
 
 export default function Assess() {
   const navigate = useNavigate();
@@ -213,17 +214,15 @@ export default function Assess() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-xl font-bold text-gray-900">Opportunity Assessment</h1>
-          <p className="text-sm text-gray-500 mt-0.5">
-            {rerunMode ? 'Add new materials and re-evaluate' : 'Multi-agent evaluation system'}
-          </p>
-        </div>
-        <button onClick={() => { setShowNew(!showNew); if (showNew) { setRerunMode(false); setRerunPreviousInputs([]); } }} className="btn-primary text-sm">
-          {showNew ? 'View History' : 'New Assessment'}
-        </button>
-      </div>
+      <PageHeader
+        title="Assess"
+        subtitle={rerunMode ? 'Add new materials and re-evaluate' : 'Multi-agent evaluations of your pipeline founders'}
+        actions={
+          <button onClick={() => { setShowNew(!showNew); if (showNew) { setRerunMode(false); setRerunPreviousInputs([]); } }} className="btn-primary text-sm">
+            {showNew ? 'View history' : 'New assessment'}
+          </button>
+        }
+      />
 
       {showNew ? (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
