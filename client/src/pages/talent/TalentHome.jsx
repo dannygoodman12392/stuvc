@@ -26,6 +26,7 @@ export default function TalentHome() {
   const [addRoleFor, setAddRoleFor] = useState(null);
   const [roleDraft, setRoleDraft] = useState({ title: '', role_function: 'engineering', band: 'A', location_pref: 'Chicago' });
   const [sourcing, setSourcing] = useState(null);
+  const [runResult, setRunResult] = useState({});
   const { toast } = useToast();
 
   async function load() {
@@ -62,10 +63,24 @@ export default function TalentHome() {
 
   async function sourceRole(role) {
     setSourcing(role.id);
+    setRunResult(r => ({ ...r, [role.id]: { running: true } }));
     try {
       await api.triggerTalentSourcing({ role_id: role.id });
-      toast({ message: `Sourcing ${FN_LABEL[role.role_function] || 'candidates'} for ${role.title} — check matches in a few minutes.` });
-    } catch (e) { toast({ message: e.message, tone: 'error' }); }
+      toast({ message: `Sourcing ${FN_LABEL[role.role_function] || 'candidates'} for ${role.title}…` });
+      // Poll the run diagnostic so the OUTCOME shows inline (found / added / matched / why 0).
+      let n = 0;
+      const t = setInterval(async () => {
+        n++;
+        try {
+          const run = await api.getRoleLastRun(role.id);
+          if (run && run.summary) {
+            setRunResult(r => ({ ...r, [role.id]: { running: false, ...run } }));
+            if (run.candidates_found != null) { clearInterval(t); }
+          }
+        } catch {}
+        if (n >= 15) { clearInterval(t); setRunResult(r => ({ ...r, [role.id]: { ...(r[role.id] || {}), running: false } })); }
+      }, 8000);
+    } catch (e) { toast({ message: e.message, tone: 'error' }); setRunResult(r => ({ ...r, [role.id]: { running: false, error: e.message } })); }
     finally { setTimeout(() => setSourcing(null), 1500); }
   }
 
@@ -150,26 +165,46 @@ export default function TalentHome() {
               <div className="px-4 py-3 text-xs text-gray-400">No roles yet — add one to start sourcing.</div>
             ) : (
               <div className="divide-y divide-gray-100">
-                {roles.map(r => (
-                  <div key={r.id} className="px-4 py-2.5 flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <Link to={`/talent/roles/${r.id}`} className="text-sm font-medium text-gray-900 hover:text-amber-700">{r.title}</Link>
-                      <div className="text-[11px] text-gray-500">
-                        {FN_LABEL[r.role_function] || 'Engineering'} · Band {r.band || 'A'}{r.location_pref ? ` · ${r.location_pref}` : ''}
+                {roles.map(r => {
+                  const rr = runResult[r.id];
+                  return (
+                  <div key={r.id} className="px-4 py-2.5">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <Link to={`/talent/roles/${r.id}`} className="text-sm font-medium text-gray-900 hover:text-amber-700">{r.title}</Link>
+                        <div className="text-[11px] text-gray-500">
+                          {FN_LABEL[r.role_function] || 'Engineering'} · Band {r.band || 'A'}{r.location_pref ? ` · ${r.location_pref}` : ''}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3 flex-shrink-0">
+                        <Link to={`/talent/matches?role=${r.id}`} className="text-[11px] text-gray-500 hover:text-amber-700">
+                          {r.pending_matches > 0 ? `${r.pending_matches} to review` : 'matches'}
+                        </Link>
+                        <Link to={`/talent/roles/${r.id}`} className="text-[11px] text-gray-500 hover:text-amber-700">Edit</Link>
+                        <button onClick={() => sourceRole(r)} disabled={sourcing === r.id} className="btn-primary text-xs px-3 py-1 disabled:opacity-50">
+                          {sourcing === r.id ? 'Starting…' : 'Source for this role'}
+                        </button>
+                        <button onClick={() => deleteRole(r)} title="Delete role" className="text-gray-300 hover:text-red-500 text-sm leading-none px-1">✕</button>
                       </div>
                     </div>
-                    <div className="flex items-center gap-3 flex-shrink-0">
-                      <Link to={`/talent/matches?role=${r.id}`} className="text-[11px] text-gray-500 hover:text-amber-700">
-                        {r.pending_matches > 0 ? `${r.pending_matches} to review` : 'matches'}
-                      </Link>
-                      <Link to={`/talent/roles/${r.id}`} className="text-[11px] text-gray-500 hover:text-amber-700">Edit</Link>
-                      <button onClick={() => sourceRole(r)} disabled={sourcing === r.id} className="btn-primary text-xs px-3 py-1 disabled:opacity-50">
-                        {sourcing === r.id ? 'Starting…' : 'Source for this role'}
-                      </button>
-                      <button onClick={() => deleteRole(r)} title="Delete role" className="text-gray-300 hover:text-red-500 text-sm leading-none px-1">✕</button>
-                    </div>
+                    {rr && (
+                      <div className="mt-1.5 text-[11px] text-gray-500">
+                        {rr.running && <span>Sourcing… results appear here in ~1–2 min.</span>}
+                        {!rr.running && rr.summary && (
+                          <span>
+                            Searched {rr.summary.queries ?? '–'} · found <strong>{rr.candidates_found}</strong> · added <strong>{rr.candidates_added}</strong> · <strong>{rr.matches_generated}</strong> matches
+                            {rr.summary.rejected && (rr.summary.rejected.location || rr.summary.rejected.score)
+                              ? ` · dropped ${rr.summary.rejected.location || 0} loc / ${rr.summary.rejected.score || 0} unverified` : ''}
+                            {rr.candidates_found === 0 && <span className="text-amber-600"> — search returned nobody (try a broader title/JD).</span>}
+                            {rr.candidates_found > 0 && rr.candidates_added === 0 && <span className="text-amber-600"> — found people but none passed AI verification (likely the Anthropic key/credits — run Settings → Test connection).</span>}
+                          </span>
+                        )}
+                        {!rr.running && rr.error && <span className="text-amber-600">Error: {rr.error}</span>}
+                      </div>
+                    )}
                   </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
