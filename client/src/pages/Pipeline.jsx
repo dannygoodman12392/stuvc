@@ -407,9 +407,15 @@ function InboxTab({ queue, starred, stats, loading, onApprove, onDismiss, onHide
             selected={f.id === selectedId}
             onClick={() => setSelectedId(f.id)}
             trailing={
-              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100">
-                <button onClick={(e) => { e.stopPropagation(); advance(f.id); }} className="text-xs font-medium px-2 py-1 rounded-md bg-accent text-white hover:bg-accent-hover">Advance</button>
-                <button onClick={(e) => { e.stopPropagation(); pass(f.id); }} className="text-xs font-medium px-2 py-1 rounded-md text-danger hover:bg-danger-soft border border-gray-200">Pass</button>
+              <div className="flex items-center gap-1">
+                {f.linkedin_url && (
+                  <a href={f.linkedin_url} target="_blank" rel="noopener" onClick={(e) => e.stopPropagation()}
+                    className="text-xs font-medium px-2 py-1 rounded-md border border-gray-200 text-gray-600 hover:border-accent hover:text-accent" title="Open LinkedIn">in ↗</a>
+                )}
+                <span className="flex items-center gap-1 opacity-0 group-hover:opacity-100">
+                  <button onClick={(e) => { e.stopPropagation(); advance(f.id); }} className="text-xs font-medium px-2 py-1 rounded-md bg-accent text-white hover:bg-accent-hover">Advance</button>
+                  <button onClick={(e) => { e.stopPropagation(); pass(f.id); }} className="text-xs font-medium px-2 py-1 rounded-md text-danger hover:bg-danger-soft border border-gray-200">Pass</button>
+                </span>
               </div>
             }
           />
