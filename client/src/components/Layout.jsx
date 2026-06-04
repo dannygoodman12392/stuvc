@@ -6,25 +6,28 @@ import SearchPalette from './SearchPalette';
 import StuLogo from './StuLogo';
 import { api, fetchAppVersion } from '../utils/api';
 
+// Four lenses + the assistant. Everything operational lives in the utility menu.
 const navConfig = [
   { to: '/ask', label: 'Ask Stu', accent: true },
   { to: '/', label: 'Home' },
   { to: '/pipeline', label: 'Pipeline' },
-  { to: '/brief', label: 'Daily Brief' },
-  { to: '/assess', label: 'Assess' },
   { to: '/talent', label: 'Talent' },
-  { to: '/portfolio', label: 'Portfolio', placeholder: true },
-  { to: '/fund', label: 'Fund', placeholder: true },
-  { to: '/releases', label: 'Releases' },
-  { to: '/health', label: 'Health' },
+  { to: '/assess', label: 'Assess' },
+  { to: '/brief', label: 'Daily Brief' },
+];
+const utilityConfig = [
   { to: '/settings', label: 'Settings' },
+  { to: '/health', label: 'Health' },
+  { to: '/releases', label: 'Releases' },
 ];
 
 export default function Layout({ children }) {
   const { user, logout } = useAuth();
-  const navItems = user?.role === 'admin'
-    ? [...navConfig, { to: '/admin', label: 'Admin' }]
-    : navConfig;
+  const navItems = navConfig;
+  const utilityItems = user?.role === 'admin'
+    ? [...utilityConfig, { to: '/admin', label: 'Admin' }]
+    : utilityConfig;
+  const [utilOpen, setUtilOpen] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [aiOpen, setAiOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -145,21 +148,30 @@ export default function Layout({ children }) {
           ))}
         </nav>
 
-        {/* User */}
-        <div className="px-3 py-3 border-t border-gray-100">
-          <div className="flex items-center gap-2.5">
+        {/* Utility menu — Settings / Health / Releases / sign out, tucked away */}
+        <div className="px-3 py-3 border-t border-gray-100 relative">
+          <button onClick={() => setUtilOpen(o => !o)} className="w-full flex items-center gap-2.5 rounded-lg px-1 py-1 hover:bg-gray-50 transition-colors">
             <div className="w-7 h-7 rounded-full bg-gray-900 flex items-center justify-center text-white text-[10px] font-semibold">
               {user?.name?.split(' ').map(n => n[0]).join('') || '?'}
             </div>
-            <div className="flex-1 min-w-0">
+            <div className="flex-1 min-w-0 text-left">
               <p className="text-[13px] font-medium text-gray-900 truncate">{user?.name}</p>
             </div>
-            <button onClick={logout} className="text-gray-400 hover:text-gray-600 transition-colors" title="Sign out">
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15m3 0l3-3m0 0l-3-3m3 3H9" />
-              </svg>
-            </button>
-          </div>
+            <svg className="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 9l6 6 6-6" /></svg>
+          </button>
+          {utilOpen && (
+            <div className="absolute bottom-full left-3 right-3 mb-1 bg-white border border-gray-200 rounded-lg shadow-lg py-1 z-50">
+              {utilityItems.map(item => (
+                <NavLink key={item.to} to={item.to} onClick={() => { setUtilOpen(false); setMobileOpen(false); }}
+                  className="block px-3 py-1.5 text-[13px] text-gray-600 hover:bg-gray-50 hover:text-gray-900">
+                  {item.label}
+                </NavLink>
+              ))}
+              <button onClick={logout} className="w-full text-left px-3 py-1.5 text-[13px] text-gray-600 hover:bg-gray-50 hover:text-gray-900 border-t border-gray-100 mt-1 pt-1.5">
+                Sign out
+              </button>
+            </div>
+          )}
         </div>
       </aside>
 
