@@ -241,6 +241,7 @@ export default function Settings() {
   // API Keys state
   const [apiKeyExa, setApiKeyExa] = useState('');
   const [apiKeyAnthropic, setApiKeyAnthropic] = useState('');
+  const [anthropicTest, setAnthropicTest] = useState(null);
   const [apiKeyEnrichlayer, setApiKeyEnrichlayer] = useState('');
   const [apiKeyGithub, setApiKeyGithub] = useState('');
   const apiKeysSave = useSaveState();
@@ -769,6 +770,28 @@ export default function Settings() {
                   placeholder="sk-ant-..."
                   autoComplete="off"
                 />
+                <div className="flex items-center gap-2 mt-2">
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      setAnthropicTest({ loading: true });
+                      try { setAnthropicTest(await api.testAnthropic()); }
+                      catch (e) { setAnthropicTest({ ok: false, message: e.message }); }
+                    }}
+                    disabled={anthropicTest?.loading}
+                    className="btn-secondary text-xs disabled:opacity-50"
+                  >
+                    {anthropicTest?.loading ? 'Testing…' : 'Test connection'}
+                  </button>
+                  <span className="text-xs text-gray-400">Save first, then test the key the app actually uses.</span>
+                </div>
+                {anthropicTest && !anthropicTest.loading && (
+                  <div className={`mt-2 rounded-lg border px-3 py-2 text-xs ${anthropicTest.ok ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-red-200 bg-red-50 text-red-700'}`}>
+                    <span className="font-semibold">{anthropicTest.ok ? '✓ Connected' : '✗ Not working'}</span>
+                    <span className="ml-1 text-gray-600">{anthropicTest.message}</span>
+                    {anthropicTest.source && <span className="block text-[10px] text-gray-400 mt-0.5">Tested: {anthropicTest.source}</span>}
+                  </div>
+                )}
               </div>
 
               {/* EnrichLayer */}

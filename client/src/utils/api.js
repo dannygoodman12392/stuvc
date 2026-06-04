@@ -164,6 +164,7 @@ export const api = {
   // Settings
   getSettings: () => request('/settings'),
   updateSetting: (key, value) => request(`/settings/${key}`, { method: 'PUT', body: JSON.stringify({ value }) }),
+  testAnthropic: () => request('/settings/test-anthropic'),
   getPipelineConfig: () => request('/settings/pipeline-config'),
   getSourcingCriteria: () => request('/settings/sourcing-criteria'),
   completeOnboarding: () => request('/settings/complete-onboarding', { method: 'POST' }),

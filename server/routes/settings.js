@@ -136,4 +136,34 @@ router.put('/:key', (req, res) => {
   res.json({ key, value: parseValue(serialized) });
 });
 
+// GET /api/settings/test-anthropic — ping Anthropic with the key the app ACTUALLY uses
+// (the user's stored key, or the env key for user 1) so we can tell, definitively, whether
+// that key's account is funded — independent of what any console balance view shows.
+router.get('/test-anthropic', async (req, res) => {
+  try {
+    const row = db.prepare("SELECT setting_value FROM user_settings WHERE user_id = ? AND setting_key = 'api_key_anthropic'").get(req.user.id);
+    const stored = row && row.setting_value && row.setting_value !== '""' ? row.setting_value : null;
+    const apiKey = stored || (req.user.id === 1 ? process.env.ANTHROPIC_API_KEY : null);
+    const source = stored ? 'your saved key (Settings)' : 'the server key';
+    if (!apiKey) return res.json({ ok: false, source, reason: 'no_key', message: 'No Anthropic API key is configured.' });
+    const keyHint = `${apiKey.slice(0, 8)}…${apiKey.slice(-4)}`;
+    try {
+      const Anthropic = require('@anthropic-ai/sdk');
+      const client = new Anthropic({ apiKey });
+      await client.messages.create({ model: 'claude-sonnet-4-20250514', max_tokens: 1, messages: [{ role: 'user', content: 'hi' }] });
+      return res.json({ ok: true, source, keyHint, message: 'Working — this key can reach the Anthropic API.' });
+    } catch (e) {
+      const msg = e.message || String(e);
+      const reason = /credit balance is too low/i.test(msg) ? 'no_credits'
+        : /authentication|invalid x-api-key|401/i.test(msg) ? 'invalid_key'
+        : /rate/i.test(msg) ? 'rate_limited' : 'error';
+      const friendly = reason === 'no_credits'
+        ? `This key's Anthropic account is out of credits. The $ balance you see in the console is on a DIFFERENT account or workspace than this key (${keyHint}). Create a key in the funded workspace and paste it above.`
+        : reason === 'invalid_key' ? `This key (${keyHint}) is invalid or revoked. Paste a fresh key from your funded Anthropic workspace.`
+        : msg;
+      return res.json({ ok: false, source, keyHint, reason, message: friendly });
+    }
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
 module.exports = router;
