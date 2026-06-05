@@ -98,6 +98,17 @@ router.post('/', (req, res) => {
   const placeholders = cols.map(() => '?').join(', ');
   const result = db.prepare(`INSERT INTO talent_roles (${cols.join(', ')}) VALUES (${placeholders})`).run(...vals);
   const row = db.prepare('SELECT * FROM talent_roles WHERE id = ?').get(result.lastInsertRowid);
+
+  // Future-proof: a newly created role starts sourcing immediately (identify → score →
+  // recommend), so candidates flow without the user remembering to click. Fire-and-forget;
+  // the per-role daily cron then keeps it fresh.
+  try {
+    const { runTalentEngine } = require('../../pipeline/talent-engine');
+    runTalentEngine({ userId: req.user.id, roleId: row.id })
+      .then(r => console.log(`[TalentRole] auto-sourced new role ${row.id} "${row.title}":`, r.candidatesAdded, 'added,', r.matchesCreated, 'matches'))
+      .catch(err => console.error('[TalentRole] auto-source failed:', err.message));
+  } catch (err) { console.error('[TalentRole] auto-source kickoff error:', err.message); }
+
   res.json(hydrate(row));
 });
 
