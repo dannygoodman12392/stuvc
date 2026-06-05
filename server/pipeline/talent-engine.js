@@ -73,11 +73,14 @@ function loadUserApiKeys(userId) {
   ).all(userId);
   const keys = {};
   for (const row of rows) keys[row.setting_key] = row.setting_value;
+  // Single-operator app: the platform env keys are Danny's. Fall back to them for ANY user,
+  // not just user id 1 — otherwise a non-1 account's manual runs silently get no keys and
+  // abort before recording anything ("never run"). A user's own saved key still takes priority.
   return {
-    exa: keys.api_key_exa || (userId === 1 ? process.env.EXA_API_KEY : null),
-    anthropic: keys.api_key_anthropic || (userId === 1 ? process.env.ANTHROPIC_API_KEY : null),
-    enrichlayer: keys.api_key_enrichlayer || (userId === 1 ? process.env.ENRICHLAYER_API_KEY : null),
-    github: keys.api_key_github || (userId === 1 ? process.env.GITHUB_TOKEN : null),
+    exa: keys.api_key_exa || process.env.EXA_API_KEY || null,
+    anthropic: keys.api_key_anthropic || process.env.ANTHROPIC_API_KEY || null,
+    enrichlayer: keys.api_key_enrichlayer || process.env.ENRICHLAYER_API_KEY || null,
+    github: keys.api_key_github || process.env.GITHUB_TOKEN || null,
   };
 }
 
@@ -841,13 +844,18 @@ async function runTalentEngine({ userId = 1, fullSweep = false, roleId = null } 
 
   const apiKeys = loadUserApiKeys(userId);
 
-  if (!apiKeys.exa) {
-    console.log('[TalentEngine] No Exa API key — aborting');
-    return { candidatesFound: 0, candidatesAdded: 0, error: 'No Exa API key configured' };
-  }
-
-  const run = db.prepare('INSERT INTO talent_sourcing_runs (user_id, sources_hit) VALUES (?, ?)').run(userId, JSON.stringify([]));
+  // Record the run at the VERY TOP — before any early-return — so an abort can never show
+  // as "never run". Every invocation leaves a row + a readable reason.
+  const run = db.prepare('INSERT INTO talent_sourcing_runs (user_id, role_id) VALUES (?, ?)').run(userId, roleScope?.id || null);
   const runId = run.lastInsertRowid;
+
+  if (!apiKeys.exa) {
+    const reason = 'No Exa API key configured (sourcing cannot run)';
+    console.log('[TalentEngine] ' + reason);
+    db.prepare('UPDATE talent_sourcing_runs SET candidates_found = 0, candidates_added = 0, matches_generated = 0, errors = ?, summary = ? WHERE id = ?')
+      .run(JSON.stringify([{ error: reason }]), JSON.stringify({ role: roleScope ? { id: roleScope.id, title: roleScope.title } : null, queries: 0, found: 0, added: 0, matchesCreated: 0, error: reason }), runId);
+    return { candidatesFound: 0, candidatesAdded: 0, error: reason };
+  }
 
   const sourcesHit = [];
   const errors = [];

@@ -190,7 +190,8 @@ export default function TalentHome() {
                     {rr && (
                       <div className="mt-1.5 text-[11px] text-gray-500">
                         {rr.running && <span>Sourcing… results appear here in ~1–2 min.</span>}
-                        {!rr.running && rr.summary && (
+                        {!rr.running && rr.summary?.error && <span className="text-amber-600">Couldn't run: {rr.summary.error}</span>}
+                        {!rr.running && rr.summary && !rr.summary.error && (
                           <span>
                             Searched {rr.summary.queries ?? '–'} · found <strong>{rr.candidates_found}</strong> · added <strong>{rr.candidates_added}</strong> · <strong>{rr.matches_generated}</strong> matches
                             {rr.summary.rejected && (rr.summary.rejected.location || rr.summary.rejected.score)
