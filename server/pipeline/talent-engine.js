@@ -327,6 +327,36 @@ function archetypeQueries(archKey, locSuffix, isChicago) {
   return pools[archKey] || [];
 }
 
+// Natural-language query sets per function (Exa neural "people" search). Plain intent,
+// no site: boolean — these reliably return a real LinkedIn candidate pool.
+const NL_QUERIES = {
+  gtm: (place, title) => [
+    { band: 'A', name: 'NL: senior marketing leader', query: `experienced marketing leader VP of Marketing or CMO in ${place} at a startup or growth-stage company` },
+    { band: 'A', name: 'NL: GTM / growth leader', query: `head of growth or go-to-market leader in ${place} who scaled revenue at a SaaS startup` },
+    { band: 'B', name: 'NL: demand-gen / marketing', query: `growth marketing or demand generation leader in ${place} startup` },
+  ],
+  product: (place) => [
+    { band: 'A', name: 'NL: product leader', query: `senior product leader Head of Product or CPO in ${place} who shipped products at a top startup` },
+    { band: 'B', name: 'NL: product manager', query: `experienced product manager in ${place} at an early-stage startup` },
+  ],
+  success: (place) => [
+    { band: 'A', name: 'NL: customer success leader', query: `head of customer success or VP customer success in ${place} who owns retention at a SaaS company` },
+    { band: 'B', name: 'NL: CSM', query: `customer success manager in ${place} at an early-stage startup` },
+  ],
+  design: (place) => [
+    { band: 'A', name: 'NL: design leader', query: `founding designer or head of design in ${place} who built product and brand at a startup` },
+  ],
+  operations: (place) => [
+    { band: 'A', name: 'NL: operator / chief of staff', query: `chief of staff or head of operations or BizOps leader in ${place} at a high-growth startup` },
+  ],
+  finance: (place) => [
+    { band: 'A', name: 'NL: finance leader', query: `head of finance or VP finance or startup CFO in ${place}` },
+  ],
+  generalist: (place, title) => [
+    { band: 'A', name: 'NL: role search', query: `experienced ${title} in ${place} at a startup or growth-stage company` },
+  ],
+};
+
 // ── Query construction ──
 function buildTalentQueries(criteria, fullSweep, roleScope = null) {
   // Non-engineering role-scoped sourcing → use the archetype's query pool so the
@@ -343,10 +373,17 @@ function buildTalentQueries(criteria, fullSweep, roleScope = null) {
     // seniority of the hire (handled in scoring/ranking); filtering queries by it shrank
     // a Band-B CMO search to a single query and returned almost nobody.
     let queries = archetypeQueries(arch.key, locSuffix, isChicago);
+    // High-recall NATURAL-LANGUAGE queries. Exa's "people" search is neural — it returns far
+    // more for plain-language intent than for heavy site:linkedin.com/in (...OR...OR...)
+    // boolean. These lead so a role always gets a real candidate pool.
+    const place = isChicago ? 'Chicago' : (locs[0] || 'Chicago');
+    const nl = NL_QUERIES[arch.key] || NL_QUERIES.generalist;
+    const naturalQueries = nl(place, roleScope?.title || arch.label);
+    queries = [...naturalQueries, ...queries];
     for (const cq of (criteria.customQueries || [])) {
       if (cq.query) queries.push({ name: cq.name || 'Custom query', query: cq.query, band: cq.band || null });
     }
-    return fullSweep ? queries : queries.slice(0, 12);
+    return fullSweep ? queries : queries.slice(0, 14);
   }
   return buildEngineeringQueries(criteria, fullSweep);
 }
@@ -889,8 +926,10 @@ async function runTalentEngine({ userId = 1, fullSweep = false, roleId = null } 
   }
   console.log(`[TalentEngine] Running ${queries.length} Exa queries`);
 
+  const queryLog = [];
   for (const q of queries) {
     const { results, error } = await searchExa(q.query, fullSweep ? 30 : 15, apiKeys.exa);
+    queryLog.push({ q: q.name, n: error ? 0 : (results?.length || 0), err: error || null });
     if (error) { errors.push({ q: q.name, error }); continue; }
     sourcesHit.push(`exa:${q.name}`);
 
@@ -1078,6 +1117,7 @@ async function runTalentEngine({ userId = 1, fullSweep = false, roleId = null } 
     found, added, deduped, matchesCreated,
     rejected: { location: rejectedByLocation, score: rejectedByScore },
     exaErrors: errors.filter(e => e.q).map(e => `${e.q}: ${e.error}`).slice(0, 5),
+    queryLog: queryLog.slice(0, 8), // per-query result counts (so a 0-found run is debuggable)
   };
   db.prepare('UPDATE talent_sourcing_runs SET sources_hit = ?, candidates_found = ?, candidates_added = ?, candidates_deduplicated = ?, matches_generated = ?, errors = ?, role_id = ?, summary = ? WHERE id = ?').run(
     JSON.stringify(sourcesHit), found, added, deduped, matchesCreated, JSON.stringify(errors), roleScope?.id || null, JSON.stringify(summary), runId

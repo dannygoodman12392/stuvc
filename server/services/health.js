@@ -68,8 +68,13 @@ function buildHealthReport(userId) {
         add('Talent sourcing', 'red', `${when} · couldn't run: ${sum.error}`);
       } else {
         const found = tr.candidates_found ?? 0, added = tr.candidates_added ?? 0, matches = tr.matches_generated ?? 0;
-        const note = added === 0 && found > 0 ? ' — found people but none passed AI verification (check Anthropic credits)' : (found === 0 ? ' — search returned nobody' : '');
-        add('Talent sourcing', matches > 0 ? 'green' : found === 0 ? 'yellow' : 'yellow',
+        let note = added === 0 && found > 0 ? ' — found people but none passed AI verification (check Anthropic credits)' : (found === 0 ? ' — search returned nobody' : '');
+        if (found === 0) {
+          const errs = (sum.queryLog || []).filter(q => q.err).slice(0, 2).map(q => q.err);
+          if (errs.length) note += ` · Exa error: ${errs.join(' | ')}`;
+          else if ((sum.queryLog || []).length) note += ` (${sum.queryLog.length} queries, all 0 results)`;
+        }
+        add('Talent sourcing', matches > 0 ? 'green' : 'yellow',
           `${when} · found ${found} · added ${added} · ${matches} matches${note}`);
       }
     }
