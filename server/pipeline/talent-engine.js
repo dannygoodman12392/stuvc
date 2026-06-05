@@ -355,6 +355,11 @@ const NL_QUERIES = {
   generalist: (place, title) => [
     { band: 'A', name: 'NL: role search', query: `experienced ${title} in ${place} at a startup or growth-stage company` },
   ],
+  engineering: (place) => [
+    { band: 'A', name: 'NL: senior/staff engineer', query: `senior or staff software engineer in ${place} at a top startup or tech company` },
+    { band: 'A', name: 'NL: founding engineer', query: `founding engineer or engineering leader in ${place} who builds at early-stage startups` },
+    { band: 'B', name: 'NL: full-stack engineer', query: `full-stack or backend software engineer in ${place} at a startup` },
+  ],
 };
 
 // ── Query construction ──
@@ -385,7 +390,16 @@ function buildTalentQueries(criteria, fullSweep, roleScope = null) {
     }
     return fullSweep ? queries : queries.slice(0, 14);
   }
-  return buildEngineeringQueries(criteria, fullSweep);
+  // Engineering (role-scoped or global): lead with natural-language queries too, so the
+  // engineering roles don't hit the same Exa-returns-nothing boolean wall.
+  const engQueries = buildEngineeringQueries(criteria, fullSweep);
+  if (roleScope) {
+    const locs = (criteria.locations || []).slice(0, 5);
+    const place = /chicago|illinois|\bil\b/.test((locs[0] || 'chicago').toLowerCase()) ? 'Chicago' : (locs[0] || 'Chicago');
+    const nl = NL_QUERIES.engineering(place);
+    return [...nl, ...engQueries].slice(0, fullSweep ? 20 : 14);
+  }
+  return engQueries;
 }
 
 // JD-DRIVEN QUERIES — turn the actual job description into targeted LinkedIn searches.

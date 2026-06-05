@@ -35,8 +35,15 @@ export default function TalentHome() {
       const [co, roles] = await Promise.all([api.getTalentPortfolio(), api.getTalentRoles()]);
       setCompanies(Array.isArray(co) ? co : []);
       const grouped = {};
-      for (const r of (Array.isArray(roles) ? roles : [])) (grouped[r.portfolio_company_id] ||= []).push(r);
+      const roleList = Array.isArray(roles) ? roles : [];
+      for (const r of roleList) (grouped[r.portfolio_company_id] ||= []).push(r);
       setRolesByCo(grouped);
+      // Load each role's last sourcing run so the result is ALWAYS visible (trust: you can
+      // see what the button did, even after navigating away — not just live after a click).
+      const runs = await Promise.all(roleList.map(r => api.getRoleLastRun(r.id).catch(() => null)));
+      const rr = {};
+      roleList.forEach((r, i) => { if (runs[i]) rr[r.id] = { running: false, ...runs[i] }; });
+      setRunResult(prev => ({ ...rr, ...prev }));
     } catch (e) { toast({ message: e.message, tone: 'error' }); }
     finally { setLoading(false); }
   }
@@ -188,19 +195,17 @@ export default function TalentHome() {
                       </div>
                     </div>
                     {rr && (
-                      <div className="mt-1.5 text-[11px] text-gray-500">
-                        {rr.running && <span>Sourcing… results appear here in ~1–2 min.</span>}
+                      <div className="mt-1.5 text-[11px]">
+                        {rr.running && <span className="text-gray-500"><span className="inline-block w-2 h-2 rounded-full bg-accent animate-pulse mr-1 align-middle" />Sourcing now — results in ~1–2 min…</span>}
                         {!rr.running && rr.summary?.error && <span className="text-amber-600">Couldn't run: {rr.summary.error}</span>}
                         {!rr.running && rr.summary && !rr.summary.error && (
-                          <span>
-                            Searched {rr.summary.queries ?? '–'} · found <strong>{rr.candidates_found}</strong> · added <strong>{rr.candidates_added}</strong> · <strong>{rr.matches_generated}</strong> matches
-                            {rr.summary.rejected && (rr.summary.rejected.location || rr.summary.rejected.score)
-                              ? ` · dropped ${rr.summary.rejected.location || 0} loc / ${rr.summary.rejected.score || 0} unverified` : ''}
-                            {rr.candidates_found === 0 && <span className="text-amber-600"> — search returned nobody (try a broader title/JD).</span>}
-                            {rr.candidates_found > 0 && rr.candidates_added === 0 && <span className="text-amber-600"> — found people but none passed AI verification (likely the Anthropic key/credits — run Settings → Test connection).</span>}
+                          <span className="text-gray-500">
+                            Last sourced{rr.run_at ? ` ${new Date(rr.run_at + 'Z').toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}` : ''}: found <strong>{rr.candidates_found}</strong> · added <strong>{rr.candidates_added}</strong> · <strong className={rr.matches_generated > 0 ? 'text-gray-900' : ''}>{rr.matches_generated} matches</strong>
+                            {rr.matches_generated > 0 && <Link to={`/talent/matches?role=${r.id}`} className="ml-1 text-accent hover:text-accent-hover font-medium">view →</Link>}
+                            {rr.candidates_found === 0 && <span className="text-amber-600"> — search returned nobody.</span>}
+                            {rr.candidates_found > 0 && rr.candidates_added === 0 && <span className="text-amber-600"> — none passed AI verification (check Anthropic credits).</span>}
                           </span>
                         )}
-                        {!rr.running && rr.error && <span className="text-amber-600">Error: {rr.error}</span>}
                       </div>
                     )}
                   </div>
