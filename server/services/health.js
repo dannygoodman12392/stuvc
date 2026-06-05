@@ -44,7 +44,6 @@ function buildHealthReport(userId) {
   const jobLabels = {
     newsletter_sync: 'Daily Brief sync',
     sourcing_run: 'Sourcing run',
-    talent_sourcing: 'Talent sourcing',
     notion_push: 'Notion mirror push',
     publish_to_team: 'Publish to team (Airtable)',
   };
@@ -55,6 +54,26 @@ function buildHealthReport(userId) {
     const color = r.status === 'ok' ? 'green' : r.status === 'partial' ? 'yellow' : 'red';
     add(label, color, `${r.status} · ${when}${r.detail ? ' · ' + r.detail : ''}`);
   }
+
+  // Talent sourcing — read the REAL table (talent_sourcing_runs), not job_runs, so this
+  // reflects what actually happened on the last "Source for this role".
+  try {
+    const tr = db.prepare('SELECT * FROM talent_sourcing_runs WHERE user_id = ? ORDER BY run_at DESC LIMIT 1').get(userId);
+    if (!tr) {
+      add('Talent sourcing', 'gray', 'never run');
+    } else {
+      const when = new Date(tr.run_at + 'Z').toLocaleString();
+      let sum = {}; try { sum = JSON.parse(tr.summary || '{}') || {}; } catch {}
+      if (sum.error) {
+        add('Talent sourcing', 'red', `${when} · couldn't run: ${sum.error}`);
+      } else {
+        const found = tr.candidates_found ?? 0, added = tr.candidates_added ?? 0, matches = tr.matches_generated ?? 0;
+        const note = added === 0 && found > 0 ? ' — found people but none passed AI verification (check Anthropic credits)' : (found === 0 ? ' — search returned nobody' : '');
+        add('Talent sourcing', matches > 0 ? 'green' : found === 0 ? 'yellow' : 'yellow',
+          `${when} · found ${found} · added ${added} · ${matches} matches${note}`);
+      }
+    }
+  } catch (e) { add('Talent sourcing', 'gray', 'unavailable'); }
 
   // 4. Newsletter source health
   const srcs = db.prepare("SELECT name, last_status FROM newsletter_sources WHERE user_id = ? AND enabled = 1 AND is_deleted = 0").all(userId);
