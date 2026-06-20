@@ -6,6 +6,34 @@
 
 const RELEASES = [
   {
+    version: 'v4.0.0',
+    date: 'June 19, 2026',
+    time: '10:15 PM CT',
+    title: 'Discover, alerts, outreach — and connect your own AI agent',
+    highlights: [
+      {
+        product: 'Sourcing',
+        change: 'New Discover: instead of waiting for the daily sweep, go find fresh builders from the live web on demand by signal — founders who just left a YC company, stealth founders building something new, early employees who left a unicorn factory (OpenAI, Stripe, Ramp…), repeat founders, breakout open-source builders, and more. Results come back ranked, scored 0–100, and explained with a one-line "why this person," and are saved straight to your queue. Works even on a brand-new, empty account.',
+        benefit: 'Ask once and get a scored, explained shortlist of exceptional builders in seconds — no setup, no waiting for a sweep.',
+      },
+      {
+        product: 'Talent',
+        change: 'The same builder-signal filters now power hiring, and you can Discover candidates the same way — find people who just left a top company or just went stealth, ranked and scored for the role you\'re filling. Plus one-click Outreach: turn any discovered person into a warm, personalized message (recruit / invest / connect), drafted in seconds.',
+        benefit: 'Go from "find me someone" to a ready-to-send intro without leaving the page.',
+      },
+      {
+        product: 'Platform',
+        change: 'New Monitors: set a standing alert like "tell me when a YC founder just leaves" and Stu collects the hits for you — and an active monitor will go discover new ones from the web every day. Read them in the app or pull them from your agent.',
+        benefit: 'Catch the highest-signal moment — the moment someone becomes available — without checking manually.',
+      },
+      {
+        product: 'Platform',
+        change: 'Stu now speaks MCP: connect your own AI agent (Claude Desktop, Cursor, a script) directly to your Talent and Sourcing data, discovery, and monitors. Generate an access token in Settings → API & MCP Access and point your agent at stu.vc/mcp, then just ask it "find me YC founders who just left." Stu is free with an account, bring-your-own-key: your usage runs on your own API keys (encrypted at rest, with a daily spend cap), so you control cost and Stu never bills you.',
+        benefit: 'Drive Stu from the AI tools you already use, on your own keys — your data, your cost, your control.',
+      },
+    ],
+  },
+  {
     version: 'v3.1.0',
     date: 'June 3, 2026',
     time: '4:45 PM CT',
