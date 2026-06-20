@@ -21,6 +21,29 @@ db.exec(`
   );
 `);
 
+// ── Ensure the owner/admin (user_id=1) exists BEFORE any user_id=1 seed runs ──
+// Several one-time seeds below insert user_settings/talent_criteria rows that FK to
+// users(id)=1. auth.seedTeam() also creates this user, but it runs AFTER db.js is
+// required — so on a brand-new database those seeds would FK-crash on first boot.
+// Seeding the owner here (idempotent: only when the table is empty) makes a fresh DB
+// boot cleanly in one pass. Default password is overridable via SEED_ADMIN_PASSWORD.
+try {
+  const userCount = db.prepare('SELECT COUNT(*) AS c FROM users').get().c;
+  if (userCount === 0) {
+    const bcrypt = require('bcryptjs');
+    // The owner unlocks the platform provider keys, so never ship a known default
+    // password in production — randomize when SEED_ADMIN_PASSWORD isn't set (reset via
+    // password flow). Dev keeps the convenient default.
+    const pw = process.env.SEED_ADMIN_PASSWORD
+      || (process.env.NODE_ENV === 'production' ? require('crypto').randomBytes(18).toString('hex') : 'Murphy1!');
+    db.prepare("INSERT INTO users (id, email, name, role, password_hash) VALUES (1, ?, ?, 'admin', ?)")
+      .run('danny.eric.goodman@gmail.com', 'Danny Goodman', bcrypt.hashSync(pw, 10));
+    console.log('[DB] Seeded owner/admin (user_id=1)');
+  }
+} catch (e) {
+  console.error('[DB] owner seed skipped:', e.message);
+}
+
 // ── Founders (core pipeline) ──
 db.exec(`
   CREATE TABLE IF NOT EXISTS founders (
@@ -440,13 +463,20 @@ addColumn('users', 'has_paid', 'INTEGER DEFAULT 0');
 addColumn('users', 'stripe_customer_id', 'TEXT');
 addColumn('users', 'payment_date', 'DATETIME');
 
+// Migration ledger — must exist before any migration flag is read (fresh DBs would
+// otherwise crash on the first SELECT below).
+db.exec("CREATE TABLE IF NOT EXISTS migration_flags (key TEXT PRIMARY KEY, ran_at DATETIME DEFAULT CURRENT_TIMESTAMP)");
+
+// User 1 (Danny) is created by auth.seedTeam() AFTER this module loads, so on a brand-new
+// DB it does not exist while these seeds run. The Danny-specific seeds below INSERT rows
+// that FK-reference users(id)=1 — with foreign_keys ON, running them before user 1 exists
+// crashes a fresh boot. Guard each on this check: when user 1 is absent the seed no-ops
+// WITHOUT recording its flag, so it runs cleanly on a later boot once seedTeam has run.
+const user1Exists = () => !!db.prepare('SELECT 1 FROM users WHERE id = 1').get();
+
 // One-time migration: assign all existing data to user_id=1 (Danny)
 const mtFlag = db.prepare("SELECT * FROM migration_flags WHERE key = 'multi_tenant_v1'").get();
 if (!mtFlag) {
-  try {
-    db.exec("CREATE TABLE IF NOT EXISTS migration_flags (key TEXT PRIMARY KEY, ran_at DATETIME DEFAULT CURRENT_TIMESTAMP)");
-  } catch {}
-
   db.prepare("UPDATE founders SET created_by = 1 WHERE created_by IS NULL").run();
   db.prepare("UPDATE sourced_founders SET user_id = 1 WHERE user_id IS NULL").run();
   db.prepare("UPDATE sourcing_runs SET user_id = 1 WHERE user_id IS NULL").run();
@@ -475,7 +505,7 @@ if (!payFlag) {
 
 // ── One-time: restore Danny's sourcing criteria (user_id=1 only) ──
 const criteriaFlag = db.prepare("SELECT * FROM migration_flags WHERE key = 'danny_criteria_v1'").get();
-if (!criteriaFlag) {
+if (!criteriaFlag && user1Exists()) {
   const upsert = db.prepare(`
     INSERT INTO user_settings (user_id, setting_key, setting_value, updated_at)
     VALUES (1, ?, ?, CURRENT_TIMESTAMP)
@@ -542,7 +572,7 @@ if (!criteriaFlag) {
 
 // ── Update Danny's schools to include elite builder institutions ──
 const schoolsFlag = db.prepare("SELECT * FROM migration_flags WHERE key = 'danny_schools_v2'").get();
-if (!schoolsFlag) {
+if (!schoolsFlag && user1Exists()) {
   const schools = JSON.stringify([
     'northwestern university','university of chicago','university of illinois',
     'illinois institute of technology','loyola university chicago','depaul university',
@@ -809,6 +839,25 @@ db.exec(`CREATE INDEX IF NOT EXISTS idx_tm_candidate ON talent_matches(candidate
 addColumn('talent_roles', 'role_function', "TEXT DEFAULT 'engineering'");
 // Candidate function/archetype — so the matcher never pairs an engineer with a GTM role.
 addColumn('talent_candidates', 'role_function', 'TEXT');
+// Recency-of-departure for talent (parallels sourced_founders) — powers the
+// "just_departed" builder signal on the Talent side (e.g. "just left a top company").
+addColumn('talent_candidates', 'departure_recency_months', 'INTEGER');
+addColumn('talent_candidates', 'signal_captured_at', 'DATETIME');
+
+// Discovery enrichment (LLM analyst pass): a 0-100 unicorn-builder score + a JSON blob
+// {summary, why, contactability}. Distinct from the talent engine's role-fit overall_score
+// and the sourcing caliber (1-10), so neither is overwritten.
+addColumn('talent_candidates', 'unicorn_score', 'INTEGER');
+addColumn('talent_candidates', 'enrichment', 'TEXT');
+addColumn('sourced_founders', 'unicorn_score', 'INTEGER');
+addColumn('sourced_founders', 'enrichment', 'TEXT');
+
+// Indices on the two largest / hottest tables (founders ~5k+ rows, sourced_founders grows
+// with every sweep). Without these, dedup + inbox + scoping queries are full scans.
+db.exec(`CREATE INDEX IF NOT EXISTS idx_founders_user ON founders(created_by, is_deleted);`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_founders_linkedin ON founders(linkedin_url);`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_sf_user_status ON sourced_founders(user_id, status);`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_sf_linkedin ON sourced_founders(linkedin_url);`);
 
 // ── Newsletter / Daily Brief ──
 // One row per extracted newsletter issue. Stu reads a Gmail label over IMAP, extracts
@@ -858,11 +907,6 @@ db.exec(`
 db.exec(`CREATE INDEX IF NOT EXISTS idx_news_sources ON newsletter_sources(user_id, enabled, is_deleted);`);
 // Track which source an item came from
 addColumn('newsletter_items', 'source_id', 'INTEGER');
-
-// Talent run diagnostics — which role, and a breakdown of why candidates were dropped,
-// so a "not finding anyone" complaint becomes a visible "found 35, 30 below bar" answer.
-addColumn('talent_sourcing_runs', 'role_id', 'INTEGER');
-addColumn('talent_sourcing_runs', 'summary', 'TEXT');
 
 // Daily Brief v2 — archive blogs + email delivery.
 // A source can be a 'newsletter' (latest issue, via RSS/email) or an 'archive' (a treasure
@@ -946,10 +990,14 @@ db.exec(`
     errors TEXT
   );
 `);
+// Talent run diagnostics — added AFTER the CREATE above so a fresh DB gets these columns
+// (addColumn no-ops if the table doesn't exist yet). role_id + a drop-reason summary.
+addColumn('talent_sourcing_runs', 'role_id', 'INTEGER');
+addColumn('talent_sourcing_runs', 'summary', 'TEXT');
 
 // Seed Danny's default talent criteria on first run
 const talentCriteriaFlag = db.prepare("SELECT * FROM migration_flags WHERE key = 'talent_criteria_v1'").get();
-if (!talentCriteriaFlag) {
+if (!talentCriteriaFlag && user1Exists()) {
   const upsert = db.prepare(`
     INSERT INTO talent_criteria (user_id, scope, setting_key, setting_value, updated_at)
     VALUES (1, 'global', ?, ?, CURRENT_TIMESTAMP)
@@ -1006,6 +1054,106 @@ if (!talentCriteriaFlag) {
 
   db.prepare("INSERT INTO migration_flags (key) VALUES ('talent_criteria_v1')").run();
   console.log('[DB] Talent default criteria seeded for user_id=1');
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// COST ATTRIBUTION, MCP ACCESS & SIGNAL MONITORS
+// (BYOK foundation — see docs/talent-mcp-and-monitors-plan.md)
+// ════════════════════════════════════════════════════════════════════════════
+
+// Per-call metered usage. Powers soft daily spend caps and usage transparency.
+// est_cost_usd is an approximation for capping, not an invoice.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS usage_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    provider TEXT NOT NULL DEFAULT 'anthropic',
+    feature TEXT,
+    input_tokens INTEGER DEFAULT 0,
+    output_tokens INTEGER DEFAULT 0,
+    est_cost_usd REAL DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_usage_user_day ON usage_events(user_id, created_at);`);
+
+// MCP access tokens — long-lived but revocable, separate from the 7-day web JWT.
+// We store only the hash; the plaintext token is shown once at creation.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS mcp_tokens (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    token_hash TEXT NOT NULL UNIQUE,
+    label TEXT,
+    scopes TEXT DEFAULT 'talent:read',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    last_used_at DATETIME,
+    revoked_at DATETIME
+  );
+`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_mcp_tokens_user ON mcp_tokens(user_id, revoked_at);`);
+
+// Signal monitors (universe → snapshot → diff → classify → alert). Each row is one
+// monitor a user has configured (e.g. "YC founders who just left"). Runs on the
+// owning user's keys, so the watch is billed to the watch owner.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS monitors (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    type TEXT NOT NULL,                 -- 'yc_departure' | 'factory_departure' | 'stealth' | 'repeat_founder' | 'formation' | 'breakout_builder'
+    label TEXT,
+    config_json TEXT,                   -- watch set + filters
+    schedule TEXT DEFAULT 'daily',
+    enabled INTEGER DEFAULT 1,
+    last_run_at DATETIME,
+    is_deleted INTEGER DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_monitors_user ON monitors(user_id, enabled, is_deleted);`);
+
+// One detected transition (a hit) for a monitor.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS monitor_hits (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    monitor_id INTEGER NOT NULL REFERENCES monitors(id),
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    entity_name TEXT,
+    entity_url TEXT,
+    signal_type TEXT,                   -- builder-signal key, e.g. 'just_departed' | 'stealth_building'
+    payload_json TEXT,                  -- who/last-co/when/source
+    intent TEXT,                        -- 'starting_new' | 'open_to_join' | 'taking_break' | null
+    confidence INTEGER,
+    detected_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    notified_at DATETIME,
+    dismissed INTEGER DEFAULT 0
+  );
+`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_monitor_hits ON monitor_hits(monitor_id, detected_at DESC);`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_monitor_hits_user ON monitor_hits(user_id, dismissed, detected_at DESC);`);
+
+// ── One-time: encrypt any plaintext provider keys already in user_settings ──
+// Only runs once a SETTINGS_ENC_KEY is configured. Idempotent: encrypt() skips
+// values that are already ciphertext, and the flag guards re-runs.
+const secrets = require('./lib/secrets');
+const encFlag = db.prepare("SELECT * FROM migration_flags WHERE key = 'encrypt_secrets_v1'").get();
+if (secrets.isConfigured() && !encFlag) {
+  // Keep this LIKE set in sync with settings.js isSensitiveSettingKey().
+  const sensitive = db.prepare(
+    "SELECT id, setting_value FROM user_settings WHERE setting_key LIKE 'api_key_%' OR setting_key LIKE '%_token' OR setting_key LIKE '%_app_password' OR setting_key LIKE '%_secret'"
+  ).all();
+  const upd = db.prepare('UPDATE user_settings SET setting_value = ? WHERE id = ?');
+  let n = 0;
+  db.transaction(() => {
+    for (const row of sensitive) {
+      if (secrets.isEncrypted(row.setting_value)) continue;
+      upd.run(secrets.encrypt(row.setting_value), row.id);
+      n++;
+    }
+  })();
+  db.prepare("INSERT INTO migration_flags (key) VALUES ('encrypt_secrets_v1')").run();
+  console.log(`[DB] Encrypted ${n} stored credential(s) at rest`);
 }
 
 module.exports = db;

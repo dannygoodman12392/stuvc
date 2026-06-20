@@ -35,12 +35,15 @@ function requireAuth(req, res, next) {
   }
 }
 
-// Seed the team if no users exist
+// Seed the team if no users exist. Normally a no-op now — db.js already ensures the
+// owner (user_id=1) exists at init so the user_id=1 seeds don't FK-crash on a fresh DB.
+// Kept as a safety net; uses the same env-overridable default password.
 function seedTeam() {
   const count = db.prepare('SELECT COUNT(*) as c FROM users').get().c;
   if (count === 0) {
+    const pw = process.env.SEED_ADMIN_PASSWORD || 'Murphy1!';
     const insert = db.prepare('INSERT INTO users (email, name, role, password_hash) VALUES (?, ?, ?, ?)');
-    insert.run('danny.eric.goodman@gmail.com', 'Danny Goodman', 'admin', hashPassword('Murphy1!'));
+    insert.run('danny.eric.goodman@gmail.com', 'Danny Goodman', 'admin', hashPassword(pw));
     console.log('Seeded admin account');
   }
 }

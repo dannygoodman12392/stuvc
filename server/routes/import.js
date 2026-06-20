@@ -6,6 +6,7 @@ const db = require('../db');
 const { parseCSV, MAPPABLE_FIELDS } = require('../services/csv-parser');
 const { extractFromPDF } = require('../services/pdf-extractor');
 const { enrichWithLinkedIn } = require('../pipeline/sourcing-engine');
+const { resolveKey } = require('../lib/providerKeys');
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -48,12 +49,9 @@ router.post('/upload', upload.single('file'), async (req, res) => {
     }
 
     if (ext === '.pdf') {
-      // Get user's Anthropic API key
-      const setting = db.prepare(
-        "SELECT setting_value FROM user_settings WHERE user_id = ? AND setting_key = 'api_key_anthropic'"
-      ).get(req.user.id);
-
-      const apiKey = setting?.setting_value?.replace(/^"|"$/g, '') || process.env.ANTHROPIC_API_KEY;
+      // Resolve the caller's Anthropic key (env fallback only for the owner) so the
+      // PDF extraction is billed to the user who triggered the import.
+      const apiKey = resolveKey(req.user.id, 'anthropic');
       if (!apiKey) {
         return res.status(400).json({ error: 'An Anthropic API key is required for PDF import. Add it in Settings.' });
       }
@@ -230,11 +228,9 @@ router.post('/enrich', async (req, res) => {
   const { founderIds } = req.body;
   const userId = req.user.id;
 
-  // Get user's EnrichLayer API key
-  const setting = db.prepare(
-    "SELECT setting_value FROM user_settings WHERE user_id = ? AND setting_key = 'api_key_enrichlayer'"
-  ).get(userId);
-  const apiKey = setting?.setting_value?.replace(/^"|"$/g, '') || process.env.ENRICHLAYER_API_KEY;
+  // Resolve the caller's EnrichLayer key (decrypted; env fallback only for the owner)
+  // so enrichment is billed to whoever triggered it.
+  const apiKey = resolveKey(userId, 'enrichlayer');
 
   if (!apiKey) {
     return res.status(400).json({ error: 'An EnrichLayer API key is required for enrichment. Add it in Settings.' });

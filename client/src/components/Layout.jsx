@@ -10,6 +10,7 @@ import { api, fetchAppVersion } from '../utils/api';
 const navConfig = [
   { to: '/ask', label: 'Ask Stu', accent: true },
   { to: '/', label: 'Home' },
+  { to: '/discover', label: 'Discover', accent: true },
   { to: '/pipeline', label: 'Pipeline' },
   { to: '/talent', label: 'Talent' },
   { to: '/assess', label: 'Assess' },

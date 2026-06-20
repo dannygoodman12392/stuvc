@@ -1,17 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../db');
-
-function getAnthropicClient() {
-  try {
-    const apiKey = process.env.ANTHROPIC_API_KEY;
-    if (!apiKey || apiKey === 'your-api-key-here') return null;
-    const Anthropic = require('@anthropic-ai/sdk');
-    return new Anthropic({ apiKey });
-  } catch {
-    return null;
-  }
-}
+const { anthropicFor } = require('../lib/providerKeys');
 
 // GET /api/calls/:founderId
 router.get('/:founderId', (req, res) => {
@@ -29,7 +19,7 @@ router.post('/:founderId', async (req, res) => {
   const founder = db.prepare('SELECT * FROM founders WHERE id = ? AND created_by = ? AND is_deleted = 0').get(req.params.founderId, req.user.id);
   if (!founder) return res.status(404).json({ error: 'Founder not found' });
 
-  const client = getAnthropicClient();
+  const client = anthropicFor(req.user.id, 'call-summary');
   let structuredSummary = null;
 
   if (client) {

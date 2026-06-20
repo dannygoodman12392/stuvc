@@ -1,6 +1,13 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../db');
+const secrets = require('../lib/secrets');
+const { resolveKey, readUserKey } = require('../lib/providerKeys');
+
+// Credentials that must be encrypted at rest (never echoed back to the client).
+function isSensitiveSettingKey(key) {
+  return /^api_key_/.test(key) || /_token$/.test(key) || /_app_password$/.test(key) || /_secret$/.test(key);
+}
 
 const DEFAULT_SETTINGS = {
   pipeline_admissions_stages: JSON.stringify([
@@ -101,7 +108,12 @@ router.get('/', (req, res) => {
     settings[key] = parseValue(val);
   }
   for (const row of rows) {
-    settings[row.setting_key] = parseValue(row.setting_value);
+    // Never send stored credentials to the client — expose only "configured: true".
+    if (isSensitiveSettingKey(row.setting_key)) {
+      settings[row.setting_key] = row.setting_value ? { configured: true } : null;
+    } else {
+      settings[row.setting_key] = parseValue(row.setting_value);
+    }
   }
 
   res.json(settings);
@@ -124,7 +136,9 @@ router.put('/:key', (req, res) => {
     return res.status(400).json({ error: 'Missing value' });
   }
 
-  const serialized = typeof value === 'string' ? value : JSON.stringify(value);
+  let serialized = typeof value === 'string' ? value : JSON.stringify(value);
+  const sensitive = isSensitiveSettingKey(key);
+  if (sensitive) serialized = secrets.encrypt(serialized);
 
   db.prepare(`
     INSERT INTO user_settings (user_id, setting_key, setting_value, updated_at)
@@ -133,6 +147,12 @@ router.put('/:key', (req, res) => {
     DO UPDATE SET setting_value = excluded.setting_value, updated_at = CURRENT_TIMESTAMP
   `).run(req.user.id, key, serialized);
 
+  // Never echo a stored secret back — confirm with a masked hint only.
+  if (sensitive) {
+    const raw = typeof value === 'string' ? value : String(value ?? '');
+    const hint = raw.length > 8 ? `${raw.slice(0, 4)}…${raw.slice(-4)}` : 'saved';
+    return res.json({ key, saved: true, hint });
+  }
   res.json({ key, value: parseValue(serialized) });
 });
 
@@ -141,9 +161,8 @@ router.put('/:key', (req, res) => {
 // that key's account is funded — independent of what any console balance view shows.
 router.get('/test-anthropic', async (req, res) => {
   try {
-    const row = db.prepare("SELECT setting_value FROM user_settings WHERE user_id = ? AND setting_key = 'api_key_anthropic'").get(req.user.id);
-    const stored = row && row.setting_value && row.setting_value !== '""' ? row.setting_value : null;
-    const apiKey = stored || (req.user.id === 1 ? process.env.ANTHROPIC_API_KEY : null);
+    const stored = readUserKey(req.user.id, 'api_key_anthropic');
+    const apiKey = resolveKey(req.user.id, 'anthropic');
     const source = stored ? 'your saved key (Settings)' : 'the server key';
     if (!apiKey) return res.json({ ok: false, source, reason: 'no_key', message: 'No Anthropic API key is configured.' });
     const keyHint = `${apiKey.slice(0, 8)}…${apiKey.slice(-4)}`;

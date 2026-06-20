@@ -20,17 +20,6 @@ const https = require('https');
 
 // ── API Clients ──
 
-function getAnthropicClient() {
-  try {
-    const apiKey = process.env.ANTHROPIC_API_KEY;
-    if (!apiKey) return null;
-    const Anthropic = require('@anthropic-ai/sdk');
-    return new Anthropic({ apiKey });
-  } catch {
-    return null;
-  }
-}
-
 function httpPost(url, headers, body) {
   return new Promise((resolve, reject) => {
     const parsed = new URL(url);
@@ -908,7 +897,9 @@ function getTodaySearchGroup() {
 // ── Exa AI Search ──
 
 async function searchExa(query, numResults = 25, exaApiKey = null) {
-  const apiKey = exaApiKey || process.env.EXA_API_KEY;
+  // Key is owner-resolved upstream (loadUserApiKeys). No env fallback here — that would
+  // silently bill the platform Exa key for a non-owner whose resolved key is null.
+  const apiKey = exaApiKey;
   if (!apiKey) return { results: [], error: 'No EXA_API_KEY configured' };
 
   try {
@@ -936,7 +927,7 @@ async function searchExa(query, numResults = 25, exaApiKey = null) {
 
 async function searchGitHub(criteria, githubToken) {
   try {
-    const token = githubToken || process.env.GITHUB_TOKEN;
+    const token = githubToken; // owner-resolved upstream; no env fallback for non-owners
     const headers = { 'Accept': 'application/vnd.github.v3+json', 'User-Agent': 'Stu-Sourcing' };
     if (token) headers['Authorization'] = `token ${token}`;
 
@@ -984,7 +975,7 @@ async function searchGitHub(criteria, githubToken) {
 // ── EnrichLayer (LinkedIn enrichment for top scorers) ──
 
 async function enrichWithLinkedIn(linkedinUrl, enrichlayerApiKey) {
-  const apiKey = enrichlayerApiKey || process.env.ENRICHLAYER_API_KEY;
+  const apiKey = enrichlayerApiKey; // owner-resolved upstream; no env fallback for non-owners
   if (!apiKey || !linkedinUrl) return null;
 
   try {
@@ -1447,21 +1438,10 @@ function buildUserScoringPrompt(criteria) {
 
 // ── User API Key Loader ──
 
+// Delegated to the central resolver so the owner-gated env fallback + decryption
+// live in exactly one place. See server/lib/providerKeys.js.
 function loadUserApiKeys(userId) {
-  const rows = db.prepare(
-    "SELECT setting_key, setting_value FROM user_settings WHERE user_id = ? AND setting_key IN ('api_key_exa', 'api_key_anthropic', 'api_key_enrichlayer', 'api_key_github')"
-  ).all(userId);
-
-  const keys = {};
-  for (const row of rows) keys[row.setting_key] = row.setting_value;
-
-  // User_id 1 (original admin) falls back to env vars for backward compat
-  return {
-    exa: keys.api_key_exa || (userId === 1 ? process.env.EXA_API_KEY : null),
-    anthropic: keys.api_key_anthropic || (userId === 1 ? process.env.ANTHROPIC_API_KEY : null),
-    enrichlayer: keys.api_key_enrichlayer || (userId === 1 ? process.env.ENRICHLAYER_API_KEY : null),
-    github: keys.api_key_github || (userId === 1 ? process.env.GITHUB_TOKEN : null),
-  };
+  return require('../lib/providerKeys').loadUserApiKeys(userId);
 }
 
 async function runSourcingEngine({ fullSweep = false, userId = 1 } = {}) {
@@ -1511,6 +1491,7 @@ async function runSourcingEngine({ fullSweep = false, userId = 1 } = {}) {
 
   for (const search of searchGroup) {
     console.log(`[Sourcing][Exa] ${search.name}...`);
+    require('../lib/providerKeys').recordCost(userId, { provider: 'exa', feature: 'sourcing', estCostUsd: 0.005 });
     const { results, error } = await searchExa(search.query, resultsPerQuery, apiKeys.exa);
 
     if (error) {
@@ -1626,9 +1607,8 @@ async function runSourcingEngine({ fullSweep = false, userId = 1 } = {}) {
   console.log(`[Sourcing] ${uniqueCandidates.length} unique, new candidates to score`);
 
   // ── Phase 4: Claude scoring ──
-  const anthropic = apiKeys.anthropic ? (() => {
-    try { const Anthropic = require('@anthropic-ai/sdk'); return new Anthropic({ apiKey: apiKeys.anthropic }); } catch { return null; }
-  })() : getAnthropicClient();
+  // Metered + billed to the run's owner (apiKeys.anthropic is already owner-resolved).
+  const anthropic = require('../lib/providerKeys').meteredClient(apiKeys.anthropic, userId, 'sourcing');
   // LEARNING LOOP: build Danny's taste profile from his approve/star/dismiss history
   // and feed it into the scoring prompt. Affinity (computed per candidate below) then
   // nudges ranking among already-qualified founders.

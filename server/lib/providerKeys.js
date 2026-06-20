@@ -1,0 +1,201 @@
+/**
+ * providerKeys.js — single source of truth for "whose key pays for this call".
+ *
+ * RULE (the cost-shifting contract):
+ *   1. If the user has saved their own provider key in Settings, use it.
+ *   2. Otherwise, fall back to the platform env key ONLY if the user is the owner
+ *      (role 'admin', or the original user_id=1). Everyone else gets null — the
+ *      feature must surface a "configure your key" error rather than silently
+ *      billing the platform key.
+ *
+ * This used to be reimplemented inconsistently across routes, engines and services
+ * (some correctly owner-gated, some leaking the env key to every user). Centralizing
+ * it here closes those leaks and gives us one place to add metering + spend caps.
+ */
+const db = require('../db');
+const secrets = require('./secrets');
+
+const SETTING_BY_PROVIDER = {
+  anthropic: 'api_key_anthropic',
+  exa: 'api_key_exa',
+  github: 'api_key_github',
+  enrichlayer: 'api_key_enrichlayer',
+};
+const ENV_BY_PROVIDER = {
+  anthropic: 'ANTHROPIC_API_KEY',
+  exa: 'EXA_API_KEY',
+  github: 'GITHUB_TOKEN',
+  enrichlayer: 'ENRICHLAYER_API_KEY',
+};
+
+// Approx claude-sonnet-4 list price (USD/token). Used only for soft spend caps and
+// usage transparency — NOT an invoice. Cheap to keep roughly current.
+const PRICE = { input: 3 / 1e6, output: 15 / 1e6 };
+const DEFAULT_DAILY_CAP_USD = Number(process.env.DEFAULT_DAILY_SPEND_CAP_USD || 10);
+
+class SpendCapError extends Error {
+  constructor(message) { super(message); this.name = 'SpendCapError'; this.code = 'spend_cap_exceeded'; this.status = 402; }
+}
+
+function isOwner(userId) {
+  if (userId == null) return false;
+  if (Number(userId) === 1) return true; // original single-operator admin (back-compat)
+  try {
+    const u = db.prepare('SELECT role FROM users WHERE id = ?').get(userId);
+    return !!u && u.role === 'admin';
+  } catch { return false; }
+}
+
+// Decrypt + strip legacy JSON-quote wrapping + reject placeholders/empties.
+function normalize(value) {
+  if (value == null) return null;
+  let s = secrets.decrypt(value);
+  if (s == null) return null;
+  s = String(s).trim();
+  if (s.length >= 2 && s.startsWith('"') && s.endsWith('"')) s = s.slice(1, -1).trim();
+  if (!s || s === 'your-api-key-here') return null;
+  return s;
+}
+
+function readSetting(userId, settingKey) {
+  if (userId == null) return null;
+  try {
+    const row = db.prepare('SELECT setting_value FROM user_settings WHERE user_id = ? AND setting_key = ?').get(userId, settingKey);
+    return row ? row.setting_value : null;
+  } catch { return null; }
+}
+
+function readUserKey(userId, settingKey) {
+  return normalize(readSetting(userId, settingKey));
+}
+
+function resolveKey(userId, provider) {
+  const settingKey = SETTING_BY_PROVIDER[provider];
+  if (!settingKey) throw new Error(`Unknown provider: ${provider}`);
+  const userKey = readUserKey(userId, settingKey);
+  if (userKey) return userKey;
+  if (isOwner(userId)) {
+    const env = process.env[ENV_BY_PROVIDER[provider]];
+    return env && env.trim() ? env.trim() : null;
+  }
+  return null; // non-owner with no saved key → no silent fallback to the platform key
+}
+
+// Shape compatible with the engines' previous loadUserApiKeys() return value.
+function loadUserApiKeys(userId) {
+  return {
+    exa: resolveKey(userId, 'exa'),
+    anthropic: resolveKey(userId, 'anthropic'),
+    enrichlayer: resolveKey(userId, 'enrichlayer'),
+    github: resolveKey(userId, 'github'),
+  };
+}
+
+// ── Usage metering + soft daily spend cap (protects the user from runaway loops) ──
+
+function spentTodayUsd(userId) {
+  try {
+    const row = db.prepare(
+      "SELECT COALESCE(SUM(est_cost_usd), 0) AS c FROM usage_events WHERE user_id = ? AND created_at >= datetime('now', 'start of day')"
+    ).get(userId);
+    return row ? row.c : 0;
+  } catch { return 0; }
+}
+
+function dailyCapUsd(userId) {
+  if (isOwner(userId)) return Infinity; // the owner (Danny) is uncapped — it's his platform key
+  const raw = readUserKey(userId, 'spend_cap_daily_usd');
+  const n = raw == null ? NaN : Number(raw);
+  // Allow 0 (a hard stop). Only fall back to the default when unset/invalid.
+  return Number.isFinite(n) && n >= 0 ? n : DEFAULT_DAILY_CAP_USD;
+}
+
+function assertWithinBudget(userId) {
+  const cap = dailyCapUsd(userId);
+  if (cap === Infinity) return;
+  if (spentTodayUsd(userId) >= cap) {
+    throw new SpendCapError(`Daily spend cap reached ($${cap.toFixed(2)}). Raise it in Settings or wait until tomorrow.`);
+  }
+}
+
+// Record a flat-cost event for non-token providers (Exa, EnrichLayer) so their spend
+// counts toward the daily cap too. estCostUsd is a rough per-call estimate.
+function recordCost(userId, { provider, feature = null, estCostUsd = 0, count = 1 } = {}) {
+  try {
+    db.prepare(
+      'INSERT INTO usage_events (user_id, provider, feature, input_tokens, output_tokens, est_cost_usd) VALUES (?, ?, ?, 0, 0, ?)'
+    ).run(userId == null ? null : userId, provider, feature, estCostUsd * count);
+  } catch { /* metering must never break a request */ }
+}
+
+function recordUsage(userId, { provider = 'anthropic', feature = null, usage = null } = {}) {
+  try {
+    const inTok = (usage && usage.input_tokens) || 0;
+    const outTok = (usage && usage.output_tokens) || 0;
+    const cost = inTok * PRICE.input + outTok * PRICE.output;
+    db.prepare(
+      'INSERT INTO usage_events (user_id, provider, feature, input_tokens, output_tokens, est_cost_usd) VALUES (?, ?, ?, ?, ?, ?)'
+    ).run(userId == null ? null : userId, provider, feature, inTok, outTok, cost);
+  } catch { /* metering must never break a request */ }
+}
+
+// Wrap an Anthropic client so every call checks the caller's budget first and records
+// usage after. Each client is freshly constructed per call site, so mutating its
+// `messages` methods is safe (not shared across users).
+function meterClient(client, userId, feature) {
+  if (!client || !client.messages) return client;
+  const m = client.messages;
+  if (typeof m.create === 'function') {
+    const origCreate = m.create.bind(m);
+    m.create = async (...args) => {
+      assertWithinBudget(userId);
+      const res = await origCreate(...args);
+      recordUsage(userId, { feature, usage: res && res.usage });
+      return res;
+    };
+  }
+  if (typeof m.stream === 'function') {
+    const origStream = m.stream.bind(m);
+    m.stream = (...args) => {
+      assertWithinBudget(userId);
+      const stream = origStream(...args);
+      if (stream && typeof stream.finalMessage === 'function') {
+        stream.finalMessage()
+          .then(msg => recordUsage(userId, { feature, usage: msg && msg.usage }))
+          .catch(() => {});
+      }
+      return stream;
+    };
+  }
+  return client;
+}
+
+// Build a metered Anthropic client billed to `userId`. Returns null when no key is
+// available for this user (callers already handle null with a 503 / "configure key").
+function meteredClient(apiKey, userId, feature = null) {
+  if (!apiKey) return null;
+  try {
+    const Anthropic = require('@anthropic-ai/sdk');
+    return meterClient(new Anthropic({ apiKey }), userId, feature);
+  } catch { return null; }
+}
+
+function anthropicFor(userId, feature = null) {
+  return meteredClient(resolveKey(userId, 'anthropic'), userId, feature);
+}
+
+module.exports = {
+  isOwner,
+  resolveKey,
+  readUserKey,
+  loadUserApiKeys,
+  anthropicFor,
+  meteredClient,
+  recordUsage,
+  recordCost,
+  assertWithinBudget,
+  spentTodayUsd,
+  dailyCapUsd,
+  SpendCapError,
+  SETTING_BY_PROVIDER,
+};

@@ -244,6 +244,7 @@ export default function Settings() {
   const [anthropicTest, setAnthropicTest] = useState(null);
   const [apiKeyEnrichlayer, setApiKeyEnrichlayer] = useState('');
   const [apiKeyGithub, setApiKeyGithub] = useState('');
+  const [keysConfigured, setKeysConfigured] = useState({});
   const apiKeysSave = useSaveState();
 
   // Newsletter (Daily Brief) state
@@ -302,12 +303,24 @@ export default function Settings() {
         setDomains(settings.sourcing_domains || []);
         setStageFilter(settings.sourcing_stage_filter || 'Pre-seed');
         setCustomQueries(settings.sourcing_custom_queries || []);
-        setApiKeyExa(settings.api_key_exa || '');
-        setApiKeyAnthropic(settings.api_key_anthropic || '');
-        setApiKeyEnrichlayer(settings.api_key_enrichlayer || '');
-        setApiKeyGithub(settings.api_key_github || '');
+        // Secret keys come back as { configured: true } (or null) — never the value.
+        // Keep inputs empty (an empty field means "leave the saved key as-is") and track
+        // which are already configured so we can show a "saved" hint.
+        const asStr = (v) => (typeof v === 'string' ? v : '');
+        const isSet = (v) => (typeof v === 'string' ? !!v : !!(v && v.configured));
+        setApiKeyExa(asStr(settings.api_key_exa));
+        setApiKeyAnthropic(asStr(settings.api_key_anthropic));
+        setApiKeyEnrichlayer(asStr(settings.api_key_enrichlayer));
+        setApiKeyGithub(asStr(settings.api_key_github));
+        setKeysConfigured({
+          exa: isSet(settings.api_key_exa),
+          anthropic: isSet(settings.api_key_anthropic),
+          enrichlayer: isSet(settings.api_key_enrichlayer),
+          github: isSet(settings.api_key_github),
+          gmail: isSet(settings.newsletter_gmail_app_password),
+        });
         setGmailAddress(settings.newsletter_gmail_address || '');
-        setGmailAppPassword(settings.newsletter_gmail_app_password || '');
+        setGmailAppPassword(asStr(settings.newsletter_gmail_app_password));
         setNewsletterLabel(settings.newsletter_label || 'Stu/News');
         loadSources();
       } catch (err) {
@@ -395,22 +408,26 @@ export default function Settings() {
 
   async function saveApiKeys() {
     await apiKeysSave.doSave(async () => {
-      await Promise.all([
-        api.updateSetting('api_key_exa', apiKeyExa),
-        api.updateSetting('api_key_anthropic', apiKeyAnthropic),
-        api.updateSetting('api_key_enrichlayer', apiKeyEnrichlayer),
-        api.updateSetting('api_key_github', apiKeyGithub),
-      ]);
+      // Only update a key the user actually typed — an empty field keeps the saved key
+      // (we never receive it back, so blank must NOT overwrite it).
+      const puts = [];
+      if (apiKeyExa.trim()) puts.push(api.updateSetting('api_key_exa', apiKeyExa.trim()));
+      if (apiKeyAnthropic.trim()) puts.push(api.updateSetting('api_key_anthropic', apiKeyAnthropic.trim()));
+      if (apiKeyEnrichlayer.trim()) puts.push(api.updateSetting('api_key_enrichlayer', apiKeyEnrichlayer.trim()));
+      if (apiKeyGithub.trim()) puts.push(api.updateSetting('api_key_github', apiKeyGithub.trim()));
+      await Promise.all(puts);
     });
   }
 
   async function saveNewsletter() {
     await newsletterSave.doSave(async () => {
-      await Promise.all([
+      const puts = [
         api.updateSetting('newsletter_gmail_address', gmailAddress.trim()),
-        api.updateSetting('newsletter_gmail_app_password', gmailAppPassword.replace(/\s+/g, '')),
         api.updateSetting('newsletter_label', newsletterLabel.trim() || 'Stu/News'),
-      ]);
+      ];
+      // Same rule for the app password — only overwrite when a new one is entered.
+      if (gmailAppPassword.replace(/\s+/g, '')) puts.push(api.updateSetting('newsletter_gmail_app_password', gmailAppPassword.replace(/\s+/g, '')));
+      await Promise.all(puts);
     });
   }
 
@@ -435,6 +452,7 @@ export default function Settings() {
     { id: 'sourcing', label: 'Sourcing Criteria' },
     { id: 'newsletter', label: 'Newsletters' },
     { id: 'apikeys', label: 'API Keys' },
+    { id: 'mcp', label: 'API & MCP Access' },
   ];
 
   return (
@@ -705,7 +723,7 @@ export default function Settings() {
               </div>
               <div>
                 <label className="label">Gmail App Password</label>
-                <input type="password" className="input w-full" placeholder="16-character app password" autoComplete="new-password" value={gmailAppPassword} onChange={(e) => setGmailAppPassword(e.target.value)} />
+                <input type="password" className="input w-full" placeholder={keysConfigured.gmail ? 'Saved ✓ — leave blank to keep' : '16-character app password'} autoComplete="new-password" value={gmailAppPassword} onChange={(e) => setGmailAppPassword(e.target.value)} />
               </div>
               <div className="flex items-center">
                 <SaveButton onClick={saveNewsletter} saving={newsletterSave.saving} saved={newsletterSave.saved} />
@@ -745,7 +763,7 @@ export default function Settings() {
                   value={apiKeyExa}
                   onChange={(e) => setApiKeyExa(e.target.value)}
                   className="input w-full"
-                  placeholder="exa-..."
+                  placeholder={keysConfigured.exa ? 'Saved ✓ — leave blank to keep' : 'exa-...'}
                   autoComplete="off"
                 />
               </div>
@@ -767,7 +785,7 @@ export default function Settings() {
                   value={apiKeyAnthropic}
                   onChange={(e) => setApiKeyAnthropic(e.target.value)}
                   className="input w-full"
-                  placeholder="sk-ant-..."
+                  placeholder={keysConfigured.anthropic ? 'Saved ✓ — leave blank to keep' : 'sk-ant-...'}
                   autoComplete="off"
                 />
                 <div className="flex items-center gap-2 mt-2">
@@ -811,7 +829,7 @@ export default function Settings() {
                   value={apiKeyEnrichlayer}
                   onChange={(e) => setApiKeyEnrichlayer(e.target.value)}
                   className="input w-full"
-                  placeholder="el-..."
+                  placeholder={keysConfigured.enrichlayer ? 'Saved ✓ — leave blank to keep' : 'el-...'}
                   autoComplete="off"
                 />
               </div>
@@ -833,7 +851,7 @@ export default function Settings() {
                   value={apiKeyGithub}
                   onChange={(e) => setApiKeyGithub(e.target.value)}
                   className="input w-full"
-                  placeholder="ghp_..."
+                  placeholder={keysConfigured.github ? 'Saved ✓ — leave blank to keep' : 'ghp_...'}
                   autoComplete="off"
                 />
               </div>
@@ -862,6 +880,163 @@ export default function Settings() {
           )}
         </div>
       )}
+
+      {activeTab === 'mcp' && <McpAccessTab />}
+    </div>
+  );
+}
+
+// ── API & MCP Access tab ──
+// Lets a user connect their own agent (Claude Desktop, Cursor, scripts) to Stu's
+// Talent/Sourcing tools. Stu is free with an account; usage runs on the user's own keys.
+function McpAccessTab() {
+  const [info, setInfo] = useState(null);
+  const [tokens, setTokens] = useState([]);
+  const [label, setLabel] = useState('');
+  const [newToken, setNewToken] = useState(null);
+  const [copied, setCopied] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+
+  const load = useCallback(async () => {
+    try {
+      const [i, t] = await Promise.all([api.getMcpInfo(), api.getMcpTokens()]);
+      setInfo(i); setTokens(t);
+    } catch (e) { setErr(e.message || 'Failed to load'); }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const create = async () => {
+    setBusy(true); setErr(''); setNewToken(null);
+    try {
+      const t = await api.createMcpToken(label || 'My agent');
+      setNewToken(t.token); setLabel('');
+      await load();
+    } catch (e) { setErr(e.message || 'Failed to create token'); }
+    finally { setBusy(false); }
+  };
+  const revoke = async (id) => {
+    try { await api.revokeMcpToken(id); await load(); } catch (e) { setErr(e.message); }
+  };
+  const copy = (text) => {
+    try { navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch {}
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* What this is */}
+      <div className="card p-6">
+        <h2 className="text-sm font-semibold text-gray-900">Connect your agent to Stu</h2>
+        <p className="text-sm text-gray-600 mt-2 leading-relaxed">
+          Stu is free with an account. Connect Claude Desktop, Cursor, or any MCP client to
+          search your Talent candidates and sourced founders, filter by builder signals
+          (e.g. <span className="font-mono text-xs bg-gray-100 px-1 rounded">just_departed</span>),
+          and read your monitor alerts — straight from your own agent.
+        </p>
+        <div className="mt-4 grid sm:grid-cols-2 gap-3 text-sm">
+          <div className="bg-gray-50 rounded-lg p-3">
+            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">MCP endpoint</p>
+            <div className="flex items-center gap-2 mt-1">
+              <code className="text-xs text-gray-900 break-all">{info?.mcpUrl || '…'}</code>
+              {info?.mcpUrl && (
+                <button onClick={() => copy(info.mcpUrl)} className="text-xs text-blue-600 hover:underline flex-shrink-0">copy</button>
+              )}
+            </div>
+          </div>
+          <div className="bg-gray-50 rounded-lg p-3">
+            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Your keys, your cost</p>
+            <p className="text-xs text-gray-600 mt-1">
+              Search is free. Sourcing/AI run on the keys you add in the API Keys tab —
+              {info?.byok?.anthropic_configured
+                ? <span className="text-green-600"> Anthropic key detected.</span>
+                : <span className="text-amber-600"> add your Anthropic key to enable AI features.</span>}
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* Quick start prompts */}
+      {info?.quickStart?.length > 0 && (
+        <div className="card p-6">
+          <h2 className="text-sm font-semibold text-gray-900">Try these from your agent</h2>
+          <p className="text-sm text-gray-500 mt-1">Works even on a brand-new account — discovery pulls fresh people from the web.</p>
+          <div className="mt-3 space-y-2">
+            {info.quickStart.map((q, i) => (
+              <div key={i} className="flex items-start gap-2 bg-gray-50 rounded-lg p-3">
+                <span className="text-gray-300 text-sm">›</span>
+                <p className="text-sm text-gray-800">{q}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Tokens */}
+      <div className="card p-6">
+        <h2 className="text-sm font-semibold text-gray-900">Access tokens</h2>
+        <p className="text-sm text-gray-500 mt-1">A token authenticates your agent. Shown once — store it safely. Revoke anytime.</p>
+
+        <div className="flex gap-2 mt-4">
+          <input
+            value={label} onChange={(e) => setLabel(e.target.value)}
+            placeholder="Label (e.g. My laptop, Cursor)"
+            className="flex-1 px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900/10"
+          />
+          <button onClick={create} disabled={busy}
+            className="px-4 py-2 text-sm font-medium text-white bg-gray-900 rounded-lg hover:bg-gray-800 disabled:opacity-50">
+            {busy ? 'Creating…' : 'Create token'}
+          </button>
+        </div>
+
+        {newToken && (
+          <div className="mt-3 bg-green-50 border border-green-200 rounded-lg p-3">
+            <p className="text-xs font-medium text-green-900">Copy this now — it won't be shown again:</p>
+            <div className="flex items-center gap-2 mt-1">
+              <code className="text-xs text-green-900 break-all flex-1">{newToken}</code>
+              <button onClick={() => copy(newToken)} className="text-xs text-green-700 font-medium hover:underline flex-shrink-0">
+                {copied ? 'copied' : 'copy'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        <div className="mt-4 divide-y divide-gray-100">
+          {tokens.length === 0 && <p className="text-sm text-gray-400 py-3">No tokens yet.</p>}
+          {tokens.map(t => (
+            <div key={t.id} className="flex items-center justify-between py-3">
+              <div>
+                <p className="text-sm text-gray-900">{t.label || 'Untitled'}
+                  {t.revoked_at && <span className="ml-2 text-xs text-red-500">revoked</span>}</p>
+                <p className="text-xs text-gray-400">
+                  {t.scopes} · {t.last_used_at ? `last used ${new Date(t.last_used_at).toLocaleDateString()}` : 'never used'}
+                </p>
+              </div>
+              {!t.revoked_at && (
+                <button onClick={() => revoke(t.id)} className="text-xs text-red-600 hover:underline">Revoke</button>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* What your agent can do */}
+      {info && (
+        <div className="card p-6">
+          <h2 className="text-sm font-semibold text-gray-900">Builder-signal filters</h2>
+          <p className="text-sm text-gray-500 mt-1">Filter Talent & Sourcing by these high-signal profile types — in the app or from your agent.</p>
+          <div className="mt-3 grid sm:grid-cols-2 gap-2">
+            {(info.builderSignals || []).map(s => (
+              <div key={s.key} className="bg-gray-50 rounded-lg p-3">
+                <p className="text-sm font-medium text-gray-900">{s.label}
+                  <span className="ml-2 font-mono text-[11px] text-gray-400">{s.key}</span></p>
+                <p className="text-xs text-gray-600 mt-0.5 leading-snug">{s.description}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {err && <p className="text-sm text-red-600">{err}</p>}
     </div>
   );
 }

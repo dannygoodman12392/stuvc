@@ -58,6 +58,17 @@ router.get('/', (req, res) => {
 
   const orderBy = sort === 'newest' ? 'created_at DESC' : 'overall_score DESC, created_at DESC';
   const rows = db.prepare(`SELECT * FROM talent_candidates WHERE ${where} ORDER BY ${orderBy} LIMIT 500`).all(...params);
+
+  // Optional builder-signal filter (e.g. ?signals=just_departed,founder_factory_alum&signalMode=any).
+  if (req.query.signals) {
+    const { filterBySignals, VALID_SIGNAL_KEYS } = require('../../lib/builderSignals');
+    const types = String(req.query.signals).split(',').map(s => s.trim()).filter(k => VALID_SIGNAL_KEYS.includes(k));
+    if (types.length) {
+      const mode = req.query.signalMode === 'all' ? 'all' : 'any';
+      const filtered = filterBySignals(rows, { types, source: 'talent', mode });
+      return res.json(filtered.map(({ row, signals }) => ({ ...hydrate(row), matched_signals: signals })));
+    }
+  }
   res.json(rows.map(hydrate));
 });
 

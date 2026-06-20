@@ -1,17 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../db');
-
-function getAnthropicClient() {
-  try {
-    const apiKey = process.env.ANTHROPIC_API_KEY;
-    if (!apiKey) return null;
-    const Anthropic = require('@anthropic-ai/sdk');
-    return new Anthropic({ apiKey });
-  } catch {
-    return null;
-  }
-}
+const { anthropicFor } = require('../lib/providerKeys');
 
 // ── Tool definitions for Claude ──
 const TOOLS = [
@@ -475,8 +465,8 @@ function truncateToolResult(result) {
 
 // POST /api/stu/chat — tool-use powered chat
 router.post('/chat', async (req, res) => {
-  const client = getAnthropicClient();
-  if (!client) return res.status(503).json({ error: 'AI unavailable — configure ANTHROPIC_API_KEY' });
+  const client = anthropicFor(req.user.id, 'stu-chat');
+  if (!client) return res.status(503).json({ error: 'AI unavailable — add your Anthropic API key in Settings' });
 
   const { messages } = req.body;
   if (!messages || !messages.length) return res.status(400).json({ error: 'Messages required' });

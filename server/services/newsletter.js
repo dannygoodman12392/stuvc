@@ -15,7 +15,10 @@ const db = require('../db');
 function readSetting(userId, key) {
   const row = db.prepare('SELECT setting_value FROM user_settings WHERE user_id = ? AND setting_key = ?').get(userId, key);
   if (!row || row.setting_value == null) return null;
-  const v = row.setting_value;
+  // Sensitive settings (e.g. the Gmail app password) are encrypted at rest — decrypt
+  // before use, or this returns ciphertext. decrypt() passes plaintext through unchanged.
+  const v = require('../lib/secrets').decrypt(row.setting_value);
+  if (v == null) return null;
   // Strings are stored raw; objects as JSON. Return a trimmed string.
   try { const p = JSON.parse(v); return typeof p === 'string' ? p.trim() : (p ?? null); }
   catch { return String(v).trim(); }
@@ -31,13 +34,7 @@ function loadNewsletterConfig(userId) {
 }
 
 function getAnthropic(userId) {
-  try {
-    const keyRow = readSetting(userId, 'api_key_anthropic');
-    const apiKey = keyRow || (userId === 1 ? process.env.ANTHROPIC_API_KEY : null);
-    if (!apiKey) return null;
-    const Anthropic = require('@anthropic-ai/sdk');
-    return new Anthropic({ apiKey });
-  } catch { return null; }
+  return require('../lib/providerKeys').anthropicFor(userId, 'newsletter');
 }
 
 // ── Relevance ranking ──

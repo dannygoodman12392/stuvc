@@ -21,8 +21,13 @@ export function setToken(token) {
 }
 
 export function getUser() {
-  const raw = localStorage.getItem('stu_user');
-  return raw ? JSON.parse(raw) : null;
+  try {
+    const raw = localStorage.getItem('stu_user');
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    localStorage.removeItem('stu_user'); // corrupt value → clear, don't crash the app
+    return null;
+  }
 }
 
 export function setUser(user) {
@@ -49,7 +54,10 @@ async function request(path, options = {}) {
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: 'Request failed' }));
-    throw new Error(err.error || 'Request failed');
+    const e = new Error(err.error || 'Request failed');
+    if (err.code) e.code = err.code; // preserve backend codes (no_key, spend_cap_exceeded, …)
+    e.status = res.status;
+    throw e;
   }
 
   return res.json();
@@ -119,12 +127,6 @@ export const api = {
   getStewardOperator: (id) => request(`/assessments/${id}/steward-operator`),
   runStewardOperator: (id) => request(`/assessments/${id}/steward-operator`, { method: 'POST' }),
   pushAssessmentToNotion: (id) => request(`/assessments/${id}/push-to-notion`, { method: 'POST' }),
-
-  // Deal Room
-  getDeals: () => request('/deal-room'),
-  getDeal: (id) => request(`/deal-room/${id}`),
-  createDeal: (data) => request('/deal-room', { method: 'POST', body: JSON.stringify(data) }),
-  updateDeal: (id, data) => request(`/deal-room/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
 
   // Memos
   getMemos: (founderId) => request(`/memos/${founderId}`),
@@ -298,6 +300,26 @@ export const api = {
   purgeTalentTrash: (type, ids) => request('/talent/trash/purge', { method: 'POST', body: JSON.stringify({ type, ids }) }),
   emptyTalentTrash: () => request('/talent/trash/empty', { method: 'POST' }),
 
+  // MCP / API access
+  getMcpInfo: () => request('/mcp/info'),
+  getMcpTokens: () => request('/mcp/tokens'),
+  createMcpToken: (label, scopes) => request('/mcp/tokens', { method: 'POST', body: JSON.stringify({ label, scopes }) }),
+  revokeMcpToken: (id) => request(`/mcp/tokens/${id}`, { method: 'DELETE' }),
+
+  // Active discovery + outreach
+  discover: (data) => request('/discover', { method: 'POST', body: JSON.stringify(data) }),
+  draftOutreach: (data) => request('/outreach/draft', { method: 'POST', body: JSON.stringify(data) }),
+
+  // Signal monitors
+  getMonitorTypes: () => request('/monitors/types'),
+  getMonitors: () => request('/monitors'),
+  createMonitor: (data) => request('/monitors', { method: 'POST', body: JSON.stringify(data) }),
+  deleteMonitor: (id) => request(`/monitors/${id}`, { method: 'DELETE' }),
+  setMonitorEnabled: (id, enabled) => request(`/monitors/${id}`, { method: 'PATCH', body: JSON.stringify({ enabled }) }),
+  runMonitors: () => request('/monitors/run', { method: 'POST' }),
+  getMonitorHits: (params) => request('/monitors/hits?' + new URLSearchParams(params || {})),
+  dismissMonitorHit: (id) => request(`/monitors/hits/${id}/dismiss`, { method: 'POST' }),
+
   // Streaming chat (sidebar)
   chat: async function* (messages, context) {
     const token = getToken();
@@ -306,6 +328,12 @@ export const api = {
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
       body: JSON.stringify({ messages, context })
     });
+
+    if (res.status === 401) { setToken(null); setUser(null); window.location.href = '/login'; return; }
+    if (!res.ok || !res.body) {
+      const err = await res.json().catch(() => ({ error: 'Chat unavailable' }));
+      throw new Error(err.error || 'Chat unavailable');
+    }
 
     const reader = res.body.getReader();
     const decoder = new TextDecoder();

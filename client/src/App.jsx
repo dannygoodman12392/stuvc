@@ -13,13 +13,12 @@ import AddFounder from './pages/AddFounder';
 import Assess from './pages/Assess';
 import AssessmentDetail from './pages/AssessmentDetail';
 import AskStu from './pages/AskStu';
+import Discover from './pages/Discover';
 import Placeholder from './pages/Placeholder';
 import Settings from './pages/Settings';
 import Brief from './pages/Brief';
 import Releases from './pages/Releases';
 import Health from './pages/Health';
-import Payment from './pages/Payment';
-import PaymentSuccess from './pages/PaymentSuccess';
 import Admin from './pages/Admin';
 import TalentLayout from './components/TalentLayout';
 import TalentHome from './pages/talent/TalentHome';
@@ -84,6 +83,7 @@ function AppRoutes() {
       <Route path="/ask" element={<ProtectedRoute><AskStu /></ProtectedRoute>} />
       <Route path="/" element={user ? <ProtectedRoute><Home /></ProtectedRoute> : <Landing />} />
       <Route path="/pipeline" element={<ProtectedRoute><Pipeline /></ProtectedRoute>} />
+      <Route path="/discover" element={<ProtectedRoute><Discover /></ProtectedRoute>} />
       <Route path="/founders/new" element={<ProtectedRoute><AddFounder /></ProtectedRoute>} />
       <Route path="/founders/:id" element={<ProtectedRoute><FounderDetail /></ProtectedRoute>} />
       <Route path="/assess" element={<ProtectedRoute><Assess /></ProtectedRoute>} />

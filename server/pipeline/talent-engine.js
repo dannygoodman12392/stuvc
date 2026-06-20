@@ -67,21 +67,11 @@ function loadTalentCriteria(userId) {
   };
 }
 
+// Delegated to the central resolver. Previously this fell back to the platform env
+// keys for ANY user — which billed every tenant's talent run to the owner. The
+// resolver only falls back to env for the owner; other users must supply their own key.
 function loadUserApiKeys(userId) {
-  const rows = db.prepare(
-    "SELECT setting_key, setting_value FROM user_settings WHERE user_id = ? AND setting_key IN ('api_key_exa', 'api_key_anthropic', 'api_key_enrichlayer', 'api_key_github')"
-  ).all(userId);
-  const keys = {};
-  for (const row of rows) keys[row.setting_key] = row.setting_value;
-  // Single-operator app: the platform env keys are Danny's. Fall back to them for ANY user,
-  // not just user id 1 — otherwise a non-1 account's manual runs silently get no keys and
-  // abort before recording anything ("never run"). A user's own saved key still takes priority.
-  return {
-    exa: keys.api_key_exa || process.env.EXA_API_KEY || null,
-    anthropic: keys.api_key_anthropic || process.env.ANTHROPIC_API_KEY || null,
-    enrichlayer: keys.api_key_enrichlayer || process.env.ENRICHLAYER_API_KEY || null,
-    github: keys.api_key_github || process.env.GITHUB_TOKEN || null,
-  };
+  return require('../lib/providerKeys').loadUserApiKeys(userId);
 }
 
 // ── Role loader (for role-scoped sourcing) ──
@@ -915,13 +905,8 @@ async function runTalentEngine({ userId = 1, fullSweep = false, roleId = null } 
   const candidates = [];
 
   // Anthropic client — built early so the JD can drive the search, not just the scoring.
-  let anthropic = null;
-  if (apiKeys.anthropic) {
-    try {
-      const Anthropic = require('@anthropic-ai/sdk');
-      anthropic = new Anthropic({ apiKey: apiKeys.anthropic });
-    } catch {}
-  }
+  // Metered + billed to the run's owner (apiKeys.anthropic is already owner-resolved).
+  const anthropic = require('../lib/providerKeys').meteredClient(apiKeys.anthropic, userId, 'talent');
 
   const arch = getArchetype(roleScope, criteria);
   const isEngineering = arch.key === 'engineering';
@@ -942,6 +927,7 @@ async function runTalentEngine({ userId = 1, fullSweep = false, roleId = null } 
 
   const queryLog = [];
   for (const q of queries) {
+    require('../lib/providerKeys').recordCost(userId, { provider: 'exa', feature: 'talent', estCostUsd: 0.005 });
     const { results, error } = await searchExa(q.query, fullSweep ? 30 : 15, apiKeys.exa);
     queryLog.push({ q: q.name, n: error ? 0 : (results?.length || 0), err: error || null });
     if (error) { errors.push({ q: q.name, error }); continue; }

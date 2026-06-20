@@ -11,13 +11,7 @@ const { loadNewsletterConfig } = require('./newsletter');
 const { pickDailyClassic } = require('./brief-archive');
 
 function getAnthropic(userId) {
-  try {
-    const row = db.prepare("SELECT setting_value FROM user_settings WHERE user_id = ? AND setting_key = 'api_key_anthropic'").get(userId);
-    const apiKey = (row && row.setting_value) || (userId === 1 ? process.env.ANTHROPIC_API_KEY : null);
-    if (!apiKey) return null;
-    const Anthropic = require('@anthropic-ai/sdk');
-    return new Anthropic({ apiKey });
-  } catch { return null; }
+  return require('../lib/providerKeys').anthropicFor(userId, 'email-digest');
 }
 
 function todayStr() { return new Date().toISOString().slice(0, 10); }

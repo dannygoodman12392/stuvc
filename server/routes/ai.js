@@ -1,17 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../db');
-
-function getAnthropicClient() {
-  try {
-    const apiKey = process.env.ANTHROPIC_API_KEY;
-    if (!apiKey) return null;
-    const Anthropic = require('@anthropic-ai/sdk');
-    return new Anthropic({ apiKey });
-  } catch {
-    return null;
-  }
-}
+const { anthropicFor } = require('../lib/providerKeys');
 
 const DANNY_AI_SYSTEM = `You are Danny AI, the venture intelligence layer for Superior Studios, a Chicago-based pre-seed venture fund with ~$10M Fund I.
 
@@ -41,8 +31,8 @@ Never start a response with "Great question" or any sycophantic opener.`;
 
 // POST /api/ai/chat — streaming Danny AI
 router.post('/chat', async (req, res) => {
-  const client = getAnthropicClient();
-  if (!client) return res.status(503).json({ error: 'AI unavailable — configure ANTHROPIC_API_KEY' });
+  const client = anthropicFor(req.user.id, 'ai-chat');
+  if (!client) return res.status(503).json({ error: 'AI unavailable — add your Anthropic API key in Settings' });
 
   const { messages, context } = req.body;
   if (!messages || !messages.length) return res.status(400).json({ error: 'Messages required' });
@@ -86,8 +76,8 @@ router.post('/chat', async (req, res) => {
 
 // POST /api/ai/fit-score
 router.post('/fit-score', async (req, res) => {
-  const client = getAnthropicClient();
-  if (!client) return res.status(503).json({ error: 'AI unavailable' });
+  const client = anthropicFor(req.user.id, 'fit-score');
+  if (!client) return res.status(503).json({ error: 'AI unavailable — add your Anthropic API key in Settings' });
 
   const { founderId } = req.body;
   const founder = db.prepare('SELECT * FROM founders WHERE id = ? AND is_deleted = 0 AND created_by = ?').get(founderId, req.user.id);

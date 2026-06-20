@@ -45,6 +45,17 @@ router.get('/queue', (req, res) => {
       ? 'confidence_score DESC, created_at DESC'
       : `${caliberRank} DESC, COALESCE(affinity_score,0) DESC, confidence_score DESC, created_at DESC`;
   const founders = db.prepare(`SELECT * FROM sourced_founders WHERE ${where} ORDER BY ${sortCol}`).all(...params);
+
+  // Optional builder-signal filter (e.g. ?signals=just_departed,stealth_building&signalMode=any).
+  if (req.query.signals) {
+    const { filterBySignals, VALID_SIGNAL_KEYS } = require('../lib/builderSignals');
+    const types = String(req.query.signals).split(',').map(s => s.trim()).filter(k => VALID_SIGNAL_KEYS.includes(k));
+    if (types.length) {
+      const mode = req.query.signalMode === 'all' ? 'all' : 'any';
+      const filtered = filterBySignals(founders, { types, source: 'sourcing', mode });
+      return res.json(filtered.map(({ row, signals }) => ({ ...row, matched_signals: signals })));
+    }
+  }
   res.json(founders);
 });
 
@@ -166,6 +177,9 @@ router.post('/unstar/:id', (req, res) => {
 // Manual triggers always do a full sweep (all query groups, not just today's rotation)
 router.post('/run', async (req, res) => {
   try {
+    const { assertWithinBudget, SpendCapError } = require('../lib/providerKeys');
+    try { assertWithinBudget(req.user.id); }
+    catch (e) { if (e instanceof SpendCapError) return res.status(402).json({ error: e.message }); throw e; }
     const { runSourcingEngine } = require('../pipeline/sourcing-engine');
     const { recordJobRun } = require('../services/health');
     const uid = req.user.id;

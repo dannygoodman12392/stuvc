@@ -61,6 +61,9 @@ router.get('/stats', (req, res) => {
 // When role_id is provided, the engine scopes to that role (strict location + band).
 router.post('/run', async (req, res) => {
   try {
+    const { assertWithinBudget, SpendCapError } = require('../../lib/providerKeys');
+    try { assertWithinBudget(req.user.id); }
+    catch (e) { if (e instanceof SpendCapError) return res.status(402).json({ error: e.message }); throw e; }
     const { runTalentEngine } = require('../../pipeline/talent-engine');
     const roleId = req.body?.role_id ? parseInt(req.body.role_id) : null;
     runTalentEngine({ userId: req.user.id, fullSweep: !!req.body?.fullSweep, roleId })
@@ -75,6 +78,9 @@ router.post('/run', async (req, res) => {
 // POST /api/talent/sourcing/match — rescore matches for a role or all
 router.post('/match', async (req, res) => {
   try {
+    const { assertWithinBudget, SpendCapError } = require('../../lib/providerKeys');
+    try { assertWithinBudget(req.user.id); }
+    catch (e) { if (e instanceof SpendCapError) return res.status(402).json({ error: e.message }); throw e; }
     const { runMatchEngine } = require('../../pipeline/match-engine');
     const role_id = req.body?.role_id;
     const candidate_id = req.body?.candidate_id;

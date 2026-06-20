@@ -60,9 +60,9 @@ function detectPairs({ userId, windowDays = 90 }) {
   // Build co -> [row] index
   const byCo = new Map();
   for (const r of rows) {
-    const cos = r.previous_company_norm
-      ? JSON.parse(r.previous_company_norm)
-      : extractPrevCompanies(r);
+    let cos;
+    try { cos = r.previous_company_norm ? JSON.parse(r.previous_company_norm) : extractPrevCompanies(r); }
+    catch { cos = extractPrevCompanies(r); } // legacy non-JSON value → re-derive
     // Persist normalized prev-co back
     if (!r.previous_company_norm) {
       db.prepare('UPDATE sourced_founders SET previous_company_norm = ? WHERE id = ?').run(JSON.stringify(cos), r.id);

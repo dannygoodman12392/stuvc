@@ -21,11 +21,6 @@ function lastRun(job, userId = null) {
   return db.prepare('SELECT * FROM job_runs WHERE job = ? ORDER BY ran_at DESC LIMIT 1').get(job);
 }
 
-function readSetting(userId, key) {
-  const r = db.prepare('SELECT setting_value FROM user_settings WHERE user_id = ? AND setting_key = ?').get(userId, key);
-  return r ? r.setting_value : null;
-}
-
 function buildHealthReport(userId) {
   const checks = [];
   const add = (name, status, detail) => checks.push({ name, status, detail });
@@ -34,9 +29,10 @@ function buildHealthReport(userId) {
   try { db.prepare('SELECT 1 AS ok').get(); add('Database', 'green', 'SQLite connected'); }
   catch (e) { add('Database', 'red', e.message); }
 
-  // 2. API keys (env for user 1, or per-user settings)
-  const hasAnthropic = !!(readSetting(userId, 'api_key_anthropic') || (userId === 1 && process.env.ANTHROPIC_API_KEY));
-  const hasExa = !!(readSetting(userId, 'api_key_exa') || (userId === 1 && process.env.EXA_API_KEY));
+  // 2. API keys (user's own key, or the platform env key for the owner)
+  const { resolveKey } = require('../lib/providerKeys');
+  const hasAnthropic = !!resolveKey(userId, 'anthropic');
+  const hasExa = !!resolveKey(userId, 'exa');
   add('Claude API key', hasAnthropic ? 'green' : 'red', hasAnthropic ? 'configured' : 'missing — scoring/extraction will degrade');
   add('Exa API key (sourcing)', hasExa ? 'green' : 'yellow', hasExa ? 'configured' : 'missing — sourcing runs will no-op');
 

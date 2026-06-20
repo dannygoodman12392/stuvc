@@ -1,17 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../db');
-
-function getAnthropicClient() {
-  try {
-    const apiKey = process.env.ANTHROPIC_API_KEY;
-    if (!apiKey) return null;
-    const Anthropic = require('@anthropic-ai/sdk');
-    return new Anthropic({ apiKey });
-  } catch {
-    return null;
-  }
-}
+const { anthropicFor } = require('../lib/providerKeys');
 
 // GET /api/founders/:founderId/memos — list all memos for a founder
 router.get('/:founderId', (req, res) => {
@@ -23,8 +13,8 @@ router.get('/:founderId', (req, res) => {
 
 // POST /api/founders/:founderId/memos — generate a new IC memo
 router.post('/:founderId', async (req, res) => {
-  const client = getAnthropicClient();
-  if (!client) return res.status(503).json({ error: 'AI unavailable' });
+  const client = anthropicFor(req.user.id, 'memo');
+  if (!client) return res.status(503).json({ error: 'AI unavailable — add your Anthropic API key in Settings' });
 
   const founderId = parseInt(req.params.founderId);
   const founder = db.prepare('SELECT * FROM founders WHERE id = ? AND created_by = ? AND is_deleted = 0').get(founderId, req.user.id);

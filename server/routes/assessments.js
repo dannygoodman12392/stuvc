@@ -5,16 +5,7 @@ const db = require('../db');
 const runManager = require('../agents/runManager');
 const { fetchUrlContent } = require('../agents/urlFetcher');
 
-function getAnthropicClient() {
-  try {
-    const apiKey = process.env.ANTHROPIC_API_KEY;
-    if (!apiKey) return null;
-    const Anthropic = require('@anthropic-ai/sdk');
-    return new Anthropic({ apiKey });
-  } catch {
-    return null;
-  }
-}
+const { anthropicFor } = require('../lib/providerKeys');
 
 // ── GET /api/assessments — list all (only latest version per group) ──
 router.get('/', (req, res) => {
@@ -155,13 +146,20 @@ router.put('/:id', (req, res) => {
   const { founder_id, manual_notes } = req.body;
 
   if (founder_id !== undefined) {
-    db.prepare('UPDATE opportunity_assessments SET founder_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(founder_id || null, req.params.id);
+    // Only allow pointing at a founder the caller owns (no cross-tenant foreign keys).
+    let fid = founder_id ? parseInt(founder_id) : null;
+    if (fid) {
+      const owned = db.prepare('SELECT id FROM founders WHERE id = ? AND created_by = ? AND is_deleted = 0').get(fid, req.user.id);
+      if (!owned) return res.status(400).json({ error: 'founder_id not found or not yours' });
+    }
+    db.prepare('UPDATE opportunity_assessments SET founder_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(fid, req.params.id);
   }
 
   // Allow adding/editing notes on an existing assessment
   if (manual_notes !== undefined) {
     // Update the inputs JSON
-    const currentInputs = JSON.parse(assessment.inputs || '{}');
+    let currentInputs = {};
+    try { currentInputs = JSON.parse(assessment.inputs || '{}'); } catch { currentInputs = {}; }
     currentInputs.manual_notes = manual_notes;
     db.prepare('UPDATE opportunity_assessments SET inputs = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(JSON.stringify(currentInputs), req.params.id);
   }
@@ -436,15 +434,16 @@ async function processRerunInputs(newAssessmentId, oldAssessmentId, newInputs, f
 }
 
 async function runAssessmentAgents(assessmentId, founderId) {
-  const client = getAnthropicClient();
+  // Get assessment's owner — used both for scoped queries and to bill the run to
+  // the owner's Anthropic key (not the platform key).
+  const assessmentOwner = db.prepare('SELECT created_by FROM opportunity_assessments WHERE id = ?').get(assessmentId);
+  const ownerId = assessmentOwner?.created_by;
+
+  const client = anthropicFor(ownerId, 'assessment');
   if (!client) {
     db.prepare("UPDATE opportunity_assessments SET status = 'error' WHERE id = ?").run(assessmentId);
     return;
   }
-
-  // Get assessment's owner for scoped queries
-  const assessmentOwner = db.prepare('SELECT created_by FROM opportunity_assessments WHERE id = ?').get(assessmentId);
-  const ownerId = assessmentOwner?.created_by;
 
   const signal = runManager.register(assessmentId);
 
@@ -920,7 +919,7 @@ function buildContextFromInputs(assessmentId, founderId, ownerId) {
 }
 
 async function runStewardOperator(assessment, evaluationId) {
-  const client = getAnthropicClient();
+  const client = anthropicFor(assessment.created_by, 'steward-operator');
   if (!client) {
     db.prepare(
       "UPDATE steward_operator_evaluations SET status = 'error', error = 'No Anthropic client configured', completed_at = CURRENT_TIMESTAMP WHERE id = ?"

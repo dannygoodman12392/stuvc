@@ -133,7 +133,10 @@ function matchFilingsToCandidates({ userId }) {
     for (const c of candidates) {
       const cname = (c.company || '').toLowerCase();
       if (cname.length < 3) continue;
-      if (fname.includes(cname) || cname.includes(fname.split(' ')[0])) {
+      // Require a meaningful first-token match (>=4 chars) so short/common prefixes
+      // ("the", "new", a 3-char stub) don't false-link a filing to the wrong founder.
+      const fnameFirst = fname.split(' ')[0];
+      if (fname.includes(cname) || (fnameFirst.length >= 4 && cname.includes(fnameFirst))) {
         linkStmt.run(c.id, f.id);
         let bs = [];
         try { bs = JSON.parse(c.builder_signals || '[]'); } catch {}

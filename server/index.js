@@ -6,6 +6,19 @@ require('dotenv').config({ path: require('path').join(__dirname, '..', '.env'), 
 // causing ENETUNREACH. Force IPv4 globally so all outbound connections stay reachable.
 try { require('dns').setDefaultResultOrder('ipv4first'); } catch {}
 
+// ── Production safety guards ──
+// A known/default JWT secret in production means anyone can forge a token for any
+// user (including the owner, which unlocks the platform provider keys). Refuse to boot.
+if (process.env.NODE_ENV === 'production' && !process.env.JWT_SECRET) {
+  console.error('FATAL: JWT_SECRET must be set in production. Refusing to start.');
+  process.exit(1);
+}
+// Without SETTINGS_ENC_KEY, user-supplied provider keys are stored as plaintext. Tolerated
+// in dev, dangerous in a multi-tenant prod DB — warn loudly rather than fail.
+if (process.env.NODE_ENV === 'production' && !require('./lib/secrets').isConfigured()) {
+  console.warn('WARNING: SETTINGS_ENC_KEY is not set — stored provider credentials are NOT encrypted at rest.');
+}
+
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -209,8 +222,8 @@ app.use(cors({
   origin: (origin, cb) => {
     // Same-origin requests (no origin header) or production domain
     if (!origin || allowedOrigins.includes(origin)) return cb(null, true);
-    // Allow stu.vc and subdomains only
-    if (/^https?:\/\/(.*\.)?stu\.vc$/.test(origin)) return cb(null, true);
+    // Allow the production app over HTTPS only (no plaintext, no arbitrary subdomains).
+    if (/^https:\/\/(www\.|app\.)?stu\.vc$/.test(origin)) return cb(null, true);
     // Allow any localhost port in development
     if (process.env.NODE_ENV !== 'production' && /^http:\/\/localhost:\d+$/.test(origin)) return cb(null, true);
     cb(new Error('Not allowed by CORS'));
@@ -222,12 +235,30 @@ app.use(cors({
 const payments = require('./routes/payments');
 app.post('/api/payments/webhook', express.raw({ type: 'application/json' }), payments.webhook);
 
-app.use(express.json({ limit: '50mb' }));
+// Body parsing. Only the deck/import upload routes need large bodies — mount the 50MB
+// parser on those paths FIRST (it parses + sets req.body, so the small global parser
+// below no-ops for them). Everything else (incl. /mcp, /api/ai/chat) is capped at 2MB,
+// closing a 50MB memory/cost-amplification DoS surface on the LLM endpoints.
+app.use(['/api/assessments', '/api/import'], express.json({ limit: '50mb' }));
+app.use(express.json({ limit: '2mb' }));
 
 // Rate limiting
 app.use('/api', rateLimit({ windowMs: 15 * 60 * 1000, max: 200, standardHeaders: true, legacyHeaders: false }));
-app.use('/api/ai', rateLimit({ windowMs: 15 * 60 * 1000, max: 50, standardHeaders: true, legacyHeaders: false }));
+// LLM chat surfaces (ai.js + stu.js tool-loop) — frequency-cap separately from the global bucket.
+const aiLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 50, standardHeaders: true, legacyHeaders: false });
+app.use('/api/ai', aiLimiter);
+app.use('/api/stu', aiLimiter);
 app.use('/api/auth/register', rateLimit({ windowMs: 15 * 60 * 1000, max: 5, standardHeaders: true, legacyHeaders: false }));
+// The fan-out / discovery / LLM-spend endpoints are the most expensive (web-search fan-out
+// + many LLM calls, all billed to the user's key). Throttle hard, on top of the spend cap.
+const expensiveLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 10, standardHeaders: true, legacyHeaders: false });
+app.use('/api/talent/sourcing/run', expensiveLimiter);
+app.use('/api/talent/sourcing/match', expensiveLimiter);
+app.use('/api/sourcing/run', expensiveLimiter);
+app.use('/api/discover', expensiveLimiter);
+app.use('/api/outreach', expensiveLimiter);
+// monitor run + per-id run also trigger discovery — throttled inside routes/monitors.js
+// (both /run and /:id/run) since a prefix limiter can't match the :id form.
 
 // Public routes
 app.get('/api/health', (req, res) => res.json({
@@ -272,6 +303,17 @@ app.use('/api/import', requireAuth, require('./routes/import'));
 app.use('/api/talent', requireAuth, require('./routes/talent'));
 app.use('/api/newsletter', requireAuth, require('./routes/newsletter'));
 app.use('/api/home', requireAuth, require('./routes/home'));
+app.use('/api/mcp', requireAuth, require('./routes/mcp'));
+app.use('/api/monitors', requireAuth, require('./routes/monitors'));
+app.use('/api/discover', requireAuth, require('./routes/discover'));
+app.use('/api/outreach', requireAuth, require('./routes/outreach'));
+
+// MCP protocol endpoint (token-authed, NOT the web JWT) — mounted before the SPA
+// catch-all so it isn't swallowed by the static handler. Rate-limited on its own.
+require('./mcp/http').mountMcp(
+  app,
+  rateLimit({ windowMs: 15 * 60 * 1000, max: 120, standardHeaders: true, legacyHeaders: false })
+);
 
 // Serve static in production
 const clientDist = path.join(__dirname, '..', 'client', 'dist');
@@ -322,6 +364,23 @@ app.listen(PORT, () => {
       } catch (e) { console.error('[Cron][Newsletter] run failed:', e.message); }
     }, { timezone: 'America/Chicago' });
     console.log('Daily newsletter brief scheduled (6:00 AM CT)');
+  }
+
+  // Daily signal monitors — runs for any user with an enabled monitor. Local detection is
+  // deterministic (no key), so this is ungated like the newsletter brief; an ACTIVE monitor
+  // (config.active) additionally discovers from the web on the user's Exa key + spend cap
+  // (degrades gracefully if absent). Records new "X just happened" hits into monitor_hits.
+  {
+    const cron = require('node-cron');
+    cron.schedule('0 7 * * *', async () => {
+      console.log('[Cron] Running daily signal monitors...');
+      try {
+        const { runAllMonitors } = require('./pipeline/monitor-engine');
+        const r = await runAllMonitors();
+        console.log(`[Cron][Monitors] ${r.users} user(s), ${r.totalNew} new hit(s)`);
+      } catch (e) { console.error('[Cron][Monitors] run failed:', e.message); }
+    }, { timezone: 'America/Chicago' });
+    console.log('Daily signal monitors scheduled (7:00 AM CT)');
   }
 
   // Daily sourcing cron — runs at 6:00 AM CT (12:00 UTC in CDT / 12:00 UTC in CST).
