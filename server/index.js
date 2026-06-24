@@ -305,6 +305,7 @@ app.use('/api/newsletter', requireAuth, require('./routes/newsletter'));
 app.use('/api/home', requireAuth, require('./routes/home'));
 app.use('/api/mcp', requireAuth, require('./routes/mcp'));
 app.use('/api/monitors', requireAuth, require('./routes/monitors'));
+app.use('/api/sources', requireAuth, require('./routes/sources'));
 app.use('/api/discover', requireAuth, require('./routes/discover'));
 app.use('/api/outreach', requireAuth, require('./routes/outreach'));
 
@@ -381,6 +382,22 @@ app.listen(PORT, () => {
       } catch (e) { console.error('[Cron][Monitors] run failed:', e.message); }
     }, { timezone: 'America/Chicago' });
     console.log('Daily signal monitors scheduled (7:00 AM CT)');
+  }
+
+  // Daily early-signal sources — pulls USPTO trademarks (and future connectors) for the
+  // owner, geo-filtered to their Chicago/IL criteria, into the sourced queue. Connectors
+  // without a configured key (e.g. USPTO until USPTO_API_KEY is set) no-op harmlessly.
+  {
+    const cron = require('node-cron');
+    cron.schedule('30 11 * * *', async () => {
+      console.log('[Cron] Running early-signal sources...');
+      try {
+        const { ingestAll } = require('./pipeline/sources');
+        const r = await ingestAll({ userId: 1 });
+        console.log('[Cron][Sources]', JSON.stringify(r.map(x => ({ s: x.source, kept: x.geoKept, saved: x.persisted, err: x.error }))));
+      } catch (e) { console.error('[Cron][Sources] failed:', e.message); }
+    }, { timezone: 'America/Chicago' });
+    console.log('Daily early-signal sources scheduled (11:30 AM CT)');
   }
 
   // Daily sourcing cron — runs at 6:00 AM CT (12:00 UTC in CDT / 12:00 UTC in CST).

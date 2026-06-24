@@ -127,6 +127,32 @@ try {
   ok('encrypted gmail app password decrypts for the IMAP consumer',
     loadNewsletterConfig(2).appPassword === 'apppass1234'); // spaces stripped by the loader
 
+  // 13. (P1) SourceConnector framework: geo-filter honors the user's criteria.
+  const srcSources = require('../pipeline/sources');
+  srcSources.register({
+    key: 'mock_src', label: 'Mock', emits: 'trademark_filing', free: true, cadence: 'daily',
+    async fetch() {
+      return [
+        { name: 'IL Founder', entity_name: 'IL Co', location_city: 'Chicago', location_state: 'IL', evidence: 'Filed trademark "IL Co"', url: 'http://x/1' },
+        { name: 'SF Founder', entity_name: 'SF Co', location_city: 'San Francisco', location_state: 'CA', evidence: 'Filed trademark "SF Co"', url: 'http://x/2' },
+      ];
+    },
+  });
+  // Dedicated user 4 with Chicago/IL criteria (keep user 2 in broad mode for the
+  // discovery tests below). Ingest with enrich off — no key needed.
+  db.prepare("INSERT OR IGNORE INTO users (id,email,name,role,password_hash) VALUES (4,'il@x.com','IL','member','h')").run();
+  db.prepare("INSERT OR REPLACE INTO user_settings (user_id, setting_key, setting_value) VALUES (4, 'sourcing_locations', ?)").run(JSON.stringify(['chicago', 'illinois']));
+  const ing = await srcSources.ingest('mock_src', { userId: 4, enrich: false });
+  ok('source ingest geo-filters to IL (1 of 2 kept)', ing.geoKept === 1 && ing.persisted === 1);
+  const savedSrc = db.prepare("SELECT name, source, builder_signals, chicago_connection FROM sourced_founders WHERE user_id = 4 AND source = 'mock_src'").all();
+  ok('persisted the IL record with the connector signal + tie',
+    savedSrc.length === 1 && savedSrc[0].name === 'IL Founder' && savedSrc[0].builder_signals.includes('trademark_filing') && !!savedSrc[0].chicago_connection);
+
+  // 14. (P1) broad mode (no criteria) passes everyone — user 3 with no locations set.
+  db.prepare("INSERT OR IGNORE INTO users (id,email,name,role,password_hash) VALUES (3,'open@x.com','Open','member','h')").run();
+  const ingOpen = await srcSources.ingest('mock_src', { userId: 3, enrich: false });
+  ok('broad mode keeps both records', ingOpen.geoKept === 2);
+
   // 13. (Phase 4) active discovery — find NEW people from the web (mocked Exa, no network)
   const { discover, NoKeyError } = require('../pipeline/discovery-engine');
   const fakeExa = async () => ({ results: [

@@ -17,6 +17,7 @@ const https = require('https');
 const db = require('./../db');
 const { resolveKey, assertWithinBudget, recordCost, SpendCapError } = require('../lib/providerKeys');
 const { detectSignals, VALID_SIGNAL_KEYS, UNICORN_FACTORIES } = require('../lib/builderSignals');
+const { userGeoCriteria, geoFilter, locationQueryHint } = require('../lib/geoFilter');
 
 class NoKeyError extends Error {
   constructor(provider) { super(`No ${provider} key configured. Add it in Settings to discover new people — it bills your account, not the platform.`); this.code = 'no_key'; this.provider = provider; this.status = 400; }
@@ -120,9 +121,9 @@ function persistMatch(userId, target, p) {
     ).run(userId, p.name, p.headline, p.company || null, p.role || null, p.linkedin_url, p.website_url, signalKeys, p.unicorn_score ?? null, enrichment, p.why || null).lastInsertRowid;
   }
   return db.prepare(
-    `INSERT INTO sourced_founders (user_id, name, company, role, headline, linkedin_url, website_url, source, status, builder_signals, signal_captured_at, unicorn_score, enrichment, company_one_liner)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 'discovery', 'pending', ?, CURRENT_TIMESTAMP, ?, ?, ?)`
-  ).run(userId, p.name, p.company || null, p.role || null, p.headline, p.linkedin_url, p.website_url, signalKeys, p.unicorn_score ?? null, enrichment, p.why || null).lastInsertRowid;
+    `INSERT INTO sourced_founders (user_id, name, company, role, headline, linkedin_url, website_url, source, status, builder_signals, signal_captured_at, unicorn_score, enrichment, company_one_liner, chicago_connection)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'discovery', 'pending', ?, CURRENT_TIMESTAMP, ?, ?, ?, ?)`
+  ).run(userId, p.name, p.company || null, p.role || null, p.headline, p.linkedin_url, p.website_url, signalKeys, p.unicorn_score ?? null, enrichment, p.why || null, p.chicago_connection || null).lastInsertRowid;
 }
 
 // Main entry. Returns { matched: [...], scanned, persisted, queries }.
@@ -133,7 +134,10 @@ async function discover({ userId, signals = [], query = '', limit = 25, persist 
   if (!exaKey) throw new NoKeyError('Exa');
 
   const types = signals.filter(s => VALID_SIGNAL_KEYS.includes(s));
-  const queries = buildQueries(types, query, opts);
+  // Honor the user's location criteria: bias the web queries toward their locations
+  // (for you, Chicago/IL), then hard-filter results below. No preference set = open.
+  const criteria = userGeoCriteria(userId);
+  const queries = buildQueries(types, (query + locationQueryHint(criteria)).trim(), opts);
   const exaSearch = deps.exaSearch || realExaSearch;
 
   // Run the queries in parallel (fan-out is the slow part) and flatten.
@@ -161,7 +165,10 @@ async function discover({ userId, signals = [], query = '', limit = 25, persist 
     matched.push({ ...p, matched_signals: sigs, confidence: sigs[0].confidence });
   }
   matched.sort((a, b) => b.confidence - a.confidence);
-  let top = matched.slice(0, limit);
+  // Geo-gate to the user's criteria BEFORE enrichment (so we never spend the LLM key
+  // scoring someone we'd drop). Owner = verified IL tie required; no preference = all pass.
+  const geoMatched = geoFilter(matched, criteria);
+  let top = geoMatched.slice(0, limit);
 
   // Analyst-grade enrichment: clean fields + 1-line "why" + 0-100 unicorn score, ranked.
   // Degrades to the deterministic signal output if the user has no Anthropic key.

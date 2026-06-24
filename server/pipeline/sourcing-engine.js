@@ -1835,4 +1835,5 @@ module.exports = {
   isPlausiblePersonName,
   verbatimIn,
   verifyTieEvidence,
+  loadUserCriteria,
 };
