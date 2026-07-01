@@ -404,6 +404,21 @@ app.listen(PORT, () => {
     console.log('Daily early-signal sources scheduled (11:30 AM CT)');
   }
 
+  // Weekly founder digest — Friday 7:00 AM CT. Emails the week's top under-the-radar
+  // (pre-program / high-breakout) IL founders. Reuses the Daily Brief Gmail config.
+  {
+    const cron = require('node-cron');
+    cron.schedule('0 7 * * 5', async () => {
+      console.log('[Cron] Sending weekly founder digest...');
+      try {
+        const { sendFounderDigest } = require('./services/founder-digest');
+        const r = await sendFounderDigest(1, {});
+        console.log('[Cron][FounderDigest]', JSON.stringify(r));
+      } catch (e) { console.error('[Cron][FounderDigest] failed:', e.message); }
+    }, { timezone: 'America/Chicago' });
+    console.log('Weekly founder digest scheduled (Fri 7:00 AM CT)');
+  }
+
   // Daily sourcing cron — runs at 6:00 AM CT (12:00 UTC in CDT / 12:00 UTC in CST).
   // Self-activating: we schedule whenever the pipeline can actually do work — i.e. the
   // keys that power it (Exa for discovery + Anthropic for scoring) are present in the

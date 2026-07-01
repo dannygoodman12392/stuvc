@@ -237,6 +237,15 @@ router.post('/run', async (req, res) => {
   }
 });
 
+// POST /api/sourcing/digest — send the weekly founder digest now (on-demand / test).
+router.post('/digest', async (req, res) => {
+  try {
+    const { sendFounderDigest } = require('../services/founder-digest');
+    const r = await sendFounderDigest(req.user.id, { force: true });
+    res.status(r.ok ? 200 : 400).json(r);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // GET /api/sourcing/stats — enhanced stats
 router.get('/stats', (req, res) => {
   // Counts that feed VISIBLE surfaces (pending inbox, starred) honor the tie rule so the
