@@ -32,6 +32,7 @@ const STATUS_COLORS = {
 
 // Sift filters for the Sourced inbox.
 const SOURCE_LABELS = {
+  pre_program: 'Breakout Radar (pre-program)',
   yc_directory: 'Y Combinator', a16z_speedrun: 'a16z Speedrun', il_school_discovery: 'Illinois school founders', z_fellows: 'Z Fellows',
   neo_scholars: 'Neo', thiel_fellows: 'Thiel Fellows', the_residency: 'The Residency',
   emergent_ventures: 'Emergent Ventures', uspto_trademark: 'Trademark filings', discovery: 'Web discovery',
@@ -61,7 +62,7 @@ export default function Pipeline() {
   const [sourcedStarred, setSourcedStarred] = useState([]);
   const [stats, setStats] = useState(null);
   const [sourcingStats, setSourcingStats] = useState(null);
-  const [filter, setFilter] = useState({ status: '', search: '', minScore: '', caliber: '', source: [], tieType: [], school: '', scope: 'pipeline' });
+  const [filter, setFilter] = useState({ status: '', search: '', minScore: '', caliber: '', source: [], tieType: [], school: '', scope: 'pipeline', sort: '' });
   const [loading, setLoading] = useState(true);
   const [viewMode, setViewMode] = useState(() => localStorage.getItem('pipeline_view') || 'list');
   const [sourcingRunning, setSourcingRunning] = useState(false);
@@ -139,6 +140,7 @@ export default function Pipeline() {
         if (filter.tieType?.length) params.tieType = filter.tieType.join(',');
         if (filter.school) params.school = filter.school;
         if (filter.scope && filter.scope !== 'pipeline') params.scope = filter.scope;
+        if (filter.sort) params.sort = filter.sort;
         const [q, starred, ss, s] = await Promise.all([
           api.getSourcingQueue(params),
           api.getSourcingStarred(),
@@ -426,6 +428,8 @@ function InboxTab({ queue, starred, stats, loading, onApprove, onDismiss, onHide
           options={[{ value: 'all', label: 'All tiers' }, { value: 'S', label: 'S only' }, { value: 'A', label: 'A & above' }, { value: 'B', label: 'B & above' }]} />
         <FilterSelect label="Fit" value={filter.minScore || 'all'} onChange={(v) => setFilter(f => ({ ...f, minScore: v === 'all' ? '' : v }))}
           options={[{ value: 'all', label: 'Any fit' }, { value: '8', label: '8+ (high conviction)' }, { value: '6', label: '6+ (worth a look)' }]} />
+        <FilterSelect label="Sort" value={filter.sort || 'best'} onChange={(v) => setFilter(f => ({ ...f, sort: v === 'best' ? '' : v }))}
+          options={[{ value: 'best', label: 'Best (caliber)' }, { value: 'breakout', label: 'Breakout pedigree' }, { value: 'fit', label: 'Fit' }, { value: 'newest', label: 'Newest' }]} />
         {starred.length > 0 && (
           <FilterSelect label="View" value="pending" onChange={() => {}} options={[{ value: 'pending', label: `Pending (${queue.length})` }, { value: 'starred', label: `Starred (${starred.length})` }]} />
         )}

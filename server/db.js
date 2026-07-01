@@ -875,6 +875,12 @@ db.exec(`CREATE TABLE IF NOT EXISTS yc_resolved (slug TEXT PRIMARY KEY, resolved
 addColumn('sourced_founders', 'linkedin_enriched_at', 'DATETIME');
 addColumn('sourced_founders', 'linkedin_data', 'TEXT');
 
+// Breakout pedigree score (0-100) + the evidence signals behind it. Computed for every sourced
+// founder so any view can sort by "who looks most like a breakout / future top-program admit".
+addColumn('sourced_founders', 'breakout_score', 'INTEGER');
+addColumn('sourced_founders', 'breakout_signals', 'TEXT');
+db.exec(`CREATE INDEX IF NOT EXISTS idx_sf_breakout ON sourced_founders(user_id, breakout_score);`);
+
 // ── Newsletter / Daily Brief ──
 // One row per extracted newsletter issue. Stu reads a Gmail label over IMAP, extracts
 // the key points with Claude, and ranks each issue by relevance to the user's pipeline.

@@ -13,6 +13,7 @@
  */
 const db = require('../../db');
 const { userGeoCriteria, geoPartition, hasPreference } = require('../../lib/geoFilter');
+const { breakoutScore } = require('../../lib/breakoutScore');
 const { loadUserApiKeys, assertWithinBudget } = require('../../lib/providerKeys');
 
 const REGISTRY = {};
@@ -78,8 +79,8 @@ async function ingest(key, { userId, since = null, enrich = true, persist = true
   let persisted = 0, watchlisted = 0;
   if (persist) {
     const insert = db.prepare(`INSERT INTO sourced_founders
-      (user_id, name, company, role, headline, linkedin_url, website_url, source, status, builder_signals, signal_captured_at, unicorn_score, enrichment, company_one_liner, chicago_connection, location_type, list_scope)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, CURRENT_TIMESTAMP, ?, ?, ?, ?, ?, ?)`);
+      (user_id, name, company, role, headline, linkedin_url, website_url, source, status, builder_signals, signal_captured_at, unicorn_score, enrichment, company_one_liner, chicago_connection, location_type, list_scope, breakout_score, breakout_signals)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, CURRENT_TIMESTAMP, ?, ?, ?, ?, ?, ?, ?, ?)`);
     const byLinkedin = db.prepare('SELECT id FROM sourced_founders WHERE user_id = ? AND LOWER(linkedin_url) = LOWER(?)');
     const byWebsite = db.prepare('SELECT id FROM sourced_founders WHERE user_id = ? AND LOWER(website_url) = LOWER(?)');
     const byIdentity = db.prepare("SELECT id FROM sourced_founders WHERE user_id = ? AND source = ? AND LOWER(name) = LOWER(?) AND LOWER(IFNULL(company,'')) = LOWER(?)");
@@ -97,9 +98,12 @@ async function ingest(key, { userId, since = null, enrich = true, persist = true
           // location_type is what the Pipeline/queue display filter reads (VALID_TIE_TYPES);
           // write the verified IL tie type so IL-tied cohort/YC founders actually surface.
           const tieType = (p.tie && p.tie.type && p.tie.type !== 'broad') ? p.tie.type : null;
+          // Breakout pedigree score from everything we know about the person (bio/headline/company).
+          const bk = breakoutScore([p.headline, p.bio, p.evidence, p._evidence, p.company, p.summary].filter(Boolean).join(' '));
           insert.run(userId, p.name || p.company || 'Unknown', p.company || null, p.role || null, p.headline || null,
             p.linkedin_url || null, p.website_url || null, c.key, JSON.stringify([c.emits]),
-            p.unicorn_score ?? null, enr, p.why || null, p.chicago_connection || null, tieType, scope);
+            p.unicorn_score ?? null, enr, p.why || null, p.chicago_connection || null, tieType, scope,
+            bk.score, JSON.stringify(bk.signals));
           n++;
         } catch { /* skip dupes/bad rows */ }
       }
@@ -128,6 +132,7 @@ register(require('./uspto-trademark'));
 register(require('./yc-directory'));
 register(require('./a16z-speedrun')); // directory-based (structured API), like YC
 register(require('./il-school-discovery')); // highest-yield IL source: school-anchored search
+register(require('./pre-program-discovery')); // Breakout Radar: elite pedigree, no program tag yet
 for (const c of require('./cohort-rosters').connectors) register(c);
 
 module.exports = { register, get, list, ingest, ingestAll, REGISTRY };

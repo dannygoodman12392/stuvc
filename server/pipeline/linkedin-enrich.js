@@ -17,6 +17,7 @@ const https = require('https');
 const db = require('../db');
 const { userGeoCriteria } = require('../lib/geoFilter');
 const { verifyLocation } = require('./sourcing-engine');
+const { breakoutScore } = require('../lib/breakoutScore');
 
 let resolveKey, recordCost;
 try { ({ resolveKey, recordCost } = require('../lib/providerKeys')); } catch { resolveKey = () => null; recordCost = () => {}; }
@@ -88,6 +89,7 @@ async function runLinkedInEnrichment({ userId = 1, limit = 25, deps = {} } = {})
   const markEnriched = db.prepare("UPDATE sourced_founders SET linkedin_enriched_at = CURRENT_TIMESTAMP, linkedin_data = ? WHERE id = ?");
   const promote = db.prepare("UPDATE sourced_founders SET list_scope = 'pipeline', location_type = ?, chicago_connection = ? WHERE id = ?");
   const flag = db.prepare("UPDATE sourced_founders SET red_flags = ? WHERE id = ?");
+  const rescore = db.prepare("UPDATE sourced_founders SET breakout_score = ?, breakout_signals = ? WHERE id = ?");
 
   let enriched = 0, promoted = 0, flagged = 0;
   for (const r of rows) {
@@ -97,6 +99,13 @@ async function runLinkedInEnrichment({ userId = 1, limit = 25, deps = {} } = {})
     if (userId != null) recordCost(userId, { provider: 'enrichlayer', feature: 'linkedin-enrich', estCostUsd: 0.01 });
     if (!profile) continue;
     const a = assessProfile(profile, criteria);
+    // Sharpen the breakout score with the real LinkedIn data (prior companies + schools).
+    try {
+      const exps = (profile.experiences || []).map(e => e && (e.company || e.company_name)).filter(Boolean);
+      const blob = `${profile.headline || ''} ${profile.summary || ''} ${a.title || ''} ${exps.join(' ')} ${(a.schools || []).join(' ')}`;
+      const bk = breakoutScore(blob);
+      rescore.run(bk.score, JSON.stringify(bk.signals), r.id);
+    } catch { /* keep the persist-time score */ }
     if (a.tie && a.tie.verified && a.tie.type !== 'broad' && r.list_scope === 'watchlist') {
       promote.run(a.tie.type, `${a.tie.type}: ${a.tie.location}`, r.id);
       promoted++;

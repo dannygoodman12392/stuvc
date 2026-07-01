@@ -76,7 +76,9 @@ router.get('/queue', (req, res) => {
     ? 'created_at DESC'
     : sort === 'fit'
       ? 'confidence_score DESC, created_at DESC'
-      : `${caliberRank} DESC, COALESCE(affinity_score,0) DESC, confidence_score DESC, created_at DESC`;
+      : sort === 'breakout'
+        ? 'COALESCE(breakout_score, 0) DESC, created_at DESC'
+        : `${caliberRank} DESC, COALESCE(affinity_score,0) DESC, confidence_score DESC, created_at DESC`;
   const founders = db.prepare(`SELECT * FROM sourced_founders WHERE ${where} ORDER BY ${sortCol}`).all(...params);
 
   // Optional builder-signal filter (e.g. ?signals=just_departed,stealth_building&signalMode=any).
