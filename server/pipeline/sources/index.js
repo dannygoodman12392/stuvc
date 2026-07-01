@@ -78,8 +78,8 @@ async function ingest(key, { userId, since = null, enrich = true, persist = true
   let persisted = 0, watchlisted = 0;
   if (persist) {
     const insert = db.prepare(`INSERT INTO sourced_founders
-      (user_id, name, company, role, headline, linkedin_url, website_url, source, status, builder_signals, signal_captured_at, unicorn_score, enrichment, company_one_liner, chicago_connection, list_scope)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, CURRENT_TIMESTAMP, ?, ?, ?, ?, ?)`);
+      (user_id, name, company, role, headline, linkedin_url, website_url, source, status, builder_signals, signal_captured_at, unicorn_score, enrichment, company_one_liner, chicago_connection, location_type, list_scope)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, CURRENT_TIMESTAMP, ?, ?, ?, ?, ?, ?)`);
     const byLinkedin = db.prepare('SELECT id FROM sourced_founders WHERE user_id = ? AND LOWER(linkedin_url) = LOWER(?)');
     const byWebsite = db.prepare('SELECT id FROM sourced_founders WHERE user_id = ? AND LOWER(website_url) = LOWER(?)');
     const byIdentity = db.prepare("SELECT id FROM sourced_founders WHERE user_id = ? AND source = ? AND LOWER(name) = LOWER(?) AND LOWER(IFNULL(company,'')) = LOWER(?)");
@@ -94,9 +94,12 @@ async function ingest(key, { userId, since = null, enrich = true, persist = true
         try {
           if (isDupe(p)) continue;
           const enr = JSON.stringify({ summary: p.summary || null, why: p.why || null, contactability: p.contactability || null, evidence: p._evidence || null });
+          // location_type is what the Pipeline/queue display filter reads (VALID_TIE_TYPES);
+          // write the verified IL tie type so IL-tied cohort/YC founders actually surface.
+          const tieType = (p.tie && p.tie.type && p.tie.type !== 'broad') ? p.tie.type : null;
           insert.run(userId, p.name || p.company || 'Unknown', p.company || null, p.role || null, p.headline || null,
             p.linkedin_url || null, p.website_url || null, c.key, JSON.stringify([c.emits]),
-            p.unicorn_score ?? null, enr, p.why || null, p.chicago_connection || null, scope);
+            p.unicorn_score ?? null, enr, p.why || null, p.chicago_connection || null, tieType, scope);
           n++;
         } catch { /* skip dupes/bad rows */ }
       }
