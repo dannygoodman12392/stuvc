@@ -127,6 +127,36 @@ test('YC fetch resolves founders from company pages (mocked)', async () => {
   assert.ok(out.find(r => /UChicago/.test(r.bio)), 'founder bio flows into the record');
 });
 
+// ── a16z Speedrun connector (directory-based, founder-level) ──
+const speedrun = require('../pipeline/sources/a16z-speedrun');
+
+test('Speedrun normalizeFounder maps a company+founder to a founder record', () => {
+  const company = { name: 'Concorda', slug: 'concorda', cohort: 'SR006', city: 'Chicago', state: 'Illinois', description: 'Litigation tech.' };
+  const f = { first_name: 'Ke', last_name: 'Ma', slug: 'ke-ma', title: 'CEO', introduction: 'Ex-litigator, UChicago.', linkedin_url: 'https://linkedin.com/in/kema' };
+  const r = speedrun.normalizeFounder(company, f);
+  assert.equal(r.name, 'Ke Ma');
+  assert.equal(r.entity_name, null);
+  assert.equal(r.company, 'Concorda');
+  assert.equal(r.location_state, 'Illinois');
+  assert.match(r.bio, /UChicago/);
+  assert.match(r.headline, /Speedrun SR006/);
+  assert.equal(r.linkedin_url, 'https://linkedin.com/in/kema');
+});
+
+test('Speedrun fetchAll extracts founders, filters cohorts, follows pagination', async () => {
+  const page1 = { next: 'PAGE2', results: [
+    { name: 'Old', cohort: 'SR001', city: 'NYC', founder_set: [{ first_name: 'Old', last_name: 'Timer', title: 'CEO' }] },
+    { name: 'Concorda', cohort: 'SR006', city: 'Chicago', state: 'Illinois', founder_set: [
+      { first_name: 'Ke', last_name: 'Ma', title: 'CEO', introduction: 'UChicago' },
+      { first_name: 'Sam', last_name: 'Oh', title: 'CTO', introduction: 'UChicago' } ] } ] };
+  const page2 = { next: null, results: [{ name: 'NewCo', cohort: 'SR006', city: 'SF', founder_set: [{ first_name: 'Nat', last_name: 'Ional', title: 'Founder' }] }] };
+  const getJson = async (url) => ({ status: 200, data: url === 'PAGE2' ? page2 : page1 });
+  const recs = await speedrun.fetchAll({ deps: { getJson }, cohorts: ['SR006'] });
+  assert.equal(recs.length, 3, 'two Concorda founders + NewCo; SR001 filtered out');
+  assert.ok(recs.every(r => r.name && r.entity_name === null));
+  assert.ok(recs.find(r => r.name === 'Ke Ma') && !recs.find(r => r.name === 'Old Timer'));
+});
+
 // ── Cohort connectors (Exa-backed, founder-level) ──
 const { cohortDiscover } = require('../lib/cohortDiscovery');
 

@@ -126,6 +126,7 @@ async function ingestAll({ userId, since = null } = {}) {
 // ── Register connectors ──
 register(require('./uspto-trademark'));
 register(require('./yc-directory'));
+register(require('./a16z-speedrun')); // directory-based (structured API), like YC
 for (const c of require('./cohort-rosters').connectors) register(c);
 
 module.exports = { register, get, list, ingest, ingestAll, REGISTRY };

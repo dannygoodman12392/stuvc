@@ -6,6 +6,19 @@
 
 const RELEASES = [
   {
+    version: 'v4.3.0',
+    date: 'July 1, 2026',
+    time: '5:00 PM CT',
+    title: 'a16z Speedrun now sources reliably (like YC)',
+    highlights: [
+      {
+        product: 'Sourcing',
+        change: 'a16z Speedrun is now a first-class, directory-based source — it pulls all 320+ Speedrun founders from Speedrun\'s own structured API (name, bio, LinkedIn, company, location), resolved to the person, exactly like YC. This replaces the old web-search version that produced almost nothing. First pull routed the Illinois-tied founders to your pipeline (UChicago, Northwestern, and Chicago-based teams) and the rest to the national watch.',
+        benefit: 'A second major program now reliably feeds real founders — no more "only YC."',
+      },
+    ],
+  },
+  {
     version: 'v4.2.0',
     date: 'July 1, 2026',
     time: '3:30 PM CT',
