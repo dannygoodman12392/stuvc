@@ -30,6 +30,30 @@ const STATUS_COLORS = {
   'Not Admitted': 'badge-red', 'Inactive': 'badge-gray',
 };
 
+// Sift filters for the Sourced inbox.
+const SOURCE_LABELS = {
+  yc_directory: 'Y Combinator', a16z_speedrun: 'a16z Speedrun', z_fellows: 'Z Fellows',
+  neo_scholars: 'Neo', thiel_fellows: 'Thiel Fellows', the_residency: 'The Residency',
+  emergent_ventures: 'Emergent Ventures', uspto_trademark: 'Trademark filings', discovery: 'Web discovery',
+};
+const PROGRAM_OPTIONS = Object.entries(SOURCE_LABELS).map(([value, label]) => ({ value, label }));
+const TIE_OPTIONS = [
+  { value: 'current', label: 'In Chicago now' },
+  { value: 'school_alumni', label: 'IL school' },
+  { value: 'hometown', label: 'From IL' },
+  { value: 'working', label: 'Works/worked here' },
+  { value: 'chicago_company', label: 'Ex-Chicago co.' },
+];
+const SCHOOL_OPTIONS = [
+  { value: 'all', label: 'Any school' },
+  { value: 'uchicago', label: 'UChicago' },
+  { value: 'northwestern', label: 'Northwestern' },
+  { value: 'uiuc', label: 'U of I (UIUC)' },
+  { value: 'iit', label: 'Illinois Tech' },
+  { value: 'loyola', label: 'Loyola' },
+  { value: 'depaul', label: 'DePaul' },
+];
+
 export default function Pipeline() {
   const [tab, setTab] = useState('sourced');
   const [founders, setFounders] = useState([]);
@@ -37,7 +61,7 @@ export default function Pipeline() {
   const [sourcedStarred, setSourcedStarred] = useState([]);
   const [stats, setStats] = useState(null);
   const [sourcingStats, setSourcingStats] = useState(null);
-  const [filter, setFilter] = useState({ status: '', search: '', minScore: '', caliber: '' });
+  const [filter, setFilter] = useState({ status: '', search: '', minScore: '', caliber: '', source: [], tieType: [], school: '', scope: 'pipeline' });
   const [loading, setLoading] = useState(true);
   const [viewMode, setViewMode] = useState(() => localStorage.getItem('pipeline_view') || 'list');
   const [sourcingRunning, setSourcingRunning] = useState(false);
@@ -111,6 +135,10 @@ export default function Pipeline() {
         if (filter.search) params.search = filter.search;
         if (filter.minScore) params.minScore = filter.minScore;
         if (filter.caliber) params.caliber = filter.caliber;
+        if (filter.source?.length) params.source = filter.source.join(',');
+        if (filter.tieType?.length) params.tieType = filter.tieType.join(',');
+        if (filter.school) params.school = filter.school;
+        if (filter.scope && filter.scope !== 'pipeline') params.scope = filter.scope;
         const [q, starred, ss, s] = await Promise.all([
           api.getSourcingQueue(params),
           api.getSourcingStarred(),
@@ -377,8 +405,23 @@ function InboxTab({ queue, starred, stats, loading, onApprove, onDismiss, onHide
 
   return (
     <div>
-      <FilterBar resultCount={list.length} dirty={!!(filter.caliber || filter.minScore || filter.search)} onClearAll={() => setFilter({ status: '', search: '', minScore: '', caliber: '' })}>
+      <div className="flex items-center gap-1 mb-3 bg-gray-100 rounded-lg p-1 w-fit">
+        {[{ v: 'pipeline', l: 'Chicago Pipeline' }, { v: 'watchlist', l: 'Frontier Watch · national' }].map(o => (
+          <button key={o.v} onClick={() => setFilter(f => ({ ...f, scope: o.v }))}
+            className={`px-3 py-1.5 text-sm rounded-md transition-colors ${(filter.scope || 'pipeline') === o.v ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
+            {o.l}
+          </button>
+        ))}
+      </div>
+      <FilterBar resultCount={list.length} dirty={!!(filter.caliber || filter.minScore || filter.search || filter.source?.length || filter.tieType?.length || filter.school)} onClearAll={() => setFilter(f => ({ ...f, search: '', minScore: '', caliber: '', source: [], tieType: [], school: '' }))}>
         <div className="w-64"><SearchInput value={filter.search} onChange={(v) => setFilter(f => ({ ...f, search: v }))} placeholder="Name, company, school…" /></div>
+        <FilterSelect label="Program" multi value={filter.source || []} onChange={(v) => setFilter(f => ({ ...f, source: v }))} options={PROGRAM_OPTIONS} />
+        {(filter.scope || 'pipeline') === 'pipeline' && (
+          <FilterSelect label="School" value={filter.school || 'all'} onChange={(v) => setFilter(f => ({ ...f, school: v === 'all' ? '' : v }))} options={SCHOOL_OPTIONS} />
+        )}
+        {(filter.scope || 'pipeline') === 'pipeline' && (
+          <FilterSelect label="Tie" multi value={filter.tieType || []} onChange={(v) => setFilter(f => ({ ...f, tieType: v }))} options={TIE_OPTIONS} />
+        )}
         <FilterSelect label="Caliber" value={filter.caliber || 'all'} onChange={(v) => setFilter(f => ({ ...f, caliber: v === 'all' ? '' : v }))}
           options={[{ value: 'all', label: 'All tiers' }, { value: 'S', label: 'S only' }, { value: 'A', label: 'A & above' }, { value: 'B', label: 'B & above' }]} />
         <FilterSelect label="Fit" value={filter.minScore || 'all'} onChange={(v) => setFilter(f => ({ ...f, minScore: v === 'all' ? '' : v }))}

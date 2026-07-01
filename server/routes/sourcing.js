@@ -11,14 +11,47 @@ const { VALID_TIE_TYPES } = require('../pipeline/sourcing-engine');
 const TIE_IN = VALID_TIE_TYPES.map(() => '?').join(',');
 const TIE_CLAUSE = `location_type IN (${TIE_IN}) AND chicago_connection IS NOT NULL AND TRIM(chicago_connection) != '' AND LOWER(chicago_connection) NOT LIKE '%no verified tie%' AND LOWER(chicago_connection) != 'any'`;
 
+// School filter: a key from the UI → the substrings that identify that school in the tie text
+// (verified tie stores the matched school name) or the headline. Multiple spellings per school.
+const SCHOOL_PATTERNS = {
+  uchicago: ['uchicago', 'university of chicago', 'booth'],
+  northwestern: ['northwestern', 'kellogg'],
+  uiuc: ['uiuc', 'university of illinois', 'urbana'],
+  iit: ['illinois institute of technology', 'illinois tech'],
+  loyola: ['loyola'],
+  depaul: ['depaul'],
+};
+
 // GET /api/sourcing/queue — pending sourced founders with enhanced data
 router.get('/queue', (req, res) => {
-  const { sort, source, minScore, search, caliber } = req.query;
-  let where = `status = 'pending' AND user_id = ? AND ${TIE_CLAUSE}`;
-  const params = [];
-  params.push(req.user.id, ...VALID_TIE_TYPES);
+  const { sort, source, minScore, search, caliber, tieType, school, scope } = req.query;
 
-  if (source) { where += ' AND source = ?'; params.push(source); }
+  // Scope: 'watchlist' = the national Frontier Watch (non-IL, list_scope='watchlist').
+  // Anything else = the Chicago Pipeline (verified IL tie), the default deal flow.
+  const params = [req.user.id];
+  let where;
+  if (String(scope) === 'watchlist') {
+    where = `status = 'pending' AND user_id = ? AND list_scope = 'watchlist'`;
+  } else {
+    where = `status = 'pending' AND user_id = ? AND ${TIE_CLAUSE} AND (list_scope IS NULL OR list_scope = 'pipeline')`;
+    params.push(...VALID_TIE_TYPES);
+  }
+
+  // Program / source (multi, comma-separated: e.g. yc_directory,a16z_speedrun).
+  const sources = String(source || '').split(',').map(s => s.trim()).filter(Boolean);
+  if (sources.length) { where += ` AND source IN (${sources.map(() => '?').join(',')})`; params.push(...sources); }
+
+  // Tie type (multi): current / working / school_alumni / hometown / chicago_company.
+  const ties = String(tieType || '').split(',').map(s => s.trim()).filter(Boolean);
+  if (ties.length) { where += ` AND location_type IN (${ties.map(() => '?').join(',')})`; params.push(...ties); }
+
+  // School: match the school's known spellings against the verified tie text or the headline.
+  const pats = SCHOOL_PATTERNS[String(school || '').toLowerCase()];
+  if (pats) {
+    where += ` AND (${pats.map(() => '(LOWER(chicago_connection) LIKE ? OR LOWER(headline) LIKE ?)').join(' OR ')})`;
+    for (const p of pats) params.push(`%${p}%`, `%${p}%`);
+  }
+
   if (minScore) { where += ' AND confidence_score >= ?'; params.push(parseInt(minScore)); }
   // Caliber filter: 'S', 'A', 'B' — or a minimum tier like 'A' meaning S+A.
   if (caliber) {
