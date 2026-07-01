@@ -41,8 +41,9 @@ const PROGRAMS = [
     markers: ['thiel fellow', 'thiel fellowship'],
     baseQueries: ['"Thiel Fellow" founder startup', '"Thiel Fellowship" founder building'] },
   { key: 'z_fellows', label: 'Z Fellows', emits: 'z_fellow', cohortLabel: 'Z Fellows',
-    markers: ['z fellows', 'zfellows'],
-    baseQueries: ['"Z Fellows" founder startup', '"Z Fellows" alum founder building'] },
+    // How people actually write it on LinkedIn: "Z Fellows", "Z Fellow", "ZFellows".
+    markers: ['z fellows', 'zfellows', 'z fellow'],
+    baseQueries: ['"Z Fellows" founder', '"Z Fellow" founder building startup'] },
   { key: 'neo_scholars', label: 'Neo', emits: 'neo_scholar', cohortLabel: 'Neo Scholar/Founder',
     markers: ['neo scholar', 'neo cohort', 'neo accelerator', 'neo fellowship'],
     baseQueries: ['"Neo scholar" founder startup', '"Neo accelerator" founder building'] },
