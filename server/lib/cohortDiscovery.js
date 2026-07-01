@@ -30,7 +30,17 @@ async function cohortDiscover({ exaKey, queries, markers = [], cohortLabel, perQ
       if (!looksLikePerson(p.name)) continue;
       const text = `${p.headline || ''} ${p.bio || ''}`.toLowerCase();
       // Require the cohort marker in the person's own text — not just the search query.
-      if (markers.length && !markers.some(m => text.includes(m))) continue;
+      const marker = markers.find(m => text.includes(m));
+      if (markers.length && !marker) continue;
+      // Precision guard: reject when the text says the person RUNS/serves the program (mentor,
+      // director, scout, program manager) rather than being a member — e.g. "cohort director,
+      // neo accelerator", "help identify and mentor neo scholars". Check the words just before
+      // the marker, where that relationship is stated.
+      if (marker) {
+        const idx = text.indexOf(marker);
+        const before = text.slice(Math.max(0, idx - 40), idx);
+        if (/\b(mentor|director|head of|manages?|managing|scout|advisor to|advises|partnered? with|identify and|running|program (?:manager|lead|director)|community (?:manager|lead))\b[\s,–—|·-]*$/.test(before)) continue;
+      }
       const key = (p.linkedin_url || p.name).toLowerCase().trim();
       if (seen.has(key)) continue;
       seen.add(key);
