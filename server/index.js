@@ -395,6 +395,10 @@ app.listen(PORT, () => {
         const { ingestAll } = require('./pipeline/sources');
         const r = await ingestAll({ userId: 1 });
         console.log('[Cron][Sources]', JSON.stringify(r.map(x => ({ s: x.source, kept: x.geoKept, saved: x.persisted, err: x.error }))));
+        // Then read newly-sourced founders' real LinkedIn: promote buried IL ties + flag noise.
+        const { runLinkedInEnrichment } = require('./pipeline/linkedin-enrich');
+        const e = await runLinkedInEnrichment({ userId: 1, limit: 40 });
+        console.log('[Cron][LinkedIn]', JSON.stringify(e));
       } catch (e) { console.error('[Cron][Sources] failed:', e.message); }
     }, { timezone: 'America/Chicago' });
     console.log('Daily early-signal sources scheduled (11:30 AM CT)');

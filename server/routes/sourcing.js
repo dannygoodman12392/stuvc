@@ -223,7 +223,12 @@ router.post('/run', async (req, res) => {
       runSourcingEngine({ fullSweep: true, userId: uid }),
       require('../pipeline/sources').ingestAll({ userId: uid }).catch(e => { console.error('[Sources] ingestAll error:', e.message); return null; }),
     ])
-      .then(([r]) => recordJobRun('sourcing_run', (r.errors && r.errors.length) ? 'partial' : 'ok', `+${r.totalAdded} added, ${r.totalFiltered} filtered${r.errors && r.errors.length ? `, ${r.errors.length} errors` : ''}`, uid))
+      .then(async ([r]) => {
+        // Read the freshly-sourced founders' real LinkedIn: promote buried IL ties + flag noise.
+        try { const e = await require('../pipeline/linkedin-enrich').runLinkedInEnrichment({ userId: uid, limit: 40 }); console.log('[Run][LinkedIn]', JSON.stringify(e)); }
+        catch (e) { console.error('[Run][LinkedIn]', e.message); }
+        recordJobRun('sourcing_run', (r.errors && r.errors.length) ? 'partial' : 'ok', `+${r.totalAdded} added, ${r.totalFiltered} filtered${r.errors && r.errors.length ? `, ${r.errors.length} errors` : ''}`, uid);
+      })
       .catch(err => { recordJobRun('sourcing_run', 'error', err.message, uid); console.error('[Sourcing] Run error:', err); });
   } catch (err) {
     res.status(500).json({ error: 'Failed to start sourcing run: ' + err.message });

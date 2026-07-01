@@ -870,6 +870,11 @@ db.exec(`CREATE INDEX IF NOT EXISTS idx_sf_user_scope ON sourced_founders(user_i
 // daily source cron never re-fetches a page it has already parsed.
 db.exec(`CREATE TABLE IF NOT EXISTS yc_resolved (slug TEXT PRIMARY KEY, resolved_at DATETIME DEFAULT CURRENT_TIMESTAMP);`);
 
+// LinkedIn enrichment (EnrichLayer): when we last read a sourced founder's real LinkedIn (cache,
+// so we never re-pay for the same profile) and the raw profile JSON we pulled.
+addColumn('sourced_founders', 'linkedin_enriched_at', 'DATETIME');
+addColumn('sourced_founders', 'linkedin_data', 'TEXT');
+
 // ── Newsletter / Daily Brief ──
 // One row per extracted newsletter issue. Stu reads a Gmail label over IMAP, extracts
 // the key points with Claude, and ranks each issue by relevance to the user's pipeline.

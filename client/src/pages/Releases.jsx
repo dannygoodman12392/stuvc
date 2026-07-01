@@ -6,6 +6,19 @@
 
 const RELEASES = [
   {
+    version: 'v4.5.0',
+    date: 'July 1, 2026',
+    time: '7:30 PM CT',
+    title: 'LinkedIn enrichment — bulletproofing the pipeline',
+    highlights: [
+      {
+        product: 'Sourcing',
+        change: 'After each sourcing run, Stu now reads the real LinkedIn profile of newly-sourced founders (via EnrichLayer) to do two things: (1) promote buried Illinois ties — a founder genuinely rooted here whose startup bio never mentioned it (e.g. based in Aurora, went to a Chicago-area school) gets moved from the national watch into your Chicago Pipeline; and (2) flag noise — a professor or exec the search over-caught gets marked so your pipeline stays clean. Targeted, capped, and cached so it never re-pays for the same profile.',
+        benefit: 'Fewer real Chicago founders missed, and less clutter — the pipeline you can trust.',
+      },
+    ],
+  },
+  {
     version: 'v4.4.0',
     date: 'July 1, 2026',
     time: '6:30 PM CT',
