@@ -6,6 +6,24 @@
 
 const RELEASES = [
   {
+    version: 'v4.6.0',
+    date: 'July 1, 2026',
+    time: '9:00 PM CT',
+    title: 'Breakout Radar — catch them before the programs do',
+    highlights: [
+      {
+        product: 'Sourcing',
+        change: 'New "Breakout Radar" source: it hunts for Illinois builders with program-grade pedigree (ex-Jane Street/Citadel/Stripe/Google, repeat founders with an exit, elite schools) who are actively building but DON\'T yet carry a YC/Speedrun/Thiel tag — explicitly excluding anyone already discovered. This is the pre-program alpha: the people the top accelerators will pick up in the next 6–12 months.',
+        benefit: 'Build the relationship before they\'re being chased by everyone.',
+      },
+      {
+        product: 'Sourcing',
+        change: 'Every sourced founder now gets a Breakout pedigree score (0–100), and there\'s a new "Sort → Breakout pedigree" control so the highest-caliber builders — prior exits, elite backgrounds, technical stealth founders — float to the top of any view. The score cites its evidence, and sharpens as LinkedIn enrichment fills in each founder\'s real prior companies.',
+        benefit: 'Sort straight to the people most likely to break out, with the receipts.',
+      },
+    ],
+  },
+  {
     version: 'v4.5.0',
     date: 'July 1, 2026',
     time: '7:30 PM CT',
