@@ -979,9 +979,11 @@ async function enrichWithLinkedIn(linkedinUrl, enrichlayerApiKey) {
   if (!apiKey || !linkedinUrl) return null;
 
   try {
+    // EnrichLayer v2 (Proxycurl-compatible): Bearer auth, /api/v2/profile. The old /v1 + x-api-key
+    // path 404s now — verified live 2026-07-01.
     const resp = await httpGet(
-      `https://api.enrichlayer.com/v1/linkedin/profile?url=${encodeURIComponent(linkedinUrl)}`,
-      { 'x-api-key': apiKey }
+      `https://enrichlayer.com/api/v2/profile?url=${encodeURIComponent(linkedinUrl)}&use_cache=if-present`,
+      { Authorization: `Bearer ${apiKey}` }
     );
 
     if (resp.status === 200 && resp.data) {

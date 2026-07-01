@@ -37,9 +37,11 @@ function httpGetJson(url, headers = {}) {
 async function fetchProfile(linkedinUrl, apiKey, deps = {}) {
   if (deps.fetchProfile) return deps.fetchProfile(linkedinUrl);
   if (!apiKey || !linkedinUrl) return null;
+  // EnrichLayer v2 (Proxycurl-compatible): Bearer auth, /api/v2/profile. The old /v1 + x-api-key
+  // path 404s now — verified live.
   const { status, data } = await httpGetJson(
-    `https://api.enrichlayer.com/v1/linkedin/profile?url=${encodeURIComponent(linkedinUrl)}`,
-    { 'x-api-key': apiKey });
+    `https://enrichlayer.com/api/v2/profile?url=${encodeURIComponent(linkedinUrl)}&use_cache=if-present`,
+    { Authorization: `Bearer ${apiKey}` });
   return status === 200 && data ? data : null;
 }
 
