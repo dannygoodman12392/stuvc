@@ -6,6 +6,29 @@
 
 const RELEASES = [
   {
+    version: 'v4.2.0',
+    date: 'July 1, 2026',
+    time: '3:30 PM CT',
+    title: 'Sift the pipeline — by program, school, and tie',
+    highlights: [
+      {
+        product: 'Sourcing',
+        change: 'The Sourced inbox now has a sift bar: filter by Program (YC, a16z Speedrun, Z Fellows, Neo, Thiel, The Residency, Emergent Ventures, trademark filings, web discovery), by School (UChicago, Northwestern, U of I, Illinois Tech, Loyola, DePaul), and by Tie type (in Chicago now / IL school / from IL / worked here / ex-Chicago company) — plus the existing caliber, fit, and search. Everything stacks.',
+        benefit: 'Answer questions like "show me the UChicago YC founders" or "just the Speedrun people" in one click.',
+      },
+      {
+        product: 'Sourcing',
+        change: 'New Chicago Pipeline vs Frontier Watch toggle. Your deal pipeline stays strictly IL-tied; flip to Frontier Watch to browse the promising national (non-IL) builders we keep for thesis work — the ones that used to be dropped.',
+        benefit: 'See the national frontier picture without cluttering your Chicago deal flow.',
+      },
+      {
+        product: 'Sourcing',
+        change: 'Coverage fix: the Pipeline keys on all five Illinois tie types, so it captures both people currently in Chicago and promising people with IL roots elsewhere (school, hometown, prior work) — and the "Run" button now refreshes the YC/cohort connectors on demand, not just on the daily job.',
+        benefit: 'One Pipeline that finds everyone in Chicago plus the IL-rooted builders anywhere — and you can pull fresh results whenever you want.',
+      },
+    ],
+  },
+  {
     version: 'v4.1.0',
     date: 'July 1, 2026',
     time: '1:30 PM CT',
