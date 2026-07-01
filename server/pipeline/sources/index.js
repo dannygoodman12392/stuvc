@@ -127,6 +127,7 @@ async function ingestAll({ userId, since = null } = {}) {
 register(require('./uspto-trademark'));
 register(require('./yc-directory'));
 register(require('./a16z-speedrun')); // directory-based (structured API), like YC
+register(require('./il-school-discovery')); // highest-yield IL source: school-anchored search
 for (const c of require('./cohort-rosters').connectors) register(c);
 
 module.exports = { register, get, list, ingest, ingestAll, REGISTRY };

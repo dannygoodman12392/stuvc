@@ -6,6 +6,19 @@
 
 const RELEASES = [
   {
+    version: 'v4.4.0',
+    date: 'July 1, 2026',
+    time: '6:30 PM CT',
+    title: 'School-anchored sourcing — your highest-yield Illinois source',
+    highlights: [
+      {
+        product: 'Sourcing',
+        change: 'New "Illinois school founders" source: instead of chasing programs, Stu now searches directly for founders who name UChicago, UIUC, Northwestern, or Illinois Tech (or are building in Chicago). In a live sprint this found ~50 in-thesis founders — more than every accelerator program combined — because a founder\'s school is exactly what they self-declare on LinkedIn. It\'s now a filterable Program in the Pipeline.',
+        benefit: 'The most reliable way to find Chicago-rooted builders wherever their company is — and the single biggest feed for your deal pipeline.',
+      },
+    ],
+  },
+  {
     version: 'v4.3.0',
     date: 'July 1, 2026',
     time: '5:00 PM CT',

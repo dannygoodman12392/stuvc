@@ -32,7 +32,7 @@ const STATUS_COLORS = {
 
 // Sift filters for the Sourced inbox.
 const SOURCE_LABELS = {
-  yc_directory: 'Y Combinator', a16z_speedrun: 'a16z Speedrun', z_fellows: 'Z Fellows',
+  yc_directory: 'Y Combinator', a16z_speedrun: 'a16z Speedrun', il_school_discovery: 'Illinois school founders', z_fellows: 'Z Fellows',
   neo_scholars: 'Neo', thiel_fellows: 'Thiel Fellows', the_residency: 'The Residency',
   emergent_ventures: 'Emergent Ventures', uspto_trademark: 'Trademark filings', discovery: 'Web discovery',
 };
