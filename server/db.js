@@ -852,12 +852,23 @@ addColumn('talent_candidates', 'enrichment', 'TEXT');
 addColumn('sourced_founders', 'unicorn_score', 'INTEGER');
 addColumn('sourced_founders', 'enrichment', 'TEXT');
 
+// Deal-queue vs. national frontier watch. IL-tied finds land in the deal 'pipeline';
+// non-IL finds from cohort/frontier sources (YC, fellowships, national labs) that we still
+// want visibility on land on the 'watchlist' instead of being dropped. Default 'pipeline'
+// so every existing row keeps today's behavior.
+addColumn('sourced_founders', 'list_scope', "TEXT DEFAULT 'pipeline'");
+
 // Indices on the two largest / hottest tables (founders ~5k+ rows, sourced_founders grows
 // with every sweep). Without these, dedup + inbox + scoping queries are full scans.
 db.exec(`CREATE INDEX IF NOT EXISTS idx_founders_user ON founders(created_by, is_deleted);`);
 db.exec(`CREATE INDEX IF NOT EXISTS idx_founders_linkedin ON founders(linkedin_url);`);
 db.exec(`CREATE INDEX IF NOT EXISTS idx_sf_user_status ON sourced_founders(user_id, status);`);
 db.exec(`CREATE INDEX IF NOT EXISTS idx_sf_linkedin ON sourced_founders(linkedin_url);`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_sf_user_scope ON sourced_founders(user_id, list_scope, status);`);
+
+// YC founder-resolution cache: which company pages we've already crawled for founders, so the
+// daily source cron never re-fetches a page it has already parsed.
+db.exec(`CREATE TABLE IF NOT EXISTS yc_resolved (slug TEXT PRIMARY KEY, resolved_at DATETIME DEFAULT CURRENT_TIMESTAMP);`);
 
 // ── Newsletter / Daily Brief ──
 // One row per extracted newsletter issue. Stu reads a Gmail label over IMAP, extracts

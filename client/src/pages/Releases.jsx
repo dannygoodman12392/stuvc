@@ -6,6 +6,29 @@
 
 const RELEASES = [
   {
+    version: 'v4.1.0',
+    date: 'July 1, 2026',
+    time: '1:30 PM CT',
+    title: 'Cohort sourcing + a national frontier watch',
+    highlights: [
+      {
+        product: 'Sourcing',
+        change: 'New Y Combinator connector: every YC company flows into Stu automatically each day, filtered to pre-seed/early-stage only (growth-stage alumni like Tovala, ShipBob, Fly.io, and anything acquired/public are excluded). Crucially, Stu now reads each company\'s founders and their backgrounds — so it matches on the founder\'s Illinois tie (went to UChicago / U of I / Northwestern, is from here, or worked here), not just where the company is headquartered. First run found 23 IL-tied founders, most of them UChicago alumni whose companies are based outside Chicago — people location-only sourcing would have missed entirely.',
+        benefit: 'You catch Chicago-rooted founders wherever their company is based, and never waste time on companies that raised years ago.',
+      },
+      {
+        product: 'Sourcing',
+        change: 'New national "frontier watch": promising builders we find who are NOT IL-tied used to be dropped. Now the strong ones (starting with national YC companies) are kept on a separate watchlist that feeds thesis work, instead of vanishing — your deal pipeline stays strictly Chicago-first.',
+        benefit: 'Keep the Chicago-first pipeline clean while still seeing the national picture you want for thesis calls.',
+      },
+      {
+        product: 'Sourcing',
+        change: 'High-signal programs now resolve to founders too, the same way YC does — Thiel Fellows, Z Fellows, Neo, a16z Speedrun, The Residency, and Emergent Ventures. Since these programs don\'t publish a usable member list, Stu finds the actual people via web search and matches on each person\'s Illinois tie (UChicago / U of I / Northwestern, from here, or worked here), routing IL-tied founders to your pipeline and the rest to the national watch. Runs on your own Exa key.',
+        benefit: 'The people coming out of the most competitive young-founder programs surface early — filtered to the ones connected to Chicago.',
+      },
+    ],
+  },
+  {
     version: 'v4.0.0',
     date: 'June 19, 2026',
     time: '10:15 PM CT',

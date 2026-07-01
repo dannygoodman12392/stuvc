@@ -52,10 +52,32 @@ function geoFilter(rows, criteria) {
   return out;
 }
 
+// Partition rows into { passed, rejected } against the criteria, instead of dropping the
+// rejected ones. `passed` are verified ties (deal pipeline); `rejected` are the rest, kept
+// intact for a national "frontier watch". When the user has NO preference (broad mode),
+// everyone verifies, so rejected is empty and behavior matches geoFilter exactly.
+function geoPartition(rows, criteria) {
+  const passed = [];
+  const rejected = [];
+  for (const r of rows) {
+    const tie = checkLocation(r, criteria);
+    if (tie.verified) {
+      passed.push({
+        ...r,
+        tie,
+        chicago_connection: r.chicago_connection || (tie.type !== 'broad' ? `${tie.type}: ${tie.location}` : null),
+      });
+    } else {
+      rejected.push({ ...r, tie });
+    }
+  }
+  return { passed, rejected };
+}
+
 // A parenthetical to bias a web query toward the user's locations (discovery only).
 function locationQueryHint(criteria) {
   const locs = (criteria.locations || []).slice(0, 6);
   return locs.length ? ` (${locs.join(' OR ')})` : '';
 }
 
-module.exports = { userGeoCriteria, hasPreference, checkLocation, geoFilter, locationQueryHint, profileText };
+module.exports = { userGeoCriteria, hasPreference, checkLocation, geoFilter, geoPartition, locationQueryHint, profileText };

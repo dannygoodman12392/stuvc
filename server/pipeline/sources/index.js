@@ -12,7 +12,7 @@
  * exactly like discovery. Persisted records carry the connector's signal + its evidence.
  */
 const db = require('../../db');
-const { userGeoCriteria, geoFilter } = require('../../lib/geoFilter');
+const { userGeoCriteria, geoPartition, hasPreference } = require('../../lib/geoFilter');
 const { loadUserApiKeys, assertWithinBudget } = require('../../lib/providerKeys');
 
 const REGISTRY = {};
@@ -35,7 +35,7 @@ async function ingest(key, { userId, since = null, enrich = true, persist = true
 
   // 1. Fetch raw records (connector-specific, defensive — a failure yields 0, never throws).
   let raw = [];
-  try { raw = (await c.fetch({ since, criteria, keys, limit, deps })) || []; }
+  try { raw = (await c.fetch({ since, criteria, keys, limit, deps, userId })) || []; }
   catch (e) { return { source: key, fetched: 0, geoKept: 0, enriched: false, persisted: 0, error: e.message }; }
 
   // 2. Normalize each RawRecord to the common profile shape.
@@ -52,42 +52,61 @@ async function ingest(key, { userId, since = null, enrich = true, persist = true
     _evidence: r.evidence || null,
   }));
 
-  // 3. Geo-filter to the user's criteria (owner = verified IL tie; no preference = all pass).
-  profiles = geoFilter(profiles, criteria);
-  const geoKept = profiles.length;
+  // 3. Partition by geo. Verified ties → deal pipeline; the rest → national frontier watch
+  //    (only for connectors that opt in via `nationalWatchlist` AND when the user actually
+  //    has a geo preference — otherwise broad mode already passed everyone into `passed`).
+  const { passed, rejected } = geoPartition(profiles, criteria);
+  const watchOptIn = !!c.nationalWatchlist && hasPreference(criteria);
+  const pipelineRows = passed;
+  const watchRows = watchOptIn ? rejected : [];
+  const geoKept = pipelineRows.length;
 
   // 4. Enrich + score on the user's key (skipped if no key — degrades to raw records).
+  //    Pipeline and watch are enriched independently so their scope tags stay 1:1.
   let enriched = false;
-  if (enrich && profiles.length) {
-    const e = await require('../enrichment').enrichProfiles(userId, profiles, { feature: `source:${c.key}` });
-    if (e) { profiles = e; enriched = true; }
+  async function enrichGroup(rows) {
+    if (!enrich || !rows.length) return rows;
+    const e = await require('../enrichment').enrichProfiles(userId, rows, { feature: `source:${c.key}` });
+    if (e) { enriched = true; return e; }
+    return rows;
   }
+  const pipelineEnriched = await enrichGroup(pipelineRows);
+  const watchEnriched = await enrichGroup(watchRows);
 
-  // 5. Dedup (by linkedin/website/name) + persist to the user's sourced queue.
-  let persisted = 0;
-  if (persist && profiles.length) {
+  // 5. Dedup (by linkedin, else website, else source+name+company so the daily cron never
+  //    re-inserts the same roster company) + persist, tagged by scope.
+  let persisted = 0, watchlisted = 0;
+  if (persist) {
     const insert = db.prepare(`INSERT INTO sourced_founders
-      (user_id, name, company, role, headline, linkedin_url, website_url, source, status, builder_signals, signal_captured_at, unicorn_score, enrichment, company_one_liner, chicago_connection)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, CURRENT_TIMESTAMP, ?, ?, ?, ?)`);
-    const tx = db.transaction((rows) => {
+      (user_id, name, company, role, headline, linkedin_url, website_url, source, status, builder_signals, signal_captured_at, unicorn_score, enrichment, company_one_liner, chicago_connection, list_scope)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, CURRENT_TIMESTAMP, ?, ?, ?, ?, ?)`);
+    const byLinkedin = db.prepare('SELECT id FROM sourced_founders WHERE user_id = ? AND LOWER(linkedin_url) = LOWER(?)');
+    const byWebsite = db.prepare('SELECT id FROM sourced_founders WHERE user_id = ? AND LOWER(website_url) = LOWER(?)');
+    const byIdentity = db.prepare("SELECT id FROM sourced_founders WHERE user_id = ? AND source = ? AND LOWER(name) = LOWER(?) AND LOWER(IFNULL(company,'')) = LOWER(?)");
+    const isDupe = (p) => {
+      if (p.linkedin_url) return !!byLinkedin.get(userId, p.linkedin_url);
+      if (p.website_url) return !!byWebsite.get(userId, p.website_url);
+      return !!byIdentity.get(userId, c.key, p.name || p.company || 'Unknown', p.company || '');
+    };
+    const persistRows = db.transaction((rows, scope) => {
+      let n = 0;
       for (const p of rows) {
         try {
-          if (p.linkedin_url) {
-            const dupe = db.prepare('SELECT id FROM sourced_founders WHERE user_id = ? AND LOWER(linkedin_url) = LOWER(?)').get(userId, p.linkedin_url);
-            if (dupe) continue;
-          }
+          if (isDupe(p)) continue;
           const enr = JSON.stringify({ summary: p.summary || null, why: p.why || null, contactability: p.contactability || null, evidence: p._evidence || null });
           insert.run(userId, p.name || p.company || 'Unknown', p.company || null, p.role || null, p.headline || null,
             p.linkedin_url || null, p.website_url || null, c.key, JSON.stringify([c.emits]),
-            p.unicorn_score ?? null, enr, p.why || null, p.chicago_connection || null);
-          persisted++;
+            p.unicorn_score ?? null, enr, p.why || null, p.chicago_connection || null, scope);
+          n++;
         } catch { /* skip dupes/bad rows */ }
       }
+      return n;
     });
-    tx(profiles);
+    persisted = persistRows(pipelineEnriched, 'pipeline');
+    watchlisted = persistRows(watchEnriched, 'watchlist');
   }
 
-  return { source: key, fetched: raw.length, geoKept, enriched, persisted, results: profiles.slice(0, limit) };
+  return { source: key, fetched: raw.length, geoKept, watchlisted, enriched, persisted, results: pipelineEnriched.slice(0, limit) };
 }
 
 // Run every registered connector for a user (used by the daily cron). Dormant connectors
@@ -103,5 +122,7 @@ async function ingestAll({ userId, since = null } = {}) {
 
 // ── Register connectors ──
 register(require('./uspto-trademark'));
+register(require('./yc-directory'));
+for (const c of require('./cohort-rosters').connectors) register(c);
 
 module.exports = { register, get, list, ingest, ingestAll, REGISTRY };

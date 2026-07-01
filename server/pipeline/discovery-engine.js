@@ -190,4 +190,4 @@ async function discover({ userId, signals = [], query = '', limit = 25, persist 
   return { matched: top, scanned: raw.length, persisted, queries, enriched };
 }
 
-module.exports = { discover, buildQueries, extractProfile, NoKeyError };
+module.exports = { discover, buildQueries, extractProfile, looksLikePerson, realExaSearch, NoKeyError };
