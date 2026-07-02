@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { useParams, Link, useNavigate } from 'react-router-dom';
+import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../utils/api';
 
 // Agent tab config — maps to DB columns (reused existing column names)
@@ -12,6 +12,7 @@ const AGENTS = [
 
 const TABS = [
   { key: 'synthesis', label: 'Synthesis' },
+  { key: 'memo', label: 'Deal Memo' },
   ...AGENTS.map(a => ({ key: a.key, label: a.label })),
   { key: 'rubric', label: 'Rubric' },
   { key: 'inputs', label: 'Materials' },
@@ -40,9 +41,11 @@ const THRESHOLD_STYLES = {
 export default function AssessmentDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [assessment, setAssessment] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState('synthesis');
+  // ?tab=memo lands directly on the Deal Memo tab (e.g. coming from the Deal Memo task flow).
+  const [activeTab, setActiveTab] = useState(TABS.some(t => t.key === searchParams.get('tab')) ? searchParams.get('tab') : 'synthesis');
   const [versions, setVersions] = useState([]);
   const [inputs, setInputs] = useState([]);
   const [showVersions, setShowVersions] = useState(false);
@@ -326,6 +329,16 @@ export default function AssessmentDetail() {
                 {isRunning ? 'Synthesis will appear once all agents complete...' : 'Synthesis not available'}
               </div>
             )
+          )}
+
+          {activeTab === 'memo' && (
+            <MemoView
+              team={parseOutput(assessment.founder_agent_output)}
+              product={parseOutput(assessment.market_agent_output)}
+              market={parseOutput(assessment.economics_agent_output)}
+              bear={parseOutput(assessment.bear_agent_output)}
+              synthesis={synthesis}
+            />
           )}
 
           {AGENTS.map(agent => (
@@ -1039,6 +1052,215 @@ function BearOutput({ data }) {
       )}
 
       <QuestionsList questions={data.key_questions} />
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════
+// Deal Memo — Danny's 7-M structure, assembled from the already-computed
+// team/product/market/bear/synthesis outputs. No new LLM call: the underlying prose is
+// already written to the "Sequoia standard" by the synthesis prompt, so this is a
+// reorganization pass, not a rewrite. Every field below is traced to a real, verified
+// field in server/agents/prompts.js — see the two honest gaps called out inline:
+// Model has no dedicated unit-economics agent, and Conditions has no deal-terms agent.
+// ════════════════════════════════════════════════════════
+
+function sub(obj, key) { return obj && obj.subcategories && obj.subcategories[key]; }
+
+function buildDealMemo({ team, product, market, bear, synthesis }) {
+  if (!synthesis) return null;
+  return {
+    recommendation: {
+      signal: synthesis.overall_signal,
+      score: synthesis.overall_score,
+      oneLiner: synthesis.one_liner,
+      nextStep: synthesis.recommended_next_step,
+      summary: synthesis.executive_summary,
+      consensus: synthesis.agent_consensus,
+      disagreements: synthesis.agent_disagreements,
+    },
+    management: team && {
+      verdict: team.verdict,
+      theRead: team.the_read,
+      snapshot: team.snapshot,
+      subs: [
+        ['founder_problem_fit', 'Founder-Problem Fit'], ['sales_capability', 'Sales Capability'],
+        ['velocity', 'Velocity'], ['storytelling_framing', 'Storytelling & Framing'],
+        ['team_composition', 'Team Composition'], ['competitive_precision', 'Competitive Precision'],
+        ['missionary_conviction', 'Missionary Conviction'],
+      ].map(([k, label]) => ({ label, ...sub(team, k) })).filter(s => s.score != null),
+      quotes: team.key_quotes,
+    },
+    model: {
+      unitEconomics: sub(market, 'unit_economics_structure'),
+      moat: sub(product, 'moat_architecture'),
+      flywheel: sub(product, 'flywheel_design'),
+      note: 'Assembled from the Market and Product agents’ unit-economics and defensibility subscores — Stu does not run a dedicated financial-model agent. Treat as directional.',
+    },
+    market: market && {
+      whyNow: market.why_now,
+      competitiveMoat: market.competitive_moat,
+      killShotRisk: market.kill_shot_risk,
+      subs: [
+        ['market_timing', 'Market Timing'], ['market_structure', 'Market Structure'],
+        ['incumbent_conflict_mapping', 'Incumbent Conflict Mapping'], ['tam_realism', 'TAM Realism'],
+        ['category_momentum', 'Category Momentum'], ['neutral_layer_viability', 'Neutral Layer Viability'],
+      ].map(([k, label]) => ({ label, ...sub(market, k) })).filter(s => s.score != null),
+    },
+    momentum: [
+      ['Team Velocity', sub(team, 'velocity')],
+      ['Product Velocity', sub(product, 'product_velocity')],
+      ['Customer Proximity', sub(product, 'customer_proximity')],
+      ['Category Momentum', sub(market, 'category_momentum')],
+    ].filter(([, s]) => s && s.score != null),
+    malfeasance: bear && {
+      primaryRisks: bear.primary_risks,
+      twelveMonthKill: bear.twelve_month_kill,
+      bundlingRisk: bear.bundling_risk,
+      deckOmissions: bear.deck_omissions,
+      narrative: bear.narrative,
+      note: 'The Bear agent’s adversarial business/competitive/execution risk read — not a fraud or legal-diligence check.',
+    },
+    conditions: {
+      topQuestions: synthesis.top_questions,
+      assumptions: bear && bear.assumptions_required,
+      nextStep: synthesis.recommended_next_step,
+      note: 'Stu does not evaluate deal terms, valuation, or round structure — bring these separately.',
+    },
+  };
+}
+
+function MemoSection({ title, subtitle, note, children }) {
+  return (
+    <div className="card p-4">
+      <div className="flex items-baseline justify-between mb-3">
+        <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">{title}</h3>
+        {subtitle && <span className="text-[10px] text-gray-400">{subtitle}</span>}
+      </div>
+      {children}
+      {note && <p className="text-[11px] text-gray-400 italic mt-3 pt-3 border-t border-gray-100">{note}</p>}
+    </div>
+  );
+}
+
+function MemoSubList({ items }) {
+  if (!items || items.length === 0) return <p className="text-sm text-gray-400">No scored subcategories.</p>;
+  return (
+    <div className="space-y-3">
+      {items.map((s, i) => (
+        <div key={i}>
+          <div className="flex items-center justify-between mb-0.5">
+            <span className="text-sm font-medium text-gray-700">{s.label}</span>
+            <span className={`text-sm font-bold ${scoreColor(s.score)}`}>{s.score}/10</span>
+          </div>
+          {s.evidence && <p className="text-xs text-gray-500 leading-snug">{s.evidence}</p>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function MemoView({ team, product, market, bear, synthesis }) {
+  const memo = buildDealMemo({ team, product, market, bear, synthesis });
+  if (!memo) return <div className="text-center py-8 text-gray-500 text-sm">Deal memo not available — synthesis hasn’t completed yet.</div>;
+  const { recommendation: r, management: m, model, market: mkt, momentum, malfeasance: mf, conditions: c } = memo;
+
+  return (
+    <div className="space-y-4">
+      {/* I. Recommendation */}
+      <div className={`rounded-xl border p-5 ${SIGNAL_BG[r.signal] || 'bg-gray-50 border-gray-200'}`}>
+        <p className="text-[10px] text-gray-400 uppercase tracking-wider mb-1">I. Recommendation</p>
+        <div className="flex items-center gap-3 mb-2">
+          <span className={`text-2xl font-black ${SIGNAL_TEXT[r.signal] || 'text-gray-700'}`}>{r.signal}</span>
+          <span className={`text-3xl font-black ${scoreColor(r.score)}`}>{r.score}<span className="text-base font-medium text-gray-400">/10</span></span>
+          {r.nextStep && <span className="text-xs text-gray-500 ml-auto">Next: <span className="font-semibold text-gray-700">{r.nextStep}</span></span>}
+        </div>
+        <p className="text-sm text-gray-800 font-medium leading-snug mb-3">{r.oneLiner}</p>
+        {r.summary && <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-line">{r.summary}</p>}
+      </div>
+
+      {/* II. Management */}
+      <MemoSection title="II. Management">
+        {m ? (
+          <div className="space-y-3">
+            {m.verdict && <p className="text-sm text-gray-800 font-medium">{m.verdict.one_liner} <span className="text-gray-400 font-normal">({m.verdict.archetype})</span></p>}
+            {m.theRead && <p className="text-sm text-gray-700 leading-relaxed">{m.theRead}</p>}
+            <MemoSubList items={m.subs} />
+          </div>
+        ) : <p className="text-sm text-gray-400">Team agent output not available.</p>}
+      </MemoSection>
+
+      {/* III. Model */}
+      <MemoSection title="III. Model" note={model.note}>
+        <div className="space-y-3">
+          {[['Unit Economics Structure', model.unitEconomics], ['Moat Architecture', model.moat], ['Flywheel Design', model.flywheel]]
+            .filter(([, s]) => s && s.score != null)
+            .map(([label, s], i) => (
+              <div key={i}>
+                <div className="flex items-center justify-between mb-0.5">
+                  <span className="text-sm font-medium text-gray-700">{label}</span>
+                  <span className={`text-sm font-bold ${scoreColor(s.score)}`}>{s.score}/10</span>
+                </div>
+                <p className="text-xs text-gray-500 leading-snug">{s.evidence}</p>
+              </div>
+          ))}
+        </div>
+      </MemoSection>
+
+      {/* IV. Market */}
+      <MemoSection title="IV. Market">
+        {mkt ? (
+          <div className="space-y-3">
+            {mkt.whyNow && <p className="text-sm text-gray-700 leading-relaxed"><span className="font-semibold text-gray-800">Why now: </span>{mkt.whyNow}</p>}
+            {mkt.competitiveMoat && <p className="text-sm text-gray-700 leading-relaxed"><span className="font-semibold text-gray-800">Competitive moat: </span>{mkt.competitiveMoat}</p>}
+            <MemoSubList items={mkt.subs} />
+          </div>
+        ) : <p className="text-sm text-gray-400">Market agent output not available.</p>}
+      </MemoSection>
+
+      {/* V. Momentum */}
+      <MemoSection title="V. Momentum" subtitle="cross-agent">
+        <MemoSubList items={momentum.map(([label, s]) => ({ label, ...s }))} />
+      </MemoSection>
+
+      {/* VI. Malfeasance */}
+      <MemoSection title="VI. Malfeasance" note={mf?.note}>
+        {mf ? (
+          <div className="space-y-3">
+            {mf.narrative && <p className="text-sm text-gray-700 leading-relaxed">{mf.narrative}</p>}
+            {mf.twelveMonthKill && (
+              <p className="text-sm text-gray-700"><span className="font-semibold text-gray-800">12-month kill scenario ({mf.twelveMonthKill.probability}): </span>{mf.twelveMonthKill.scenario}</p>
+            )}
+            {mf.primaryRisks && mf.primaryRisks.length > 0 && (
+              <div className="space-y-2 pt-2">
+                {mf.primaryRisks.map((rk, i) => (
+                  <div key={i} className="flex items-start gap-2">
+                    <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded shrink-0 mt-0.5 ${
+                      rk.severity === 'high' ? 'bg-red-100 text-red-700' : rk.severity === 'medium' ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-600'
+                    }`}>{rk.severity}</span>
+                    <p className="text-sm text-gray-700">{rk.risk}{rk.mitigation && <span className="text-gray-400"> — {rk.mitigation}</span>}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        ) : <p className="text-sm text-gray-400">Bear agent output not available.</p>}
+      </MemoSection>
+
+      {/* VII. Conditions */}
+      <MemoSection title="VII. Conditions" note={c.note}>
+        <div className="space-y-3">
+          {c.nextStep && <p className="text-sm text-gray-700"><span className="font-semibold text-gray-800">Recommended next step: </span>{c.nextStep}</p>}
+          {c.topQuestions && c.topQuestions.length > 0 && (
+            <div>
+              <p className="text-xs font-semibold text-gray-500 mb-1">What needs to be true / next questions</p>
+              <ul className="space-y-1">
+                {c.topQuestions.map((q, i) => <li key={i} className="text-sm text-gray-600 flex gap-2"><span className="text-blue-500 font-bold shrink-0">{i + 1}.</span>{q}</li>)}
+              </ul>
+            </div>
+          )}
+        </div>
+      </MemoSection>
     </div>
   );
 }

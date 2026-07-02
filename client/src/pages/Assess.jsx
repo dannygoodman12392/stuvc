@@ -10,15 +10,17 @@ export default function Assess() {
   const rerunId = searchParams.get('rerun');
   const rerunGroupId = searchParams.get('group');
   const task = searchParams.get('task');
-  // 'assessment' gets a purpose-built lean intake today. 'memo'/'prep' aren't built yet
-  // (see the build plan) — they fall through to the full generic form for now, which is
-  // still a working assessment, just not the tailored guided flow.
+  // 'assessment' and 'memo' share the same lean intake (a deal memo needs the same inputs
+  // as an assessment — it's the same engine, formatted differently on the results page).
+  // 'prep' isn't built yet (see the build plan) — falls through to the full generic form.
   const isAssessmentTask = task === 'assessment';
+  const isMemoTask = task === 'memo';
+  const isLeanIntakeTask = isAssessmentTask || isMemoTask;
 
   const [assessments, setAssessments] = useState([]);
   const [founders, setFounders] = useState([]);
   const [showNew, setShowNew] = useState(!!preselectedFounder || !!rerunId || !!task);
-  const [showMoreMaterials, setShowMoreMaterials] = useState(!isAssessmentTask);
+  const [showMoreMaterials, setShowMoreMaterials] = useState(!isLeanIntakeTask);
   const [loading, setLoading] = useState(true);
 
   // Form state
@@ -42,7 +44,7 @@ export default function Assess() {
     if (rerunId) loadRerunContext();
     // Assessment task mode: seed one transcript block so the primary "paste the call" textarea
     // is right there — no extra click needed to get to the thing you actually came here to do.
-    if (isAssessmentTask && !rerunId) setTranscripts([{ label: 'Call transcript / notes', content: '' }]);
+    if (isLeanIntakeTask && !rerunId) setTranscripts([{ label: 'Call transcript / notes', content: '' }]);
   }, []);
 
   async function loadData() {
@@ -186,7 +188,7 @@ export default function Assess() {
         if (rerunGroupId) payload.group_id = rerunGroupId;
         result = await api.createAssessment(payload);
       }
-      navigate(`/assess/${result.id}`);
+      navigate(`/assess/${result.id}${isMemoTask ? '?tab=memo' : ''}`);
     } catch (err) {
       console.error(err);
       alert('Failed to start assessment: ' + err.message);
@@ -224,10 +226,11 @@ export default function Assess() {
   return (
     <div>
       <PageHeader
-        title={isAssessmentTask && showNew ? 'Founder Assessment' : 'Assess'}
+        title={showNew && isAssessmentTask ? 'Founder Assessment' : showNew && isMemoTask ? 'Deal Memo' : 'Assess'}
         subtitle={
           rerunMode ? 'Add new materials and re-evaluate'
-          : isAssessmentTask && showNew ? 'Score a founder against your Steward-Operator rubric from a call transcript or your notes.'
+          : showNew && isAssessmentTask ? 'Score a founder against your Steward-Operator rubric from a call transcript or your notes.'
+          : showNew && isMemoTask ? 'Run the full multi-agent eval and get it formatted as your Recommendation › Management › Model › Market › Momentum › Malfeasance › Conditions memo.'
           : 'Multi-agent evaluations of your pipeline founders'
         }
         actions={
@@ -314,7 +317,7 @@ export default function Assess() {
                         <button onClick={() => setTranscripts(prev => prev.filter((_, j) => j !== i))} className="text-gray-300 hover:text-red-500 text-xs">Remove</button>
                       </div>
                       <textarea
-                        autoFocus={i === 0 && isAssessmentTask}
+                        autoFocus={i === 0 && isLeanIntakeTask}
                         value={t.content}
                         onChange={e => setTranscripts(prev => prev.map((x, j) => j === i ? { ...x, content: e.target.value } : x))}
                         placeholder="Paste the transcript or your call notes here..."
@@ -327,7 +330,7 @@ export default function Assess() {
               )}
             </div>
 
-            {isAssessmentTask && !showMoreMaterials && (
+            {isLeanIntakeTask && !showMoreMaterials && (
               <button onClick={() => setShowMoreMaterials(true)} className="text-xs text-gray-400 hover:text-gray-600 underline">
                 + Add a deck, links, or extra notes (optional)
               </button>
@@ -432,7 +435,7 @@ export default function Assess() {
                   <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
                   Starting agents...
                 </span>
-              ) : rerunMode ? 'Re-run Assessment with New Info' : isAssessmentTask ? 'Run Founder Assessment' : 'Run Assessment'}
+              ) : rerunMode ? 'Re-run Assessment with New Info' : isAssessmentTask ? 'Run Founder Assessment' : isMemoTask ? 'Generate Deal Memo' : 'Run Assessment'}
             </button>
           </div>
 
