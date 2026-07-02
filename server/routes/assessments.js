@@ -825,13 +825,34 @@ function robustJsonParse(text) {
   }
 }
 
+// Anthropic call with retry + backoff on TRANSIENT errors (overloaded / rate-limit / timeout /
+// 5xx / network). A single blip on the synthesis call used to nuke a whole assessment to
+// "partial" AFTER all four agents (the expensive part) had already succeeded. This makes the
+// run resilient. Non-transient errors (e.g. 400) throw immediately — retrying won't help.
+async function anthropicCreateWithRetry(client, params, { attempts = 3, baseDelay = 1500 } = {}) {
+  let lastErr;
+  for (let i = 0; i < attempts; i++) {
+    try { return await client.messages.create(params); }
+    catch (err) {
+      lastErr = err;
+      const status = err?.status || err?.response?.status;
+      const transient = !status || status === 408 || status === 429 || status >= 500 ||
+        /overloaded|rate.?limit|timeout|ETIMEDOUT|ECONNRESET|ENETUNREACH|socket hang up|fetch failed/i.test(err?.message || '');
+      if (!transient || i === attempts - 1) throw err;
+      const delay = baseDelay * Math.pow(2, i); // 1.5s → 3s → 6s
+      console.warn(`[Assessment] Anthropic call failed (${status || err.message}); retry ${i + 1}/${attempts - 1} in ${delay}ms`);
+      await new Promise(r => setTimeout(r, delay));
+    }
+  }
+  throw lastErr;
+}
+
 async function runAgent(client, prompt, context, signal, retries = 1) {
-  const response = await client.messages.create({
+  const response = await anthropicCreateWithRetry(client, {
     model: 'claude-sonnet-4-20250514',
     max_tokens: 4096,
     system: prompt.system,
     messages: [{ role: 'user', content: prompt.user(context) }],
-    ...(signal ? {} : {}), // Note: AbortSignal support varies by SDK version
   });
 
   const text = response.content[0].text.trim();
@@ -1016,7 +1037,7 @@ async function runStewardOperator(assessment, evaluationId) {
 }
 
 async function runSynthesis(client, prompt, agentOutputs, context, signal) {
-  const response = await client.messages.create({
+  const response = await anthropicCreateWithRetry(client, {
     model: 'claude-sonnet-4-20250514',
     max_tokens: 4096,
     system: prompt.system,
