@@ -284,6 +284,9 @@ app.get('/api/health/drift', requireAuth, async (req, res) => {
 });
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/payments', payments.router);
+// Deliberately NOT requireAuth (no browser session) — self-gated by VAULT_SYNC_SECRET.
+// See routes/vaultSync.js for why this is a separate channel from the shared MCP surface.
+app.use('/api/vault-sync', require('./routes/vaultSync'));
 
 // Protected routes
 app.use('/api/founders', requireAuth, require('./routes/founders'));
