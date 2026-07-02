@@ -881,6 +881,13 @@ addColumn('sourced_founders', 'breakout_score', 'INTEGER');
 addColumn('sourced_founders', 'breakout_signals', 'TEXT');
 db.exec(`CREATE INDEX IF NOT EXISTS idx_sf_breakout ON sourced_founders(user_id, breakout_score);`);
 
+// Meeting Prep reuses opportunity_assessments (same intake/ingestion: decks, transcripts,
+// URLs, notes, founder CRM context) with a type discriminator, rather than a parallel
+// table+pipeline. 'assessment' (default, existing behavior) | 'meeting_prep' (a single
+// briefing-generation pass instead of the 4-agent eval; result stored in synthesis_output,
+// same as always — the column's meaning is just contextual on assessment_type).
+addColumn('opportunity_assessments', 'assessment_type', "TEXT DEFAULT 'assessment'");
+
 // ── Newsletter / Daily Brief ──
 // One row per extracted newsletter issue. Stu reads a Gmail label over IMAP, extracts
 // the key points with Claude, and ranks each issue by relevance to the user's pipeline.

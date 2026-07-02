@@ -15,12 +15,15 @@ export default function Assess() {
   // 'prep' isn't built yet (see the build plan) — falls through to the full generic form.
   const isAssessmentTask = task === 'assessment';
   const isMemoTask = task === 'memo';
-  const isLeanIntakeTask = isAssessmentTask || isMemoTask;
+  const isPrepTask = task === 'prep';
+  const isLeanIntakeTask = isAssessmentTask || isMemoTask || isPrepTask;
 
   const [assessments, setAssessments] = useState([]);
   const [founders, setFounders] = useState([]);
   const [showNew, setShowNew] = useState(!!preselectedFounder || !!rerunId || !!task);
-  const [showMoreMaterials, setShowMoreMaterials] = useState(!isLeanIntakeTask);
+  // Prep leads with website + uploads (no call has happened yet), so those stay expanded;
+  // Assessment/Memo lead with the transcript and tuck decks/URLs behind a disclosure.
+  const [showMoreMaterials, setShowMoreMaterials] = useState(!isLeanIntakeTask || isPrepTask);
   const [loading, setLoading] = useState(true);
 
   // Form state
@@ -44,7 +47,9 @@ export default function Assess() {
     if (rerunId) loadRerunContext();
     // Assessment task mode: seed one transcript block so the primary "paste the call" textarea
     // is right there — no extra click needed to get to the thing you actually came here to do.
-    if (isLeanIntakeTask && !rerunId) setTranscripts([{ label: 'Call transcript / notes', content: '' }]);
+    // Prep is pre-meeting — there's usually no transcript yet, so don't auto-seed it;
+    // website + materials (below, auto-expanded) are the primary inputs for that flow.
+    if ((isAssessmentTask || isMemoTask) && !rerunId) setTranscripts([{ label: 'Call transcript / notes', content: '' }]);
   }, []);
 
   async function loadData() {
@@ -173,6 +178,7 @@ export default function Assess() {
     try {
       const payload = {
         founder_id: founderId ? parseInt(founderId) : null,
+        assessment_type: isPrepTask ? 'meeting_prep' : 'assessment',
         inputs: {
           decks: decks.map(d => ({ label: d.label, content: d.content, fileName: d.fileName, mimeType: d.mimeType, base64: d.base64 })),
           transcripts: transcripts.filter(t => t.content).map(t => ({ label: t.label, content: t.content })),
@@ -226,11 +232,12 @@ export default function Assess() {
   return (
     <div>
       <PageHeader
-        title={showNew && isAssessmentTask ? 'Founder Assessment' : showNew && isMemoTask ? 'Deal Memo' : 'Assess'}
+        title={showNew && isAssessmentTask ? 'Founder Assessment' : showNew && isMemoTask ? 'Deal Memo' : showNew && isPrepTask ? 'Meeting Prep' : 'Assess'}
         subtitle={
           rerunMode ? 'Add new materials and re-evaluate'
           : showNew && isAssessmentTask ? 'Score a founder against your Steward-Operator rubric from a call transcript or your notes.'
           : showNew && isMemoTask ? 'Run the full multi-agent eval and get it formatted as your Recommendation › Management › Model › Market › Momentum › Malfeasance › Conditions memo.'
+          : showNew && isPrepTask ? 'Founder, company, website, and any materials → a pre-meeting briefing: founder profile, thesis fit, questions to ask, and what to watch for.'
           : 'Multi-agent evaluations of your pipeline founders'
         }
         actions={
@@ -298,7 +305,9 @@ export default function Assess() {
               </div>
             )}
 
-            {/* Transcripts — led first in assessment task mode: paste the call, that's the job */}
+            {/* Transcripts — led first for Assessment/Memo (paste the call, that's the job);
+                secondary/optional for Prep (there's usually no call yet). */}
+            {!isPrepTask && (
             <div className="card p-4">
               <div className="flex items-center justify-between mb-3">
                 <h3 className="text-sm font-semibold text-gray-700">Call Transcript / Notes</h3>
@@ -329,6 +338,7 @@ export default function Assess() {
                 </div>
               )}
             </div>
+            )}
 
             {isLeanIntakeTask && !showMoreMaterials && (
               <button onClick={() => setShowMoreMaterials(true)} className="text-xs text-gray-400 hover:text-gray-600 underline">
@@ -338,9 +348,41 @@ export default function Assess() {
 
             {showMoreMaterials && (
             <>
+            {/* URLs — for Prep this is the company website, the primary input, so it leads. */}
+            <div className="card p-4">
+              <h3 className="text-sm font-semibold text-gray-700 mb-3">{isPrepTask ? 'Company Website' : 'Links & URLs'}</h3>
+              <div className="flex gap-2">
+                <input
+                  autoFocus={isPrepTask}
+                  type="url"
+                  value={urlInput}
+                  onChange={e => setUrlInput(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addUrl(); } }}
+                  placeholder={isPrepTask ? 'https://company.com' : 'https://company.com, LinkedIn, Crunchbase...'}
+                  className="input flex-1 text-sm"
+                />
+                <button onClick={addUrl} className="btn-primary text-xs px-3">Add</button>
+              </div>
+              {urls.length > 0 && (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {urls.map((u, i) => {
+                    let host = u;
+                    try { host = new URL(u).hostname; } catch {}
+                    return (
+                      <span key={i} className="badge badge-blue text-xs flex items-center gap-1">
+                        {host}
+                        <button onClick={() => setUrls(prev => prev.filter((_, j) => j !== i))} className="ml-1 hover:text-red-500">&times;</button>
+                      </span>
+                    );
+                  })}
+                </div>
+              )}
+              <p className="text-xs text-gray-400 mt-2">Content will be auto-fetched from each URL.</p>
+            </div>
+
             {/* Files / Decks */}
             <div className="card p-4">
-              <h3 className="text-sm font-semibold text-gray-700 mb-3">Pitch Decks & Files</h3>
+              <h3 className="text-sm font-semibold text-gray-700 mb-3">{isPrepTask ? 'Upload Materials' : 'Pitch Decks & Files'}</h3>
               <div className="border-2 border-dashed border-gray-200 rounded-lg p-4 text-center hover:border-blue-400 transition-colors cursor-pointer">
                 <input type="file" accept=".pdf,.txt,.doc,.docx" multiple onChange={handleFileUpload} className="hidden" id="file-upload" />
                 <label htmlFor="file-upload" className="cursor-pointer">
@@ -368,37 +410,6 @@ export default function Assess() {
                   onBlur={e => { if (e.target.value.trim()) { setDecks([{ label: 'Pasted Content', content: e.target.value, fileName: null }]); e.target.value = ''; } }}
                 />
               )}
-            </div>
-
-            {/* URLs */}
-            <div className="card p-4">
-              <h3 className="text-sm font-semibold text-gray-700 mb-3">Links & URLs</h3>
-              <div className="flex gap-2">
-                <input
-                  type="url"
-                  value={urlInput}
-                  onChange={e => setUrlInput(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addUrl(); } }}
-                  placeholder="https://company.com, LinkedIn, Crunchbase..."
-                  className="input flex-1 text-sm"
-                />
-                <button onClick={addUrl} className="btn-primary text-xs px-3">Add</button>
-              </div>
-              {urls.length > 0 && (
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {urls.map((u, i) => {
-                    let host = u;
-                    try { host = new URL(u).hostname; } catch {}
-                    return (
-                      <span key={i} className="badge badge-blue text-xs flex items-center gap-1">
-                        {host}
-                        <button onClick={() => setUrls(prev => prev.filter((_, j) => j !== i))} className="ml-1 hover:text-red-500">&times;</button>
-                      </span>
-                    );
-                  })}
-                </div>
-              )}
-              <p className="text-xs text-gray-400 mt-2">Content will be auto-fetched from each URL.</p>
             </div>
 
             {/* Notes */}
@@ -435,7 +446,7 @@ export default function Assess() {
                   <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
                   Starting agents...
                 </span>
-              ) : rerunMode ? 'Re-run Assessment with New Info' : isAssessmentTask ? 'Run Founder Assessment' : isMemoTask ? 'Generate Deal Memo' : 'Run Assessment'}
+              ) : rerunMode ? 'Re-run Assessment with New Info' : isAssessmentTask ? 'Run Founder Assessment' : isMemoTask ? 'Generate Deal Memo' : isPrepTask ? 'Prepare Briefing' : 'Run Assessment'}
             </button>
           </div>
 

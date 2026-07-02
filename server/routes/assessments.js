@@ -75,6 +75,7 @@ router.get('/:id/inputs', (req, res) => {
 // Accepts JSON body: { founder_id, group_id?, inputs: { decks[], transcripts[], urls[], notes[] } }
 router.post('/', async (req, res) => {
   const { founder_id, group_id, inputs } = req.body;
+  const assessmentType = req.body.assessment_type === 'meeting_prep' ? 'meeting_prep' : 'assessment';
 
   // Validate founder_id if provided
   const validFounderId = founder_id ? parseInt(founder_id) : null;
@@ -103,9 +104,9 @@ router.post('/', async (req, res) => {
   let result;
   try {
     result = db.prepare(`
-      INSERT INTO opportunity_assessments (founder_id, inputs, status, group_id, version_number, created_by)
-      VALUES (?, ?, 'processing_inputs', ?, ?, ?)
-    `).run(validFounderId, JSON.stringify(inputs || {}), gid, versionNumber, req.user.id);
+      INSERT INTO opportunity_assessments (founder_id, inputs, status, group_id, version_number, created_by, assessment_type)
+      VALUES (?, ?, 'processing_inputs', ?, ?, ?, ?)
+    `).run(validFounderId, JSON.stringify(inputs || {}), gid, versionNumber, req.user.id, assessmentType);
   } catch (err) {
     console.error('[Assessment] Insert error:', err);
     return res.status(500).json({ error: 'Failed to create assessment' });
@@ -297,11 +298,13 @@ router.post('/:id/rerun', async (req, res) => {
   const gid = assessment.group_id || crypto.randomUUID();
   const versionNumber = (assessment.version_number || 1) + 1;
 
-  // Merge: carry forward founder_id, combine old inputs with new
+  // Merge: carry forward founder_id + assessment_type (a re-run of a Meeting Prep must stay
+  // a Meeting Prep, not silently default back to the 4-agent investability eval), combine
+  // old inputs with new
   const result = db.prepare(`
-    INSERT INTO opportunity_assessments (founder_id, inputs, status, group_id, version_number, created_by)
-    VALUES (?, ?, 'processing_inputs', ?, ?, ?)
-  `).run(assessment.founder_id, JSON.stringify(newInputs || {}), gid, versionNumber, req.user.id);
+    INSERT INTO opportunity_assessments (founder_id, inputs, status, group_id, version_number, created_by, assessment_type)
+    VALUES (?, ?, 'processing_inputs', ?, ?, ?, ?)
+  `).run(assessment.founder_id, JSON.stringify(newInputs || {}), gid, versionNumber, req.user.id, assessment.assessment_type || 'assessment');
   const newId = result.lastInsertRowid;
 
   // Build change summary
@@ -498,9 +501,29 @@ async function runAssessmentAgents(assessmentId, founderId) {
       console.warn(`[Assessment ${assessmentId}] context assembly: ${assembled.notes.join('; ')}`);
     }
 
-    // Run all 4 agents in parallel (Team, Product, Market, Bear)
     const AGENT_PROMPTS = require('../agents/prompts');
 
+    // Meeting Prep is a single briefing pass, not the 4-agent investability eval — branch
+    // out here and skip team/product/market/bear/synthesis entirely. Stored in
+    // synthesis_output like everything else (contextual meaning per assessment_type).
+    const assessmentRow = db.prepare('SELECT assessment_type FROM opportunity_assessments WHERE id = ?').get(assessmentId);
+    if (assessmentRow?.assessment_type === 'meeting_prep') {
+      try {
+        const brief = await runAgent(client, AGENT_PROMPTS.meetingPrep, cappedContext, signal);
+        if (signal.aborted) return;
+        db.prepare(`UPDATE opportunity_assessments SET
+          synthesis_output = ?, status = 'complete', updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `).run(JSON.stringify(brief), assessmentId);
+      } catch (err) {
+        if (signal.aborted) return;
+        console.error('[Assessment] Meeting prep error:', err);
+        db.prepare("UPDATE opportunity_assessments SET status = 'error', updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(assessmentId);
+      }
+      return;
+    }
+
+    // Run all 4 agents in parallel (Team, Product, Market, Bear)
     const agentPromises = [
       runAgent(client, AGENT_PROMPTS.team, cappedContext, signal),
       runAgent(client, AGENT_PROMPTS.product, cappedContext, signal),

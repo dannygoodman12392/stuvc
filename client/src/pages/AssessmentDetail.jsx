@@ -173,6 +173,18 @@ export default function AssessmentDetail() {
   const isRunning = ['running', 'synthesizing', 'processing_inputs'].includes(assessment.status);
   const isComplete = assessment.status === 'complete' || assessment.status === 'partial';
 
+  // Meeting Prep is a briefing, not an investability eval — no tabs, no agent scores.
+  // synthesis_output holds the brief JSON here (contextual per assessment_type, same
+  // pattern as the backend). Bypass the tab-based UI entirely.
+  if (assessment.assessment_type === 'meeting_prep') {
+    return (
+      <MeetingPrepDetail
+        assessment={assessment} brief={synthesis} isRunning={isRunning} isComplete={isComplete}
+        error={assessment.status === 'error'} onRerun={handleRerun} rerunning={rerunning}
+      />
+    );
+  }
+
   const SIGNAL_COLORS = {
     'Invest': 'text-emerald-600',
     'Monitor': 'text-amber-600',
@@ -499,6 +511,101 @@ function QuestionsList({ questions, title }) {
           </li>
         ))}
       </ul>
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════
+// Meeting Prep — a briefing, not an eval. Own layout, no tabs, no scores.
+// ════════════════════════════════════════════════════════
+
+function MeetingPrepDetail({ assessment, brief, isRunning, isComplete, error, onRerun, rerunning }) {
+  return (
+    <div className="max-w-3xl mx-auto">
+      <div className="flex items-center gap-2 text-sm text-gray-400 mb-4">
+        <Link to="/assess" className="hover:text-gray-600">Assess</Link>
+        <span>/</span>
+        <span className="text-gray-700">Meeting Prep</span>
+      </div>
+
+      <div className="flex items-start justify-between mb-6">
+        <div>
+          <h1 className="text-xl font-bold text-gray-900">{assessment.founder_name || 'Unknown Founder'}</h1>
+          <p className="text-sm text-gray-500 mt-0.5">{assessment.founder_company || ''}</p>
+        </div>
+        {(error || (!isRunning && !isComplete)) && (
+          <button onClick={onRerun} disabled={rerunning}
+            className="text-xs px-3 py-1.5 rounded border border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100 disabled:opacity-50 transition">
+            {rerunning ? 'Starting…' : 'Re-run'}
+          </button>
+        )}
+      </div>
+
+      {isRunning && <div className="text-center py-12 text-gray-500 text-sm">Preparing the briefing…</div>}
+      {error && <div className="card p-4 text-sm text-red-600">The briefing failed to generate. <button onClick={onRerun} disabled={rerunning} className="underline">{rerunning ? 'Starting…' : 'Retry'}</button></div>}
+      {!isRunning && !error && !brief && <div className="text-center py-12 text-gray-500 text-sm">Not available.</div>}
+
+      {brief && (
+        <div className="space-y-4">
+          <MemoSection title="Founder Profile">
+            <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-line">{brief.founder_profile}</p>
+          </MemoSection>
+
+          {brief.company_snapshot && (
+            <MemoSection title="Company Snapshot">
+              <div className="space-y-2">
+                {brief.company_snapshot.one_liner && <p className="text-sm text-gray-800 font-medium">{brief.company_snapshot.one_liner}</p>}
+                {brief.company_snapshot.stage_and_traction && <p className="text-sm text-gray-700"><span className="font-semibold text-gray-800">Stage & traction: </span>{brief.company_snapshot.stage_and_traction}</p>}
+                {brief.company_snapshot.product && <p className="text-sm text-gray-700"><span className="font-semibold text-gray-800">Product: </span>{brief.company_snapshot.product}</p>}
+                {brief.company_snapshot.competitors && <p className="text-sm text-gray-700"><span className="font-semibold text-gray-800">Competitors: </span>{brief.company_snapshot.competitors}</p>}
+              </div>
+            </MemoSection>
+          )}
+
+          {brief.thesis_fit && (
+            <MemoSection title="Thesis Fit">
+              <p className="text-sm font-bold text-gray-900 mb-1">{brief.thesis_fit.verdict}</p>
+              <p className="text-sm text-gray-700 leading-relaxed">{brief.thesis_fit.reasoning}</p>
+            </MemoSection>
+          )}
+
+          {brief.market_context && (
+            <MemoSection title="Market Context">
+              <p className="text-sm text-gray-700 leading-relaxed">{brief.market_context}</p>
+            </MemoSection>
+          )}
+
+          {brief.questions_to_ask && brief.questions_to_ask.length > 0 && (
+            <MemoSection title="Questions to Ask">
+              <ul className="space-y-1.5">
+                {brief.questions_to_ask.map((q, i) => (
+                  <li key={i} className="text-sm text-gray-700 flex gap-2"><span className="text-blue-500 font-bold shrink-0">{i + 1}.</span>{q}</li>
+                ))}
+              </ul>
+            </MemoSection>
+          )}
+
+          {brief.danny_angle && (
+            <MemoSection title="Danny's Angle">
+              <div className="space-y-3">
+                {brief.danny_angle.watch_for && <p className="text-sm text-gray-700 leading-relaxed">{brief.danny_angle.watch_for}</p>}
+                {brief.danny_angle.lean_in_signals?.length > 0 && (
+                  <div>
+                    <p className="text-xs font-semibold text-emerald-700 mb-1">Lean-in signals</p>
+                    <ul className="space-y-1">{brief.danny_angle.lean_in_signals.map((s, i) => <li key={i} className="text-sm text-gray-600 flex gap-2"><span className="text-emerald-500 shrink-0">+</span>{s}</li>)}</ul>
+                  </div>
+                )}
+                {brief.danny_angle.pass_signals?.length > 0 && (
+                  <div>
+                    <p className="text-xs font-semibold text-red-700 mb-1">Pass signals</p>
+                    <ul className="space-y-1">{brief.danny_angle.pass_signals.map((s, i) => <li key={i} className="text-sm text-gray-600 flex gap-2"><span className="text-red-500 shrink-0">-</span>{s}</li>)}</ul>
+                  </div>
+                )}
+              </div>
+            </MemoSection>
+          )}
+        </div>
+      )}
     </div>
   );
 }
