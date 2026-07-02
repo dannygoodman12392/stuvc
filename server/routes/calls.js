@@ -25,7 +25,7 @@ router.post('/:founderId', async (req, res) => {
   if (client) {
     try {
       const response = await client.messages.create({
-        model: 'claude-sonnet-4-20250514',
+        model: 'claude-sonnet-4-6',
         max_tokens: 2048,
         system: `You are an investment analyst at Superior Studios, a Chicago-based pre-seed venture fund. Parse meeting transcripts and extract structured call summaries. Be specific, not generic. Pull exact quotes when relevant.`,
         messages: [{

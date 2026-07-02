@@ -849,7 +849,7 @@ async function anthropicCreateWithRetry(client, params, { attempts = 3, baseDela
 
 async function runAgent(client, prompt, context, signal, retries = 1) {
   const response = await anthropicCreateWithRetry(client, {
-    model: 'claude-sonnet-4-20250514',
+    model: 'claude-sonnet-4-6',
     max_tokens: 4096,
     system: prompt.system,
     messages: [{ role: 'user', content: prompt.user(context) }],
@@ -966,7 +966,7 @@ async function runStewardOperator(assessment, evaluationId) {
     const prompt = AGENT_PROMPTS.stewardOperator;
 
     const callModel = () => client.messages.create({
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-sonnet-4-6',
       max_tokens: 4096,
       system: prompt.system,
       messages: [{ role: 'user', content: prompt.user(cappedContext, agentOutputs, synthesisOutput) }],
@@ -1038,7 +1038,7 @@ async function runStewardOperator(assessment, evaluationId) {
 
 async function runSynthesis(client, prompt, agentOutputs, context, signal) {
   const response = await anthropicCreateWithRetry(client, {
-    model: 'claude-sonnet-4-20250514',
+    model: 'claude-sonnet-4-6',
     max_tokens: 4096,
     system: prompt.system,
     messages: [{ role: 'user', content: prompt.user(agentOutputs, context) }],

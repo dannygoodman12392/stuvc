@@ -151,7 +151,7 @@ Diligence: ${founder.diligence_status || 'Not started'}`;
   // Generate memo in background
   try {
     const response = await client.messages.create({
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-sonnet-4-6',
       max_tokens: 8192,
       system: `You are the IC Memo Writer for Superior Studios, a Chicago-based pre-seed venture fund (~$10M Fund I).
 

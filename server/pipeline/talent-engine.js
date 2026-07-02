@@ -405,7 +405,7 @@ async function deriveJdQueries(anthropic, roleScope, archKey, locSuffix) {
   if (!jd && !mustHaves && !roleScope.title) return [];
   try {
     const resp = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-sonnet-4-6',
       max_tokens: 700,
       system: `You convert a startup job description into precise LinkedIn people-search queries for sourcing the BEST first hires.
 Rules:
@@ -761,7 +761,7 @@ Return ONLY valid JSON:
 async function scoreCandidate(client, candidate, scoringPrompt) {
   try {
     const response = await client.messages.create({
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-sonnet-4-6',
       max_tokens: 900,
       system: scoringPrompt,
       messages: [{

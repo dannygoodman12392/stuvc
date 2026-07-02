@@ -169,7 +169,7 @@ router.get('/test-anthropic', async (req, res) => {
     try {
       const Anthropic = require('@anthropic-ai/sdk');
       const client = new Anthropic({ apiKey });
-      await client.messages.create({ model: 'claude-sonnet-4-20250514', max_tokens: 1, messages: [{ role: 'user', content: 'hi' }] });
+      await client.messages.create({ model: 'claude-sonnet-4-6', max_tokens: 1, messages: [{ role: 'user', content: 'hi' }] });
       return res.json({ ok: true, source, keyHint, message: 'Working — this key can reach the Anthropic API.' });
     } catch (e) {
       const msg = e.message || String(e);

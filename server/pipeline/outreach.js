@@ -5,7 +5,7 @@
  */
 const { anthropicFor } = require('../lib/providerKeys');
 
-const MODEL = 'claude-sonnet-4-20250514';
+const MODEL = 'claude-sonnet-4-6';
 
 class NoKeyError extends Error {
   constructor() { super('Add your Anthropic API key in Settings to draft outreach — it bills your account, not the platform.'); this.code = 'no_key'; this.status = 400; }

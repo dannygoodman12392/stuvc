@@ -216,7 +216,7 @@ function robustJsonParse(text) {
 
 async function runAgent(prompt, context, retries = 1) {
   const response = await client.messages.create({
-    model: 'claude-sonnet-4-20250514',
+    model: 'claude-sonnet-4-6',
     max_tokens: 4096,
     system: prompt.system,
     messages: [{ role: 'user', content: prompt.user(context) }],
@@ -234,7 +234,7 @@ async function runAgent(prompt, context, retries = 1) {
 
 async function runSynthesis(agentOutputs, context) {
   const response = await client.messages.create({
-    model: 'claude-sonnet-4-20250514',
+    model: 'claude-sonnet-4-6',
     max_tokens: 4096,
     system: AGENT_PROMPTS.synthesis.system,
     messages: [{ role: 'user', content: AGENT_PROMPTS.synthesis.user(agentOutputs, context) }],

@@ -127,7 +127,7 @@ async function extractIssue(client, mail) {
   if (!client) return fallback;
   try {
     const resp = await client.messages.create({
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-sonnet-4-6',
       max_tokens: 700,
       system: EXTRACT_SYSTEM,
       messages: [{

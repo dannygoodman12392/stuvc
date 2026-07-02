@@ -45,7 +45,7 @@ router.post('/chat', async (req, res) => {
 
   try {
     const stream = client.messages.stream({
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-sonnet-4-6',
       max_tokens: 4096,
       system: systemPrompt,
       messages: messages.map(m => ({ role: m.role, content: m.content }))
@@ -85,7 +85,7 @@ router.post('/fit-score', async (req, res) => {
 
   try {
     const response = await client.messages.create({
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-sonnet-4-6',
       max_tokens: 1024,
       system: `You are an investment analyst at Superior Studios, a Chicago-based pre-seed venture fund. Score founders on fit with the fund's thesis: Chicago/Midwest focus, B2B SaaS/AI/fintech/healthtech/marketplace, pre-seed stage, strong founder DNA (Speed, Storytelling, Salesmanship, Build+Motivate).`,
       messages: [{

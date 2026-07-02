@@ -14,7 +14,7 @@
  */
 const { anthropicFor } = require('../lib/providerKeys');
 
-const MODEL = 'claude-sonnet-4-20250514';
+const MODEL = 'claude-sonnet-4-6';
 
 const SYSTEM = `You are a top-decile talent and founder analyst for a pre-seed venture fund.
 You evaluate people on their potential to build or join a category-defining ("unicorn") company.
