@@ -46,6 +46,31 @@ export default function Home() {
         </p>
       </div>
 
+      {/* 0 — Do the work: task launcher */}
+      <section>
+        <SectionHeader
+          title="Do the work"
+          sub="Guided flows — each produces a saved, framework-grounded deliverable"
+        />
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {[
+            { to: '/assess?task=prep', label: 'Meeting Prep', desc: 'Founder + company + website + materials → a briefing with the questions to ask and what to probe.' },
+            { to: '/assess?task=assessment', label: 'Founder Assessment', desc: 'Score a founder against your Steward-Operator rubric from a transcript or your notes.' },
+            { to: '/assess?task=memo', label: 'Deal Memo', desc: 'Full multi-agent eval → your Recommendation › Management › Model › Market › Momentum › Malfeasance › Conditions memo.' },
+            { to: '/ask?topic=thesis', label: 'Thesis Update', desc: 'Work through ideas with Stu; evolve your positions from the week’s deal flow.' },
+          ].map(t => (
+            <Link key={t.to} to={t.to}
+              className="card p-4 flex flex-col hover:shadow-md hover:border-amber-300 transition-shadow group">
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-semibold text-gray-900 group-hover:text-amber-800">{t.label}</span>
+                <span className="text-amber-400 group-hover:text-amber-700 text-sm">→</span>
+              </div>
+              <p className="text-xs text-gray-500 mt-1 leading-relaxed">{t.desc}</p>
+            </Link>
+          ))}
+        </div>
+      </section>
+
       {/* 1 — Catch up: the brief */}
       <section>
         <SectionHeader
