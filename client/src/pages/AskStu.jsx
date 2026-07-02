@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { api } from '../utils/api';
 
 const SUGGESTIONS = [
@@ -11,7 +11,18 @@ const SUGGESTIONS = [
   'How many founders are in each stage?',
 ];
 
+const THESIS_SUGGESTIONS = [
+  'What patterns show up across everything we\'ve Passed on recently?',
+  'Which domains are converting best right now?',
+  'Should we widen beyond real industries — what does the data say?',
+  'Pull up my recent saved thesis notes',
+  'What do the highest-fit-score founders in the pipeline have in common?',
+  'Pressure-test: are we actually Chicago/Midwest-first in practice, or just on paper?',
+];
+
 export default function AskStu() {
+  const [searchParams] = useSearchParams();
+  const isThesisMode = searchParams.get('topic') === 'thesis';
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState(false);
@@ -45,7 +56,7 @@ export default function AskStu() {
         .filter(m => m.role === 'user' || m.role === 'assistant')
         .map(m => ({ role: m.role, content: m.content }));
 
-      for await (const chunk of api.stuChat(apiMessages)) {
+      for await (const chunk of api.stuChat(apiMessages, isThesisMode ? 'thesis' : undefined)) {
         if (chunk.type === 'text') {
           assistantMsg.content += chunk.text;
           setMessages([...newMessages, { ...assistantMsg }]);
@@ -79,8 +90,12 @@ export default function AskStu() {
     <div className="flex flex-col h-[calc(100vh-2rem)] -my-4">
       {/* Header */}
       <div className="flex-shrink-0 pb-4">
-        <h1 className="text-xl font-bold text-gray-900">Ask Stu</h1>
-        <p className="text-sm text-gray-500 mt-0.5">Manage your pipeline, extract insights, and update records — all through conversation.</p>
+        <h1 className="text-xl font-bold text-gray-900">{isThesisMode ? 'Thesis Update' : 'Ask Stu'}</h1>
+        <p className="text-sm text-gray-500 mt-0.5">
+          {isThesisMode
+            ? 'Work through your thesis with Stu, grounded in real deal flow — not a generic chat.'
+            : 'Manage your pipeline, extract insights, and update records — all through conversation.'}
+        </p>
       </div>
 
       {/* Messages area */}
@@ -92,12 +107,14 @@ export default function AskStu() {
                 <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
               </svg>
             </div>
-            <p className="text-lg font-semibold text-gray-900 mb-1">What can I help with?</p>
+            <p className="text-lg font-semibold text-gray-900 mb-1">{isThesisMode ? 'What are you thinking through?' : 'What can I help with?'}</p>
             <p className="text-sm text-gray-500 mb-6 text-center max-w-md">
-              I can search founders, add people to the pipeline, update statuses, pull insights, and more. Just tell me what you need.
+              {isThesisMode
+                ? 'I\'ll ground this in your actual deal flow — what\'s been passed, what\'s converting, what patterns are real. Push back on the thesis; I\'ll push back too.'
+                : 'I can search founders, add people to the pipeline, update statuses, pull insights, and more. Just tell me what you need.'}
             </p>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-w-lg w-full">
-              {SUGGESTIONS.map((s, i) => (
+              {(isThesisMode ? THESIS_SUGGESTIONS : SUGGESTIONS).map((s, i) => (
                 <button
                   key={i}
                   onClick={() => handleSend(s)}
@@ -220,6 +237,8 @@ function toolLabel(tool) {
     run_fit_score: 'Scoring fit',
     log_call: 'Logging call',
     query_insights: 'Analyzing data',
+    save_thesis_note: 'Saving thesis note',
+    list_thesis_notes: 'Pulling thesis notes',
   };
   return labels[tool] || tool;
 }
@@ -338,6 +357,41 @@ function ToolResultCard({ tool, result }) {
               </div>
               <span className={`badge text-[10px] ${signalBadge(a.overall_signal)}`}>{a.overall_signal || a.status}</span>
             </Link>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  // Thesis note saved
+  if (tool === 'save_thesis_note' && result.title) {
+    return (
+      <div className="bg-white border border-gray-200 rounded-xl p-3">
+        <div className="flex items-center gap-2">
+          <span className="w-2 h-2 rounded-full bg-emerald-500" />
+          <span className="text-xs font-medium text-gray-500">Saved</span>
+        </div>
+        <p className="text-sm font-medium text-gray-900 mt-1">{result.title}</p>
+      </div>
+    );
+  }
+
+  // Thesis notes list
+  if (tool === 'list_thesis_notes' && result.notes?.length > 0) {
+    return (
+      <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+        <div className="px-3 py-2 bg-gray-50 border-b border-gray-100 text-xs font-medium text-gray-500">
+          {result.count} thesis note{result.count !== 1 ? 's' : ''}
+        </div>
+        <div className="divide-y divide-gray-100">
+          {result.notes.map(n => (
+            <div key={n.id} className="px-3 py-2.5">
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-medium text-gray-900">{n.title}</p>
+                <p className="text-xs text-gray-400 shrink-0 ml-2">{new Date(n.created_at).toLocaleDateString()}</p>
+              </div>
+              <p className="text-xs text-gray-500 mt-1 line-clamp-2">{n.content}</p>
+            </div>
           ))}
         </div>
       </div>

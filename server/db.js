@@ -888,6 +888,22 @@ db.exec(`CREATE INDEX IF NOT EXISTS idx_sf_breakout ON sourced_founders(user_id,
 // same as always — the column's meaning is just contextual on assessment_type).
 addColumn('opportunity_assessments', 'assessment_type', "TEXT DEFAULT 'assessment'");
 
+// Thesis Update (Ask Stu, ?topic=thesis): a place to save a thesis reflection/conclusion
+// worked through in chat. Saved IN STU today, not vault-synced — that's a deliberately
+// separate, not-yet-built path (see vault-sync's assessment_type filter + its comment on
+// why Meeting Prep isn't synced either; extending the bridge to a second content type is
+// real, scoped work for later, not squeezed in here).
+db.exec(`
+  CREATE TABLE IF NOT EXISTS thesis_notes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    content TEXT NOT NULL,
+    created_by INTEGER REFERENCES users(id),
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_thesis_notes_user ON thesis_notes(created_by, created_at);`);
+
 // ── Newsletter / Daily Brief ──
 // One row per extracted newsletter issue. Stu reads a Gmail label over IMAP, extracts
 // the key points with Claude, and ranks each issue by relevance to the user's pipeline.

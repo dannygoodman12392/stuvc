@@ -195,12 +195,12 @@ export const api = {
   getBriefArchive: () => request('/newsletter/archive'),
 
   // Stu tool-use chat
-  stuChat: async function* (messages) {
+  stuChat: async function* (messages, mode) {
     const token = getToken();
     const res = await fetch(`${API_BASE}/stu/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-      body: JSON.stringify({ messages })
+      body: JSON.stringify(mode ? { messages, mode } : { messages })
     });
 
     if (res.status === 401) {

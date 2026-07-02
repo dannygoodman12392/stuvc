@@ -193,6 +193,23 @@ const TOOLS = [
       },
       required: ['question']
     }
+  },
+  {
+    name: 'save_thesis_note',
+    description: 'Save a thesis reflection or conclusion Danny has worked through — a position, a pattern spotted in deal flow, a decision to widen/narrow a criterion. Use when the conversation reaches a real conclusion worth keeping, not for every message. Saved in Stu (viewable via list_thesis_notes); not yet synced to the Obsidian vault.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: 'Short title, e.g. "Widening real-industries to include prosumer fintech"' },
+        content: { type: 'string', description: 'The full reflection/conclusion, in Danny\'s voice — direct, no filler.' }
+      },
+      required: ['title', 'content']
+    }
+  },
+  {
+    name: 'list_thesis_notes',
+    description: 'List previously saved thesis notes, most recent first. Use when Danny asks to see past thesis reflections or wants to build on an earlier one.',
+    input_schema: { type: 'object', properties: { limit: { type: 'number', description: 'Max notes to return, default 10' } } }
   }
 ];
 
@@ -388,6 +405,18 @@ function executeTool(toolName, input, userId) {
       };
     }
 
+    case 'save_thesis_note': {
+      if (!input.title || !input.content) return { success: false, error: 'title and content are required' };
+      const result = db.prepare('INSERT INTO thesis_notes (title, content, created_by) VALUES (?, ?, ?)').run(input.title, input.content, userId);
+      return { success: true, id: result.lastInsertRowid, title: input.title };
+    }
+
+    case 'list_thesis_notes': {
+      const limit = Math.min(input.limit || 10, 50);
+      const notes = db.prepare('SELECT id, title, content, created_at FROM thesis_notes WHERE created_by = ? ORDER BY created_at DESC LIMIT ?').all(userId, limit);
+      return { success: true, count: notes.length, notes };
+    }
+
     default:
       return { success: false, error: `Unknown tool: ${toolName}` };
   }
@@ -434,6 +463,29 @@ INVESTMENT CONTEXT:
 - Team: Brandon Cruz (Managing Partner), Eric Hutt (VP), Rob Schinske (Senior Associate), Danny Goodman (Strategic Initiatives)
 - Signals: Invest, Monitor, Pass`;
 
+// Thesis Update mode (Ask Stu, ?topic=thesis). Danny's actual vault thesis text isn't
+// fetchable here — Stu runs remote and can't read his local Obsidian vault (the same
+// one-way limitation the vault-sync bridge works around by having the LOCAL side pull FROM
+// Stu, not the reverse). So this grounds in the two things that ARE real and available:
+// (1) the confirmed current thesis parameters, and (2) actual deal flow already in Stu's
+// own DB — which needs no cross-boundary fetch at all.
+const THESIS_ADDENDUM = `
+
+── THESIS UPDATE MODE ──
+Danny is working through his fund thesis, not managing pipeline records. Be a sharp thinking partner, not a form-filler.
+
+CURRENT THESIS (the starting point, not gospel — the point of this conversation may be to pressure-test or evolve it):
+- $10M pre-seed fund. Check size $150K-$400K.
+- Real industries — professional services, construction, healthcare, legal, financial services. NOT tech-to-tech / horizontal SaaS.
+- Chicago/Midwest first.
+- Back the person over the deck.
+
+HOW TO WORK:
+- Lean on query_insights, get_assessments, and search_founders to ground the conversation in REAL deal flow — what's actually been Passed and why (pass_reason), what's converting, what domains keep showing up. Don't theorize in a vacuum when the data is one tool call away.
+- Push back. If Danny proposes widening or narrowing a criterion, ask what evidence from recent deal flow supports it, or surface evidence that complicates it.
+- When the conversation reaches a real conclusion — a position taken, a pattern confirmed, a criterion changed — offer to save it with save_thesis_note. Don't save every message, only actual conclusions.
+- Direct, no filler, no hedging. This is investment judgment, not a status update.`;
+
 // Truncate tool results to prevent context overflow
 function truncateToolResult(result) {
   const json = JSON.stringify(result);
@@ -468,10 +520,11 @@ router.post('/chat', async (req, res) => {
   const client = anthropicFor(req.user.id, 'stu-chat');
   if (!client) return res.status(503).json({ error: 'AI unavailable — add your Anthropic API key in Settings' });
 
-  const { messages } = req.body;
+  const { messages, mode } = req.body;
   if (!messages || !messages.length) return res.status(400).json({ error: 'Messages required' });
 
   const userId = req.user?.id;
+  const systemPrompt = mode === 'thesis' ? STU_SYSTEM + THESIS_ADDENDUM : STU_SYSTEM;
 
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
@@ -491,7 +544,7 @@ router.post('/chat', async (req, res) => {
         response = await client.messages.create({
           model: 'claude-sonnet-4-6',
           max_tokens: 4096,
-          system: STU_SYSTEM,
+          system: systemPrompt,
           tools: TOOLS,
           messages: conversationMessages
         });
