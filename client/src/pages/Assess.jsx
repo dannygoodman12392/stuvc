@@ -9,10 +9,16 @@ export default function Assess() {
   const preselectedFounder = searchParams.get('founder');
   const rerunId = searchParams.get('rerun');
   const rerunGroupId = searchParams.get('group');
+  const task = searchParams.get('task');
+  // 'assessment' gets a purpose-built lean intake today. 'memo'/'prep' aren't built yet
+  // (see the build plan) — they fall through to the full generic form for now, which is
+  // still a working assessment, just not the tailored guided flow.
+  const isAssessmentTask = task === 'assessment';
 
   const [assessments, setAssessments] = useState([]);
   const [founders, setFounders] = useState([]);
-  const [showNew, setShowNew] = useState(!!preselectedFounder || !!rerunId);
+  const [showNew, setShowNew] = useState(!!preselectedFounder || !!rerunId || !!task);
+  const [showMoreMaterials, setShowMoreMaterials] = useState(!isAssessmentTask);
   const [loading, setLoading] = useState(true);
 
   // Form state
@@ -34,6 +40,9 @@ export default function Assess() {
   useEffect(() => {
     loadData();
     if (rerunId) loadRerunContext();
+    // Assessment task mode: seed one transcript block so the primary "paste the call" textarea
+    // is right there — no extra click needed to get to the thing you actually came here to do.
+    if (isAssessmentTask && !rerunId) setTranscripts([{ label: 'Call transcript / notes', content: '' }]);
   }, []);
 
   async function loadData() {
@@ -215,8 +224,12 @@ export default function Assess() {
   return (
     <div>
       <PageHeader
-        title="Assess"
-        subtitle={rerunMode ? 'Add new materials and re-evaluate' : 'Multi-agent evaluations of your pipeline founders'}
+        title={isAssessmentTask && showNew ? 'Founder Assessment' : 'Assess'}
+        subtitle={
+          rerunMode ? 'Add new materials and re-evaluate'
+          : isAssessmentTask && showNew ? 'Score a founder against your Steward-Operator rubric from a call transcript or your notes.'
+          : 'Multi-agent evaluations of your pipeline founders'
+        }
         actions={
           <button onClick={() => { setShowNew(!showNew); if (showNew) { setRerunMode(false); setRerunPreviousInputs([]); } }} className="btn-primary text-sm">
             {showNew ? 'View history' : 'New assessment'}
@@ -282,6 +295,46 @@ export default function Assess() {
               </div>
             )}
 
+            {/* Transcripts — led first in assessment task mode: paste the call, that's the job */}
+            <div className="card p-4">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-semibold text-gray-700">Call Transcript / Notes</h3>
+                <button onClick={addTranscript} className="text-blue-600 text-xs hover:underline">+ Add another</button>
+              </div>
+              {transcripts.length === 0 ? (
+                <button onClick={addTranscript} className="w-full border-2 border-dashed border-gray-200 rounded-lg py-3 text-xs text-gray-400 hover:border-blue-400 hover:text-blue-500 transition-colors">
+                  Click to paste a call transcript (Granola, Fireflies, etc.) or your own notes
+                </button>
+              ) : (
+                <div className="space-y-3">
+                  {transcripts.map((t, i) => (
+                    <div key={i}>
+                      <div className="flex items-center justify-between mb-1">
+                        <input type="text" value={t.label} onChange={e => setTranscripts(prev => prev.map((x, j) => j === i ? { ...x, label: e.target.value } : x))} className="text-xs text-gray-500 border-none bg-transparent focus:outline-none" placeholder="Label..." />
+                        <button onClick={() => setTranscripts(prev => prev.filter((_, j) => j !== i))} className="text-gray-300 hover:text-red-500 text-xs">Remove</button>
+                      </div>
+                      <textarea
+                        autoFocus={i === 0 && isAssessmentTask}
+                        value={t.content}
+                        onChange={e => setTranscripts(prev => prev.map((x, j) => j === i ? { ...x, content: e.target.value } : x))}
+                        placeholder="Paste the transcript or your call notes here..."
+                        className="input w-full text-sm min-h-[160px] resize-y"
+                        rows={7}
+                      />
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {isAssessmentTask && !showMoreMaterials && (
+              <button onClick={() => setShowMoreMaterials(true)} className="text-xs text-gray-400 hover:text-gray-600 underline">
+                + Add a deck, links, or extra notes (optional)
+              </button>
+            )}
+
+            {showMoreMaterials && (
+            <>
             {/* Files / Decks */}
             <div className="card p-4">
               <h3 className="text-sm font-semibold text-gray-700 mb-3">Pitch Decks & Files</h3>
@@ -345,31 +398,6 @@ export default function Assess() {
               <p className="text-xs text-gray-400 mt-2">Content will be auto-fetched from each URL.</p>
             </div>
 
-            {/* Transcripts */}
-            <div className="card p-4">
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="text-sm font-semibold text-gray-700">Call Transcripts</h3>
-                <button onClick={addTranscript} className="text-blue-600 text-xs hover:underline">+ Add transcript</button>
-              </div>
-              {transcripts.length === 0 ? (
-                <button onClick={addTranscript} className="w-full border-2 border-dashed border-gray-200 rounded-lg py-3 text-xs text-gray-400 hover:border-blue-400 hover:text-blue-500 transition-colors">
-                  Click to add a call transcript (Granola, Fireflies, etc.)
-                </button>
-              ) : (
-                <div className="space-y-3">
-                  {transcripts.map((t, i) => (
-                    <div key={i}>
-                      <div className="flex items-center justify-between mb-1">
-                        <input type="text" value={t.label} onChange={e => setTranscripts(prev => prev.map((x, j) => j === i ? { ...x, label: e.target.value } : x))} className="text-xs text-gray-500 border-none bg-transparent focus:outline-none" placeholder="Label..." />
-                        <button onClick={() => setTranscripts(prev => prev.filter((_, j) => j !== i))} className="text-gray-300 hover:text-red-500 text-xs">Remove</button>
-                      </div>
-                      <textarea value={t.content} onChange={e => setTranscripts(prev => prev.map((x, j) => j === i ? { ...x, content: e.target.value } : x))} placeholder="Paste transcript here..." className="input w-full text-sm min-h-[80px] resize-none" rows={3} />
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
             {/* Notes */}
             <div className="card p-4">
               <div className="flex items-center justify-between mb-3">
@@ -394,6 +422,8 @@ export default function Assess() {
                 </div>
               )}
             </div>
+            </>
+            )}
 
             {/* Run button */}
             <button onClick={handleRunAssessment} disabled={running} className="btn-accent w-full justify-center text-sm py-3">
@@ -402,7 +432,7 @@ export default function Assess() {
                   <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
                   Starting agents...
                 </span>
-              ) : rerunMode ? 'Re-run Assessment with New Info' : 'Run Assessment'}
+              ) : rerunMode ? 'Re-run Assessment with New Info' : isAssessmentTask ? 'Run Founder Assessment' : 'Run Assessment'}
             </button>
           </div>
 
@@ -421,13 +451,12 @@ export default function Assess() {
             <div className="card p-4">
               <h3 className="text-sm font-semibold text-gray-700 mb-3">Evaluation Agents</h3>
               <ul className="text-xs text-gray-500 space-y-2">
-                <li className="flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-blue-500" /><span className="text-gray-700 font-medium">Founder Evaluator</span> — DNA, traits, stage</li>
+                <li className="flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-blue-500" /><span className="text-gray-700 font-medium">Founder Evaluator</span> — team, DNA, traits, stage</li>
+                <li className="flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-blue-500" /><span className="text-gray-700 font-medium">Product Evaluator</span> — instincts, execution, defensibility</li>
                 <li className="flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-blue-500" /><span className="text-gray-700 font-medium">Market Analyst</span> — TAM, timing, why now</li>
-                <li className="flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-blue-500" /><span className="text-gray-700 font-medium">Economics Inspector</span> — Unit econ, model</li>
-                <li className="flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-blue-500" /><span className="text-gray-700 font-medium">Pattern Auditor</span> — Thesis fit, anti-patterns</li>
-                <li className="flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-red-500" /><span className="text-gray-700 font-medium">The Bear</span> — Adversarial risk analysis</li>
+                <li className="flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-red-500" /><span className="text-gray-700 font-medium">The Bear</span> — adversarial risk analysis</li>
               </ul>
-              <p className="text-[11px] text-gray-400 mt-3 pt-3 border-t border-gray-100">All 5 agents run in parallel, then a synthesis agent produces an IC-ready memo.</p>
+              <p className="text-[11px] text-gray-400 mt-3 pt-3 border-t border-gray-100">All 4 agents run in parallel (Team 45% / Product 25% / Market 30%, then a Bear risk adjustment), then a synthesis agent produces an IC-ready memo.</p>
             </div>
           </div>
         </div>
