@@ -463,14 +463,31 @@ export default function Assess() {
               </div>
             </div>
             <div className="card p-4">
-              <h3 className="text-sm font-semibold text-gray-700 mb-3">Evaluation Agents</h3>
-              <ul className="text-xs text-gray-500 space-y-2">
-                <li className="flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-blue-500" /><span className="text-gray-700 font-medium">Founder Evaluator</span> — team, DNA, traits, stage</li>
-                <li className="flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-blue-500" /><span className="text-gray-700 font-medium">Product Evaluator</span> — instincts, execution, defensibility</li>
-                <li className="flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-blue-500" /><span className="text-gray-700 font-medium">Market Analyst</span> — TAM, timing, why now</li>
-                <li className="flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-red-500" /><span className="text-gray-700 font-medium">The Bear</span> — adversarial risk analysis</li>
-              </ul>
-              <p className="text-[11px] text-gray-400 mt-3 pt-3 border-t border-gray-100">All 4 agents run in parallel (Team 45% / Product 25% / Market 30%, then a Bear risk adjustment), then a synthesis agent produces an IC-ready memo.</p>
+              {isPrepTask ? (
+                <>
+                  <h3 className="text-sm font-semibold text-gray-700 mb-3">The Briefing</h3>
+                  <ul className="text-xs text-gray-500 space-y-1.5">
+                    <li>Founder Profile</li>
+                    <li>Company Snapshot</li>
+                    <li>Thesis Fit</li>
+                    <li>Market Context</li>
+                    <li>Questions to Ask</li>
+                    <li>Danny's Angle</li>
+                  </ul>
+                  <p className="text-[11px] text-gray-400 mt-3 pt-3 border-t border-gray-100">One pass from what's provided — no live web/LinkedIn search. Anything unverifiable is flagged explicitly, never invented.</p>
+                </>
+              ) : (
+                <>
+                  <h3 className="text-sm font-semibold text-gray-700 mb-3">Evaluation Agents</h3>
+                  <ul className="text-xs text-gray-500 space-y-2">
+                    <li className="flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-blue-500" /><span className="text-gray-700 font-medium">Founder Evaluator</span> — team, DNA, traits, stage</li>
+                    <li className="flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-blue-500" /><span className="text-gray-700 font-medium">Product Evaluator</span> — instincts, execution, defensibility</li>
+                    <li className="flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-blue-500" /><span className="text-gray-700 font-medium">Market Analyst</span> — TAM, timing, why now</li>
+                    <li className="flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-red-500" /><span className="text-gray-700 font-medium">The Bear</span> — adversarial risk analysis</li>
+                  </ul>
+                  <p className="text-[11px] text-gray-400 mt-3 pt-3 border-t border-gray-100">All 4 agents run in parallel (Team 45% / Product 25% / Market 30%, then a Bear risk adjustment), then a synthesis agent produces an IC-ready memo.</p>
+                </>
+              )}
             </div>
           </div>
         </div>
