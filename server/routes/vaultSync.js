@@ -56,6 +56,13 @@ function mapAgentOutputs(row) {
   };
 }
 
+// Real Founder Assessments only. Meeting Prep (assessment_type='meeting_prep') has a
+// completely different data shape (founder_profile/company_snapshot/thesis_fit/... — see
+// agents/prompts.js meetingPrep) and would crash or garble the vault template if this
+// bridge tried to map it through mapAgentOutputs/synthesis like a real assessment. Meeting
+// Prep gets its own vault-sync path later if/when Danny wants briefings synced too.
+const ASSESSMENT_TYPE_FILTER = "(a.assessment_type IS NULL OR a.assessment_type = 'assessment')";
+
 // GET /api/vault-sync/assessments — a light list for the local task to dedupe against.
 router.get('/assessments', (req, res) => {
   const rows = db.prepare(`
@@ -63,7 +70,7 @@ router.get('/assessments', (req, res) => {
            f.name as founder_name, f.company as founder_company
     FROM opportunity_assessments a
     LEFT JOIN founders f ON a.founder_id = f.id
-    WHERE a.is_deleted = 0 AND a.created_by = ?
+    WHERE a.is_deleted = 0 AND a.created_by = ? AND ${ASSESSMENT_TYPE_FILTER}
     ORDER BY a.created_at DESC
     LIMIT 200
   `).all(OWNER_ID);
@@ -80,9 +87,9 @@ router.get('/assessments/:id', (req, res) => {
     SELECT a.*, f.name as founder_name, f.company as founder_company
     FROM opportunity_assessments a
     LEFT JOIN founders f ON a.founder_id = f.id
-    WHERE a.id = ? AND a.is_deleted = 0 AND a.created_by = ?
+    WHERE a.id = ? AND a.is_deleted = 0 AND a.created_by = ? AND ${ASSESSMENT_TYPE_FILTER}
   `).get(req.params.id, OWNER_ID);
-  if (!a) return res.status(404).json({ error: 'Assessment not found' });
+  if (!a) return res.status(404).json({ error: 'Assessment not found (or is a Meeting Prep — not synced by this endpoint).' });
 
   const agents = mapAgentOutputs(a);
   const synthesis = safeParse(a.synthesis_output);
