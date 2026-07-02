@@ -50,6 +50,7 @@ export default function AssessmentDetail() {
   const [rubricLoading, setRubricLoading] = useState(false);
   const [notionState, setNotionState] = useState({ status: 'idle', url: null, error: null });
   const [divergence, setDivergence] = useState(null);
+  const [rerunning, setRerunning] = useState(false);
   const pollRef = useRef(null);
   const rubricPollRef = useRef(null);
 
@@ -147,6 +148,21 @@ export default function AssessmentDetail() {
     }
   }
 
+  // Re-run: a 'partial' (e.g. a synthesis blip) or 'error' assessment stalled mid-run with no
+  // way to retry from the UI. This creates a new version (same inputs, no new materials) and
+  // navigates to it so Danny watches it complete instead of staring at the stuck one.
+  async function handleRerun() {
+    if (rerunning) return;
+    setRerunning(true);
+    try {
+      const result = await api.rerunAssessment(id, { inputs: {} });
+      navigate(`/assess/${result.id}`);
+    } catch (err) {
+      console.error('Failed to re-run assessment:', err);
+      setRerunning(false);
+    }
+  }
+
   if (loading) return <div className="text-center py-12 text-gray-500 text-sm">Loading...</div>;
   if (!assessment) return <div className="text-center py-12 text-gray-500 text-sm">Assessment not found</div>;
 
@@ -204,6 +220,16 @@ export default function AssessmentDetail() {
               <span className="badge badge-blue animate-pulse text-xs">
                 {assessment.status === 'processing_inputs' ? 'Processing...' : assessment.status === 'synthesizing' ? 'Synthesizing...' : 'Running...'}
               </span>
+            )}
+            {!isRunning && (assessment.status === 'partial' || assessment.status === 'error') && (
+              <button
+                onClick={handleRerun}
+                disabled={rerunning}
+                className="text-xs px-3 py-1.5 rounded border border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100 disabled:opacity-50 disabled:cursor-not-allowed transition"
+                title="Re-run this assessment from the same inputs"
+              >
+                {rerunning ? 'Starting…' : 'Re-run assessment'}
+              </button>
             )}
             {isComplete && (
               <div className="flex items-center gap-2">
