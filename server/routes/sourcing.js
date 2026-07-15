@@ -218,20 +218,69 @@ router.post('/run', async (req, res) => {
     const { runSourcingEngine } = require('../pipeline/sourcing-engine');
     const { recordJobRun } = require('../services/health');
     const uid = req.user.id;
-    res.json({ message: 'Full sweep started — query groups + early-signal connectors (YC, cohorts)' });
-    // Run the classic Exa sweep AND the pluggable early-signal connectors (YC directory,
-    // cohort programs) together, so a manual Run refreshes everything — not just the daily cron.
+    res.json({ message: 'Sweep started — Exa query groups + the directory connectors' });
+
+    // ══════════════════════════════════════════════════════════════════
+    // TWO ENGINES RUN HERE, AND THE LOG USED TO ONLY SEE ONE.
+    //
+    // Danny, 2026-07-15: "I would click 'Find Founders' and it wouldn't really
+    // work." It was working. It was reporting failure.
+    //
+    // This used to be `.then(async ([r]) => …)` — destructuring only the FIRST
+    // result and discarding ingestAll's entirely. So the run log reported
+    // runSourcingEngine's number (0, because the Exa sweep produces almost
+    // nothing) while the connectors quietly added 167 rows nobody was told about.
+    // sourcing_runs is written inside runSourcingEngine alone, which is why its
+    // last row reads `sources_hit: [], founders_found: 0` on a day 167 founders
+    // arrived.
+    //
+    // A tool that does the work and then says it didn't is worse than one that
+    // fails honestly: he stopped pressing the button. So both results are
+    // captured, and the log reports the SUM plus a per-connector breakdown.
+    // ══════════════════════════════════════════════════════════════════
     Promise.all([
-      runSourcingEngine({ fullSweep: true, userId: uid }),
-      require('../pipeline/sources').ingestAll({ userId: uid }).catch(e => { console.error('[Sources] ingestAll error:', e.message); return null; }),
+      runSourcingEngine({ fullSweep: true, userId: uid }).catch((e) => {
+        console.error('[Sourcing] exa sweep error:', e.message);
+        return { totalAdded: 0, totalFiltered: 0, errors: [e.message] };
+      }),
+      require('../pipeline/sources').ingestAll({ userId: uid }).catch((e) => {
+        console.error('[Sources] ingestAll error:', e.message);
+        return null;
+      }),
     ])
-      .then(async ([r]) => {
-        // Read the freshly-sourced founders' real LinkedIn: promote buried IL ties + flag noise.
-        try { const e = await require('../pipeline/linkedin-enrich').runLinkedInEnrichment({ userId: uid, limit: 40 }); console.log('[Run][LinkedIn]', JSON.stringify(e)); }
-        catch (e) { console.error('[Run][LinkedIn]', e.message); }
-        recordJobRun('sourcing_run', (r.errors && r.errors.length) ? 'partial' : 'ok', `+${r.totalAdded} added, ${r.totalFiltered} filtered${r.errors && r.errors.length ? `, ${r.errors.length} errors` : ''}`, uid);
+      .then(async ([exa, connectors]) => {
+        try {
+          const e = await require('../pipeline/linkedin-enrich').runLinkedInEnrichment({ userId: uid, limit: 40 });
+          console.log('[Run][LinkedIn]', JSON.stringify(e));
+        } catch (e) { console.error('[Run][LinkedIn]', e.message); }
+
+        const rows = Array.isArray(connectors) ? connectors : [];
+        const connectorAdded = rows.reduce((n, x) => n + (x?.persisted || 0), 0);
+        const connectorFetched = rows.reduce((n, x) => n + (x?.fetched || 0), 0);
+        const exaAdded = exa?.totalAdded || 0;
+        const errors = [...(exa?.errors || []), ...rows.filter((x) => x?.error).map((x) => `${x.source}: ${x.error}`)];
+
+        // Per-connector, so a source that produces nothing is VISIBLE as producing
+        // nothing rather than hiding inside a total. Thiel/Z/Neo/Residency/EV fetch
+        // ~99 people and yield 0 Illinois ties — that's a real finding about the
+        // source, and it should be readable from the log rather than rediscovered.
+        const breakdown = rows
+          .map((x) => `${x.source}: ${x.fetched} fetched → ${x.geoKept} IL, ${x.persisted} saved`)
+          .join(' · ');
+
+        recordJobRun(
+          'sourcing_run',
+          errors.length ? 'partial' : 'ok',
+          `+${exaAdded + connectorAdded} added (exa ${exaAdded}, connectors ${connectorAdded} of ${connectorFetched} fetched)` +
+            (breakdown ? ` — ${breakdown}` : '') +
+            (errors.length ? ` — ${errors.length} errors` : ''),
+          uid
+        );
       })
-      .catch(err => { recordJobRun('sourcing_run', 'error', err.message, uid); console.error('[Sourcing] Run error:', err); });
+      .catch((err) => {
+        recordJobRun('sourcing_run', 'error', err.message, uid);
+        console.error('[Sourcing] Run error:', err);
+      });
   } catch (err) {
     res.status(500).json({ error: 'Failed to start sourcing run: ' + err.message });
   }

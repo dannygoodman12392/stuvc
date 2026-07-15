@@ -434,17 +434,49 @@ app.listen(PORT, () => {
   // without a configured key (e.g. USPTO until USPTO_API_KEY is set) no-op harmlessly.
   {
     const cron = require('node-cron');
+    // ══════════════════════════════════════════════════════════════════
+    // The nightly scout. This is the ONLY thing that makes sourcing feel alive —
+    // Harmonic's lesson is that the alert is the product and the search bar is
+    // its config UI. The inbox should fill overnight and be waiting.
+    //
+    // It used to log to console and record NOTHING, which is why job_runs is
+    // empty and why Danny said "it didn't seem to be sourcing new founders for me
+    // on any time interval." On Railway a console line scrolls away in minutes;
+    // if it isn't in the database, it didn't happen as far as he can tell. An
+    // automation with no durable record is indistinguishable from one that never
+    // runs — and he correctly concluded it never ran.
+    // ══════════════════════════════════════════════════════════════════
     cron.schedule('30 11 * * *', async () => {
       console.log('[Cron] Running early-signal sources...');
+      const { recordJobRun } = require('./services/health');
       try {
         const { ingestAll } = require('./pipeline/sources');
         const r = await ingestAll({ userId: 1 });
         console.log('[Cron][Sources]', JSON.stringify(r.map(x => ({ s: x.source, kept: x.geoKept, saved: x.persisted, err: x.error }))));
-        // Then read newly-sourced founders' real LinkedIn: promote buried IL ties + flag noise.
+
+        const saved = r.reduce((n, x) => n + (x?.persisted || 0), 0);
+        const fetched = r.reduce((n, x) => n + (x?.fetched || 0), 0);
+        const errs = r.filter((x) => x?.error);
+        // Per-connector, so a source producing zero is visible AS zero rather than
+        // vanishing into a total. That the cohort rosters fetch ~99 people and
+        // yield 0 Illinois ties is a finding about the source, not a failure —
+        // and it should be readable here instead of rediscovered every few months.
+        const breakdown = r.map((x) => `${x.source}: ${x.fetched}→${x.geoKept} IL`).join(' · ');
+        recordJobRun(
+          'early_signal_sources',
+          errs.length ? 'partial' : 'ok',
+          `+${saved} saved of ${fetched} fetched — ${breakdown}${errs.length ? ` — ${errs.length} errors` : ''}`,
+          1
+        );
+
         const { runLinkedInEnrichment } = require('./pipeline/linkedin-enrich');
         const e = await runLinkedInEnrichment({ userId: 1, limit: 40 });
         console.log('[Cron][LinkedIn]', JSON.stringify(e));
-      } catch (e) { console.error('[Cron][Sources] failed:', e.message); }
+      } catch (e) {
+        console.error('[Cron][Sources] failed:', e.message);
+        // A failure has to be as visible as a success, or silence stays ambiguous.
+        recordJobRun('early_signal_sources', 'error', e.message, 1);
+      }
     }, { timezone: 'America/Chicago' });
     console.log('Daily early-signal sources scheduled (11:30 AM CT)');
   }
