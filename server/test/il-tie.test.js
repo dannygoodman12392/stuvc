@@ -132,11 +132,22 @@ test('school — went to school here in some way', () => {
 });
 
 test('hometown — from Illinois', () => {
-  for (const s of ['Grew up in Naperville', 'Born in Chicago', 'Peoria native']) {
+  for (const s of ['Grew up in Naperville', 'Born in Chicago', 'Rockford native', 'Raised in Evanston']) {
     const r = verifyIlTie(`Founder in NYC. ${s}.`);
     assert.equal(r.verified, true, `"${s}" should establish a hometown tie`);
     assert.equal(r.type, 'hometown');
   }
+});
+
+// A deliberate false NEGATIVE, recorded so it doesn't get "fixed" by accident.
+// "Peoria native" was in the test above until Peoria moved to the ambiguous list.
+// Peoria, Arizona is real, so an unqualified mention isn't evidence of Illinois.
+// This file's rule is that false positives are the enemy: a missed founder costs
+// one name, a board that lies costs the board. He shows up qualified, or via a
+// co-founder, or not at all.
+test('an unqualified ambiguous hometown is REJECTED, on purpose', () => {
+  assert.equal(verifyIlTie('Founder in NYC. Peoria native.').verified, false);
+  assert.equal(verifyIlTie('Founder in NYC. Peoria, IL native.').verified, true);
 });
 
 // ── Presence beats pedigree ──
@@ -183,6 +194,38 @@ test('substrings do not match', () => {
   // "normal" is an Illinois city; "normally" is not a tie.
   const r = verifyIlTie('Founder. Normally ships on Fridays. Based in Portland.');
   assert.equal(r.verified, false);
+});
+
+// ── Place names that are also ordinary words ──
+// Every case below is real. The first one is a row this gate itself produced on
+// 2026-07-15, the first time the a16z Speedrun connector ever ran:
+//   Benjamin Lee — Vega — New York — "cto @ vega / BEING SO NORMAL"
+//     -> verified: true, type: 'worked', place: 'Normal'
+// Normal, Illinois is a real city. \bnormal\b matched inside "BEING SO NORMAL".
+// A word-boundary match is not enough when the place name IS a word.
+test('an ambiguous place name never establishes a tie unqualified', () => {
+  const cases = [
+    'cto @ vega / BEING SO NORMAL',                        // Normal, IL
+    'Building the aurora of a new category. Based in SF.', // Aurora, IL
+    'Quoting Cicero at every standup. Brooklyn.',          // Cicero, IL
+    'Aurora Chen, founder, based in Denver',               // a person's name
+    'Founder in Decatur, GA',                              // Decatur, IL
+    'Founder in Bloomington, Indiana',                     // Bloomington, IL
+    'Founder in Springfield, Missouri',                    // Springfield, IL
+    'Founder in Peoria, Arizona',                          // Peoria, IL
+    'We keep our burn normal and our team small. Austin.',
+  ];
+  for (const c of cases) {
+    const r = verifyIlTie(`Founder. ${c}`);
+    assert.equal(r.verified, false, `"${c}" must not establish an Illinois tie (got ${r.type}: ${r.place})`);
+  }
+});
+
+test('an ambiguous place name DOES count when qualified as Illinois', () => {
+  for (const c of ['Normal, IL', 'Normal, Illinois', 'Aurora, IL', 'Decatur, Illinois', 'Springfield, IL', 'Peoria, IL']) {
+    const r = verifyIlTie(`Founder based in ${c}.`);
+    assert.equal(r.verified, true, `"${c}" should be a tie`);
+  }
 });
 
 test('empty or junk input is rejected, not crashed on', () => {
