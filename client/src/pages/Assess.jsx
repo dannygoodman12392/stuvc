@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { api } from '../utils/api';
-import { PageHeader } from '../components/ui';
+import { PageHeader, ConvictionBadge } from '../components/ui';
 
 export default function Assess() {
   const navigate = useNavigate();
@@ -214,12 +214,6 @@ export default function Assess() {
     }
   }
 
-  const SIGNAL_COLORS = {
-    'Invest': 'badge-green',
-    'Monitor': 'badge-amber',
-    'Pass': 'badge-red',
-  };
-
   // Group assessments by group_id for display
   const grouped = {};
   for (const a of assessments) {
@@ -235,7 +229,7 @@ export default function Assess() {
         title={showNew && isAssessmentTask ? 'Founder Assessment' : showNew && isMemoTask ? 'Deal Memo' : showNew && isPrepTask ? 'Meeting Prep' : 'Assess'}
         subtitle={
           rerunMode ? 'Add new materials and re-evaluate'
-          : showNew && isAssessmentTask ? 'Score a founder against your Steward-Operator rubric from a call transcript or your notes.'
+          : showNew && isAssessmentTask ? 'Score a founder against the Founder Rubric. A call transcript is what makes the rubric scorable — a deck or a website alone cannot evidence earned insight or learning velocity.'
           : showNew && isMemoTask ? 'Run the full multi-agent eval and get it formatted as your Recommendation › Management › Model › Market › Momentum › Malfeasance › Conditions memo.'
           : showNew && isPrepTask ? 'Founder, company, website, and any materials → a pre-meeting briefing: founder profile, thesis fit, questions to ask, and what to watch for.'
           : 'Multi-agent evaluations of your pipeline founders'
@@ -313,9 +307,24 @@ export default function Assess() {
                 <h3 className="text-sm font-semibold text-gray-700">Call Transcript / Notes</h3>
                 <button onClick={addTranscript} className="text-blue-600 text-xs hover:underline">+ Add another</button>
               </div>
+              {/* This box is the one that unlocks a conviction score, and that is not
+                  guessable from the UI. The Founder Rubric's two heaviest movements —
+                  Earned Insight and Learning Velocity — are only readable once the founder
+                  has answered a question ("how did you arrive at this problem?", "what did
+                  you believe six months ago?"). A deck and a website cannot evidence them,
+                  so without something here the run reports Insufficient Evidence by design.
+                  Note the adjacent trap: call notes pasted into "Additional Notes" below are
+                  stored as `notes`, which does NOT lift the evidence rung — say so here
+                  rather than let someone conclude the tool is broken. */}
+              <p className="text-xs text-gray-500 mb-2 leading-relaxed">
+                <span className="font-semibold text-gray-700">This is the input that unlocks a conviction score.</span>{' '}
+                The rubric can't read Earned Insight or Learning Velocity off a deck or a website —
+                it needs the founder answering questions. Paste call notes <em>here</em>, not in
+                Additional Notes below.
+              </p>
               {transcripts.length === 0 ? (
                 <button onClick={addTranscript} className="w-full border-2 border-dashed border-gray-200 rounded-lg py-3 text-xs text-gray-400 hover:border-blue-400 hover:text-blue-500 transition-colors">
-                  Click to paste a call transcript (Granola, Fireflies, etc.) or your own notes
+                  Click to paste a call transcript (Granola, Fireflies, etc.) or your own call notes
                 </button>
               ) : (
                 <div className="space-y-3">
@@ -418,6 +427,14 @@ export default function Assess() {
                 <h3 className="text-sm font-semibold text-gray-700">Additional Notes</h3>
                 <button onClick={addNote} className="text-blue-600 text-xs hover:underline">+ Add note</button>
               </div>
+              {/* The other half of the trap. These are stored as `notes` and do NOT lift the
+                  evidence rung, because the server cannot tell from the row whether a human
+                  wrote them after a call or jotted them off a website. Call notes belong in
+                  the transcript box above. */}
+              <p className="text-xs text-gray-400 mb-2">
+                Your own context and takeaways. These don't unlock a conviction score —
+                if you're pasting notes from a call, use the transcript box above.
+              </p>
               {notes.length === 0 ? (
                 <button onClick={addNote} className="w-full border-2 border-dashed border-gray-200 rounded-lg py-3 text-xs text-gray-400 hover:border-blue-400 hover:text-blue-500 transition-colors">
                   Click to add notes, observations, or context
@@ -523,7 +540,7 @@ export default function Assess() {
                           </p>
                         </div>
                         <div className="flex items-center gap-2">
-                          <span className={`badge ${SIGNAL_COLORS[latest.overall_signal] || 'badge-gray'}`}>{latest.overall_signal || latest.status}</span>
+                          <ConvictionBadge assessment={latest} />
                           <button onClick={(e) => handleDelete(latest.id, e)} className="text-gray-300 hover:text-red-500 p-1" title="Delete">
                             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" /></svg>
                           </button>
@@ -534,7 +551,7 @@ export default function Assess() {
                       <Link key={v.id} to={`/assess/${v.id}`} className="block px-4 py-2 bg-gray-50 border-t border-gray-100 hover:bg-gray-100 transition-colors">
                         <div className="flex items-center justify-between">
                           <p className="text-xs text-gray-500">v{v.version_number || '1'} — {new Date(v.created_at).toLocaleDateString()}</p>
-                          <span className={`badge text-[10px] ${SIGNAL_COLORS[v.overall_signal] || 'badge-gray'}`}>{v.overall_signal || v.status}</span>
+                          <ConvictionBadge assessment={v} size="xs" />
                         </div>
                       </Link>
                     ))}

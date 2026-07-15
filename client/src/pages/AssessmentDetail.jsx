@@ -1,42 +1,40 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../utils/api';
+import { PageHeader, DetailSection, Score, Tag, EmptyState } from '../components/ui';
 
-// Agent tab config — maps to DB columns (reused existing column names)
-const AGENTS = [
-  { key: 'team', label: 'Team', field: 'founder_agent_output' },
-  { key: 'product', label: 'Product', field: 'market_agent_output' },
-  { key: 'market', label: 'Market', field: 'economics_agent_output' },
-  { key: 'bear', label: 'Bear', field: 'bear_agent_output' },
-];
+// ════════════════════════════════════════════════════════
+// Assessment detail — ONE scrollable page.
+//
+// The verdict is the Conviction Score (1-10) computed deterministically in
+// server/lib/conviction.js from the Founder Rubric's four movements. It is NOT the old
+// Team45/Product25/Market30 weighted average — those pillars survive here only as the
+// collapsed depth layer, explicitly labelled as informing rather than deciding.
+//
+// The one semantic use of colour on this page is EVIDENCE RUNG: a low rung renders dim,
+// a high rung renders full-strength. Confidence is visible as contrast. Everything else
+// follows tailwind.config.js: accent (blue) = interactive, danger (red) = reject/divergence,
+// the rest gray. Scores are typographic — never coloured by value.
+// ════════════════════════════════════════════════════════
 
-const TABS = [
-  { key: 'synthesis', label: 'Synthesis' },
-  { key: 'memo', label: 'Deal Memo' },
-  ...AGENTS.map(a => ({ key: a.key, label: a.label })),
-  { key: 'rubric', label: 'Rubric' },
-  { key: 'inputs', label: 'Materials' },
-];
-
-const RUBRIC_TRAITS = [
-  { key: 'fluent_ecosystem_mapping', label: 'Fluent ecosystem mapping' },
-  { key: 'strategic_spine', label: 'Strategic spine' },
-  { key: 'confident_humble_register', label: 'Confident-humble register' },
-  { key: 'distribution_first_sequencing', label: 'Distribution-first sequencing' },
-  { key: 'customer_sourced_thesis', label: 'Customer-sourced thesis' },
-  { key: 'status_cost_inversion', label: 'Status-cost inversion' },
-  { key: 'honest_under_pressure', label: 'Honest under pressure' },
-  { key: 'buy_vs_build_discipline', label: 'Buy-vs-build discipline' },
-  { key: 'cap_table_sophistication', label: 'Cap-table sophistication' },
-];
-
-const THRESHOLD_STYLES = {
-  'Anchor-grade': { bg: 'bg-purple-50 border-purple-200', text: 'text-purple-700', badge: 'bg-purple-100 text-purple-700' },
-  'Top-quartile': { bg: 'bg-emerald-50 border-emerald-200', text: 'text-emerald-700', badge: 'bg-emerald-100 text-emerald-700' },
-  'Monitor': { bg: 'bg-amber-50 border-amber-200', text: 'text-amber-700', badge: 'bg-amber-100 text-amber-700' },
-  'Pass with respect': { bg: 'bg-gray-50 border-gray-200', text: 'text-gray-700', badge: 'bg-gray-100 text-gray-700' },
-  'Pass': { bg: 'bg-red-50 border-red-200', text: 'text-red-700', badge: 'bg-red-100 text-red-700' },
+// ── Evidence rung → contrast. The whole design idea. ──
+// A dim headline means "go read the gaps." Keys match RUNG in server/lib/conviction.js.
+const RUNG_TONE = {
+  0: { head: 'text-gray-300', body: 'text-gray-400', dot: 'bg-gray-200' },
+  1: { head: 'text-gray-400', body: 'text-gray-400', dot: 'bg-gray-300' },
+  2: { head: 'text-gray-500', body: 'text-gray-500', dot: 'bg-gray-400' },
+  3: { head: 'text-gray-700', body: 'text-gray-600', dot: 'bg-gray-600' },
+  4: { head: 'text-ink', body: 'text-gray-700', dot: 'bg-ink' },
 };
+const toneFor = (rung) => RUNG_TONE[rung] ?? RUNG_TONE[0];
+
+const RUNNING_STATES = ['running', 'synthesizing', 'processing_inputs'];
+
+function parseOutput(raw) {
+  if (!raw) return null;
+  try { return typeof raw === 'string' ? JSON.parse(raw) : raw; }
+  catch { return null; }
+}
 
 export default function AssessmentDetail() {
   const { id } = useParams();
@@ -44,65 +42,35 @@ export default function AssessmentDetail() {
   const [searchParams] = useSearchParams();
   const [assessment, setAssessment] = useState(null);
   const [loading, setLoading] = useState(true);
-  // ?tab=memo lands directly on the Deal Memo tab (e.g. coming from the Deal Memo task flow).
-  const [activeTab, setActiveTab] = useState(TABS.some(t => t.key === searchParams.get('tab')) ? searchParams.get('tab') : 'synthesis');
   const [versions, setVersions] = useState([]);
   const [inputs, setInputs] = useState([]);
   const [showVersions, setShowVersions] = useState(false);
-  const [rubric, setRubric] = useState(null);
-  const [rubricLoading, setRubricLoading] = useState(false);
   const [notionState, setNotionState] = useState({ status: 'idle', url: null, error: null });
   const [divergence, setDivergence] = useState(null);
   const [rerunning, setRerunning] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
   const pollRef = useRef(null);
-  const rubricPollRef = useRef(null);
+
+  // ?tab=memo used to select a tab. There are no tabs now — it opens the Deal Memo
+  // section and scrolls to it, so existing links from the Deal Memo task flow still land.
+  const deepLink = searchParams.get('tab');
 
   useEffect(() => {
     loadAssessment();
-    loadRubric();
     api.getAssessmentTasteDivergence(id).then(setDivergence).catch(() => {});
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
-      if (rubricPollRef.current) clearInterval(rubricPollRef.current);
     };
   }, [id]);
 
-  async function loadRubric() {
-    try {
-      const r = await api.getStewardOperator(id);
-      setRubric(r);
-      if (r && r.status === 'running') {
-        startRubricPoll();
-      }
-    } catch {}
-  }
-
-  function startRubricPoll() {
-    if (rubricPollRef.current) return;
-    rubricPollRef.current = setInterval(async () => {
-      try {
-        const r = await api.getStewardOperator(id);
-        setRubric(r);
-        if (!r || r.status !== 'running') {
-          clearInterval(rubricPollRef.current);
-          rubricPollRef.current = null;
-        }
-      } catch {}
-    }, 3000);
-  }
-
-  async function handleRunRubric() {
-    setRubricLoading(true);
-    try {
-      const r = await api.runStewardOperator(id);
-      setRubric(r);
-      startRubricPoll();
-    } catch (err) {
-      console.error('Failed to start rubric:', err);
-    } finally {
-      setRubricLoading(false);
+  useEffect(() => {
+    if (loading || !deepLink) return;
+    const el = document.getElementById(`section-${deepLink}`);
+    if (el) {
+      if (el.tagName === 'DETAILS') el.open = true;
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
-  }
+  }, [loading, deepLink]);
 
   async function loadAssessment() {
     try {
@@ -110,19 +78,17 @@ export default function AssessmentDetail() {
       setAssessment(a);
 
       api.getAssessmentInputs(id).then(setInputs).catch(() => {});
+      if (a.group_id) api.getAssessmentGroup(a.group_id).then(setVersions).catch(() => {});
 
-      if (a.group_id) {
-        api.getAssessmentGroup(a.group_id).then(setVersions).catch(() => {});
-      }
-
-      if (a.status === 'running' || a.status === 'synthesizing' || a.status === 'processing_inputs') {
+      if (RUNNING_STATES.includes(a.status)) {
         pollRef.current = setInterval(async () => {
           try {
             const updated = await api.getAssessment(id);
             setAssessment(updated);
-            if (updated.status === 'complete' || updated.status === 'partial' || updated.status === 'error') {
+            if (!RUNNING_STATES.includes(updated.status)) {
               clearInterval(pollRef.current);
               pollRef.current = null;
+              api.getAssessmentInputs(id).then(setInputs).catch(() => {});
             }
           } catch {}
         }, 3000);
@@ -132,12 +98,6 @@ export default function AssessmentDetail() {
     } finally {
       setLoading(false);
     }
-  }
-
-  function parseOutput(raw) {
-    if (!raw) return null;
-    try { return typeof raw === 'string' ? JSON.parse(raw) : raw; }
-    catch { return null; }
   }
 
   async function handlePushToNotion() {
@@ -151,9 +111,8 @@ export default function AssessmentDetail() {
     }
   }
 
-  // Re-run: a 'partial' (e.g. a synthesis blip) or 'error' assessment stalled mid-run with no
-  // way to retry from the UI. This creates a new version (same inputs, no new materials) and
-  // navigates to it so Danny watches it complete instead of staring at the stuck one.
+  // Re-run: a 'partial' or 'error' assessment stalled mid-run with no way to retry from the
+  // UI. This creates a new version (same inputs) and navigates to it.
   async function handleRerun() {
     if (rerunning) return;
     setRerunning(true);
@@ -166,16 +125,30 @@ export default function AssessmentDetail() {
     }
   }
 
-  if (loading) return <div className="text-center py-12 text-gray-500 text-sm">Loading...</div>;
-  if (!assessment) return <div className="text-center py-12 text-gray-500 text-sm">Assessment not found</div>;
+  async function handleCancel() {
+    if (cancelling) return;
+    setCancelling(true);
+    try {
+      await api.cancelAssessment(id);
+      const updated = await api.getAssessment(id);
+      setAssessment(updated);
+      if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+    } catch (err) {
+      console.error('Failed to cancel assessment:', err);
+    } finally {
+      setCancelling(false);
+    }
+  }
+
+  if (loading) return <div className="text-center py-12 text-gray-400 text-sm">Loading…</div>;
+  if (!assessment) return <EmptyState title="Assessment not found" />;
 
   const synthesis = parseOutput(assessment.synthesis_output);
-  const isRunning = ['running', 'synthesizing', 'processing_inputs'].includes(assessment.status);
+  const isRunning = RUNNING_STATES.includes(assessment.status);
   const isComplete = assessment.status === 'complete' || assessment.status === 'partial';
 
-  // Meeting Prep is a briefing, not an investability eval — no tabs, no agent scores.
-  // synthesis_output holds the brief JSON here (contextual per assessment_type, same
-  // pattern as the backend). Bypass the tab-based UI entirely.
+  // Meeting Prep is a briefing, not an investability eval — no verdict, no conviction.
+  // synthesis_output holds the brief JSON here (contextual per assessment_type).
   if (assessment.assessment_type === 'meeting_prep') {
     return (
       <MeetingPrepDetail
@@ -185,288 +158,660 @@ export default function AssessmentDetail() {
     );
   }
 
-  const SIGNAL_COLORS = {
-    'Invest': 'text-emerald-600',
-    'Monitor': 'text-amber-600',
-    'Pass': 'text-red-600',
-  };
+  // conviction_output is the contract. synthesis.conviction is the same object, kept as a
+  // fallback for rows written before the column landed.
+  const conviction = parseOutput(assessment.conviction_output) || synthesis?.conviction || null;
+  const evidence = parseOutput(assessment.evidence_output);
+  const rubric = parseOutput(assessment.rubric_output);
+  const contextNotes = parseOutput(assessment.context_notes) || [];
+  const rung = evidence?.rung ?? conviction?.rung ?? assessment.evidence_rung ?? 0;
+  const tone = toneFor(rung);
+
+  const team = parseOutput(assessment.founder_agent_output);
+  const product = parseOutput(assessment.market_agent_output);
+  const market = parseOutput(assessment.economics_agent_output);
+  const bear = parseOutput(assessment.bear_agent_output);
 
   return (
-    <div className="flex gap-6">
-      {/* Main content */}
-      <div className="flex-1 min-w-0">
-        {/* Breadcrumb */}
-        <div className="flex items-center gap-2 text-sm text-gray-400 mb-4">
-          <Link to="/assess" className="hover:text-gray-600">Assess</Link>
-          <span>/</span>
-          <span className="text-gray-700">{assessment.founder_name || 'Assessment'}</span>
-          {assessment.founder_company && <span className="text-gray-400">/ {assessment.founder_company}</span>}
-        </div>
+    <div className="max-w-3xl mx-auto pb-24">
+      <div className="flex items-center gap-2 text-sm text-gray-400 mb-4">
+        <Link to="/assess" className="hover:text-gray-600">Assess</Link>
+        <span>/</span>
+        <span className="text-gray-700">{assessment.founder_name || 'Assessment'}</span>
+      </div>
 
-        {/* Deck-integrity warning — score is suspect when the deck couldn't be ingested */}
-        {assessment.deck_status === 'suspect' && (
-          <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-2.5">
-            <p className="text-sm font-semibold text-red-700">⚠ Deck not ingested — this score is suspect</p>
-            <p className="text-xs text-red-600 mt-0.5">{assessment.deck_status_reason || 'The pitch deck could not be read.'} Re-run this assessment with a PDF export of the deck for a trustworthy score.</p>
-          </div>
-        )}
-
-        {/* Taste divergence — how this founder sits vs. your revealed preferences */}
-        {divergence?.available && divergence.direction !== 'neutral' && (
-          <div className={`mb-4 rounded-lg border px-4 py-2.5 ${divergence.direction === 'divergent' ? 'border-violet-200 bg-violet-50' : 'border-emerald-200 bg-emerald-50'}`}>
-            <p className={`text-sm font-semibold ${divergence.direction === 'divergent' ? 'text-violet-700' : 'text-emerald-700'}`}>
-              {divergence.direction === 'divergent' ? '🧭 Counter to your usual pattern' : '✓ Matches your revealed taste'}
-            </p>
-            <p className="text-xs text-gray-600 mt-0.5">{divergence.note}</p>
-          </div>
-        )}
-
-        {/* Header */}
-        <div className="flex items-start justify-between mb-6">
-          <div>
-            <h1 className="text-xl font-bold text-gray-900">{assessment.founder_name || 'Unknown Founder'}</h1>
-            <p className="text-sm text-gray-500 mt-0.5">{assessment.founder_company || ''}</p>
-          </div>
-          <div className="flex items-center gap-3">
-            <span className={`text-lg font-bold ${SIGNAL_COLORS[assessment.overall_signal] || 'text-gray-500'}`}>
-              {assessment.overall_signal || assessment.status}
-            </span>
+      <PageHeader
+        title={assessment.founder_name || 'Unknown Founder'}
+        subtitle={assessment.founder_company || null}
+        actions={
+          <>
             {isRunning && (
-              <span className="badge badge-blue animate-pulse text-xs">
-                {assessment.status === 'processing_inputs' ? 'Processing...' : assessment.status === 'synthesizing' ? 'Synthesizing...' : 'Running...'}
-              </span>
+              <>
+                <span className="text-xs text-gray-400 animate-pulse">
+                  {assessment.status === 'processing_inputs' ? 'Processing…' : assessment.status === 'synthesizing' ? 'Synthesizing…' : 'Running…'}
+                </span>
+                <button onClick={handleCancel} disabled={cancelling}
+                  className="text-xs font-medium px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-40">
+                  {cancelling ? 'Cancelling…' : 'Cancel'}
+                </button>
+              </>
             )}
-            {!isRunning && (assessment.status === 'partial' || assessment.status === 'error') && (
-              <button
-                onClick={handleRerun}
-                disabled={rerunning}
-                className="text-xs px-3 py-1.5 rounded border border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100 disabled:opacity-50 disabled:cursor-not-allowed transition"
-                title="Re-run this assessment from the same inputs"
-              >
-                {rerunning ? 'Starting…' : 'Re-run assessment'}
+            {!isRunning && (
+              <button onClick={handleRerun} disabled={rerunning}
+                className="text-xs font-medium px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-40"
+                title="Re-run this assessment from the same inputs">
+                {rerunning ? 'Starting…' : 'Re-run'}
               </button>
             )}
             {isComplete && (
-              <div className="flex items-center gap-2">
-                {notionState.status === 'success' && notionState.url ? (
-                  <a
-                    href={notionState.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-xs px-3 py-1.5 rounded border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition"
-                    title={notionState.action === 'updated' ? 'Updated in Notion' : 'Created in Notion'}
-                  >
-                    Open in Notion ↗
-                  </a>
-                ) : (
-                  <button
-                    onClick={handlePushToNotion}
-                    disabled={notionState.status === 'pushing'}
-                    className="text-xs px-3 py-1.5 rounded border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition"
-                    title={notionState.error || 'Send this assessment to your Strider Notion'}
-                  >
-                    {notionState.status === 'pushing' ? 'Sending…' : notionState.status === 'error' ? 'Retry → Notion' : 'Send to Notion'}
-                  </button>
-                )}
-                {notionState.status === 'error' && (
-                  <span className="text-xs text-red-500" title={notionState.error}>!</span>
-                )}
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Version history */}
-        {versions.length > 1 && (
-          <div className="mb-4">
-            <button onClick={() => setShowVersions(!showVersions)} className="text-xs text-gray-400 hover:text-gray-600">
-              {showVersions ? 'Hide' : 'Show'} version history ({versions.length} versions)
-            </button>
-            {showVersions && (
-              <div className="mt-2 space-y-1">
-                {versions.map(v => {
-                  const vSynthesis = parseOutput(v.synthesis_output);
-                  return (
-                    <Link key={v.id} to={`/assess/${v.id}`}
-                      className={`block rounded-lg p-2 text-sm ${v.id === parseInt(id) ? 'bg-blue-50 border border-blue-200' : 'bg-gray-50 hover:bg-gray-100'}`}>
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <span className="font-medium">v{v.version_number}</span>
-                          <span className="text-gray-400 ml-2">{new Date(v.created_at).toLocaleDateString()}</span>
-                          {v.change_summary && <span className="text-gray-400 ml-2">{v.change_summary}</span>}
-                        </div>
-                        <div className="flex items-center gap-2">
-                          {vSynthesis?.pillar_scores && (
-                            <div className="flex gap-1 text-[10px] font-mono">
-                              <span className={vSynthesis.pillar_scores.team >= 7 ? 'text-emerald-600' : vSynthesis.pillar_scores.team >= 5 ? 'text-amber-600' : 'text-red-500'}>T:{vSynthesis.pillar_scores.team}</span>
-                              <span className={vSynthesis.pillar_scores.product >= 7 ? 'text-emerald-600' : vSynthesis.pillar_scores.product >= 5 ? 'text-amber-600' : 'text-red-500'}>P:{vSynthesis.pillar_scores.product}</span>
-                              <span className={vSynthesis.pillar_scores.market >= 7 ? 'text-emerald-600' : vSynthesis.pillar_scores.market >= 5 ? 'text-amber-600' : 'text-red-500'}>M:{vSynthesis.pillar_scores.market}</span>
-                            </div>
-                          )}
-                          <span className={`badge text-[10px] ${v.overall_signal === 'Invest' ? 'badge-green' : v.overall_signal === 'Monitor' ? 'badge-amber' : v.overall_signal === 'Pass' ? 'badge-red' : 'badge-gray'}`}>
-                            {v.overall_signal || v.status}
-                          </span>
-                        </div>
-                      </div>
-                    </Link>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Tabs */}
-        <div className="flex gap-1 mb-6 bg-gray-100 rounded-lg p-1 overflow-x-auto">
-          {TABS.map(tab => (
-            <button
-              key={tab.key}
-              onClick={() => setActiveTab(tab.key)}
-              className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors whitespace-nowrap ${
-                activeTab === tab.key ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
-              }`}
-            >
-              {tab.label}
-              {tab.key === 'bear' && <span className="ml-1 text-red-500">!</span>}
-              {tab.key === 'rubric' && rubric && rubric.flagged ? <span className="ml-1 text-purple-600">*</span> : null}
-            </button>
-          ))}
-        </div>
-
-        {/* Tab content */}
-        <div className="space-y-4">
-          {activeTab === 'synthesis' && (
-            synthesis ? <SynthesisView data={synthesis} /> : (
-              <div className="text-center py-8 text-gray-500 text-sm">
-                {isRunning ? 'Synthesis will appear once all agents complete...' : 'Synthesis not available'}
-              </div>
-            )
-          )}
-
-          {activeTab === 'memo' && (
-            <MemoView
-              team={parseOutput(assessment.founder_agent_output)}
-              product={parseOutput(assessment.market_agent_output)}
-              market={parseOutput(assessment.economics_agent_output)}
-              bear={parseOutput(assessment.bear_agent_output)}
-              synthesis={synthesis}
-            />
-          )}
-
-          {AGENTS.map(agent => (
-            activeTab === agent.key && (
-              <AgentOutput key={agent.key} data={parseOutput(assessment[agent.field])} type={agent.key} />
-            )
-          ))}
-
-          {activeTab === 'rubric' && (
-            <RubricView
-              rubric={rubric}
-              assessmentComplete={isComplete}
-              onRun={handleRunRubric}
-              running={rubricLoading || (rubric && rubric.status === 'running')}
-            />
-          )}
-
-          {activeTab === 'inputs' && (
-            <div className="space-y-3">
-              {inputs.length === 0 ? (
-                <div className="text-center py-8 text-gray-500 text-sm">No input materials recorded</div>
+              notionState.status === 'success' && notionState.url ? (
+                <a href={notionState.url} target="_blank" rel="noopener noreferrer"
+                  className="text-xs font-medium px-3 py-1.5 rounded-lg border border-gray-200 text-accent hover:bg-accent-soft">
+                  Open in Notion ↗
+                </a>
               ) : (
-                inputs.map((inp, i) => (
-                  <div key={i} className="card p-4">
-                    <div className="flex items-center gap-2 mb-2">
-                      <span className="badge badge-gray text-xs">{inp.input_type}</span>
-                      <span className="text-sm font-medium text-gray-700">{inp.label || inp.input_type}</span>
-                      {inp.source_url && <a href={inp.source_url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-500 hover:underline">{inp.source_url}</a>}
-                    </div>
-                    <p className="text-xs text-gray-500 max-h-32 overflow-y-auto whitespace-pre-wrap">{(inp.content || '').slice(0, 2000)}{(inp.content || '').length > 2000 ? '...' : ''}</p>
-                  </div>
-                ))
-              )}
-            </div>
-          )}
+                <button onClick={handlePushToNotion} disabled={notionState.status === 'pushing'}
+                  className="text-xs font-medium px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-40"
+                  title={notionState.error || 'Send this assessment to your Strider Notion'}>
+                  {notionState.status === 'pushing' ? 'Sending…' : notionState.status === 'error' ? 'Retry → Notion' : 'Send to Notion'}
+                </button>
+              )
+            )}
+          </>
+        }
+      />
+
+      {/* Deck-integrity warning — the score is suspect when the deck couldn't be ingested. */}
+      {assessment.deck_status === 'suspect' && (
+        <div className="mb-4 rounded-lg border border-danger/30 bg-danger-soft px-4 py-3">
+          <p className="text-sm font-semibold text-danger">Deck not ingested — read this with that in mind</p>
+          <p className="text-xs text-gray-600 mt-1">
+            {assessment.deck_status_reason || 'The pitch deck could not be read.'}
+            {' '}It contributed nothing to the evidence rung below. Re-run with a PDF export of the deck.
+          </p>
         </div>
-      </div>
+      )}
+
+      {assessment.status === 'error' && (
+        <div className="mb-4 rounded-lg border border-danger/30 bg-danger-soft px-4 py-3">
+          <p className="text-sm font-semibold text-danger">This run failed</p>
+          <p className="text-xs text-gray-600 mt-1">Nothing below is a judgment about the company. Re-run it.</p>
+        </div>
+      )}
+
+      {/* Taste divergence — red is reserved for divergence; alignment is neutral. */}
+      {divergence?.available && divergence.direction !== 'neutral' && (
+        <div className={`mb-4 rounded-lg border px-4 py-3 ${divergence.direction === 'divergent' ? 'border-danger/30 bg-danger-soft' : 'border-gray-200 bg-gray-50'}`}>
+          <p className={`text-sm font-semibold ${divergence.direction === 'divergent' ? 'text-danger' : 'text-gray-700'}`}>
+            {divergence.direction === 'divergent' ? 'Counter to your usual pattern' : 'Matches your revealed taste'}
+          </p>
+          <p className="text-xs text-gray-600 mt-0.5">{divergence.note}</p>
+        </div>
+      )}
+
+      <VersionStrip versions={versions} currentId={id} show={showVersions} onToggle={() => setShowVersions(v => !v)} />
+
+      {isRunning && !conviction ? (
+        <div className="border-t border-gray-200 pt-10 text-center">
+          <p className="text-sm text-gray-400 animate-pulse">The agents are still reading. The verdict appears when they finish.</p>
+        </div>
+      ) : (
+        <div className="space-y-12">
+          {/* 1 ── The verdict */}
+          <Verdict conviction={conviction} synthesis={synthesis} rubric={rubric} tone={tone} />
+
+          {/* 2 ── Evidence strength: the trust chip, directly under the verdict */}
+          <EvidenceStrength evidence={evidence} rung={rung} tone={tone} />
+
+          {/* 3 ── The four movements */}
+          <Movements conviction={conviction} rubric={rubric} tone={tone} />
+
+          {/* 4 ── Docks + the calculation */}
+          <Docks conviction={conviction} />
+
+          {/* 5 ── Chip on shoulder + flags */}
+          <ChipAndFlags rubric={rubric} determinate={!!conviction?.determinate} />
+
+          {/* 6 ── Personal Conviction — the human gate, deliberately unanswered */}
+          <PersonalConviction />
+
+          {/* 7 ── What we didn't look at */}
+          <NotLookedAt evidence={evidence} contextNotes={contextNotes} assessment={assessment} />
+
+          {/* 8 ── The depth layer + memo + materials */}
+          <DepthLayer team={team} product={product} market={market} bear={bear} synthesis={synthesis} />
+          <MemoSectionCollapsed team={team} product={product} market={market} bear={bear} synthesis={synthesis} />
+          <MaterialsCollapsed inputs={inputs} />
+        </div>
+      )}
     </div>
   );
 }
 
 // ════════════════════════════════════════════════════════
-// Shared helpers
+// 1 ── The verdict
 // ════════════════════════════════════════════════════════
 
-const SIGNAL_BG = {
-  'Invest': 'bg-emerald-50 border-emerald-200',
-  'Monitor': 'bg-amber-50 border-amber-200',
-  'Pass': 'bg-red-50 border-red-200',
-};
-const SIGNAL_TEXT = {
-  'Invest': 'text-emerald-700',
-  'Monitor': 'text-amber-700',
-  'Pass': 'text-red-700',
-};
-const FIT_COLORS = {
-  'strong': 'text-emerald-600 bg-emerald-50',
-  'moderate': 'text-amber-600 bg-amber-50',
-  'weak': 'text-red-600 bg-red-50',
-};
-const QUOTE_COLORS = {
-  'POSITIVE': 'border-l-emerald-400',
-  'NEGATIVE': 'border-l-red-400',
-  'MIXED': 'border-l-amber-400',
-};
+function Verdict({ conviction, synthesis, rubric, tone }) {
+  // A row written before the conviction engine landed. Say so rather than reconstruct a
+  // number from the retired pillar average.
+  if (!conviction) {
+    return (
+      <section>
+        <div className="text-2xs font-semibold uppercase tracking-wide text-gray-400 mb-2">Conviction</div>
+        <div className="text-3xl font-semibold text-gray-400">Not scored</div>
+        <p className="text-sm text-gray-600 mt-2 max-w-xl">
+          This assessment predates the conviction engine, or its run never reached synthesis. Re-run it to score
+          against the Founder Rubric.
+        </p>
+      </section>
+    );
+  }
 
+  const det = conviction.determinate;
+  const questions = rubric?.what_would_change_this || [];
+
+  return (
+    <section>
+      <div className="text-2xs font-semibold uppercase tracking-wide text-gray-400 mb-3">Conviction</div>
+
+      <div className="flex items-start gap-6">
+        {/* The score slot. Indeterminate renders a deliberate blank — never a number. */}
+        <div className="flex items-baseline gap-1 flex-shrink-0">
+          <span className={`text-7xl font-bold tabular-nums leading-none ${det ? tone.head : 'text-gray-200'}`}>
+            {det ? conviction.score : '—'}
+          </span>
+          {det && <span className="text-lg font-medium text-gray-300">/10</span>}
+        </div>
+
+        <div className="min-w-0 pt-1">
+          <div className={`text-2xl font-semibold leading-tight ${det ? tone.head : 'text-gray-400'}`}>
+            {det ? conviction.band.label : 'Insufficient evidence'}
+          </div>
+          {det && <div className="text-sm text-gray-500 mt-1">{conviction.band.action}</div>}
+          {!det && conviction.missing_load_bearing?.length > 0 && (
+            <div className="text-sm text-gray-500 mt-1">
+              Not scorable: {conviction.missing_load_bearing.join(', ')}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {!det && conviction.reason && (
+        <p className="text-sm text-gray-700 leading-relaxed mt-5 max-w-2xl">{conviction.reason}</p>
+      )}
+
+      {det && synthesis?.one_liner && (
+        <p className={`text-sm leading-relaxed mt-5 max-w-2xl ${tone.body}`}>{synthesis.one_liner}</p>
+      )}
+
+      {/* The engine's whole argument is that a claim gets sized to its evidence. That
+          has to apply to the engine. n=6, no outcome loop, the score has never been
+          checked against a result, and the gate threshold and dock magnitudes are
+          author-set rather than rubric-derived. Rendering the band and its action as a
+          bare instruction — "Anchor-grade / First call within a week" — without saying
+          any of that would be the same unearned confidence this rebuild removed from
+          everything else. It sits directly under the number on purpose. */}
+      {det && conviction.calibration && (
+        <p className="text-xs text-gray-400 leading-relaxed mt-4 max-w-2xl border-l-2 border-gray-200 pl-3">
+          {conviction.calibration}
+        </p>
+      )}
+
+      {det && conviction.gate_applied && (
+        <p className="text-xs text-gray-500 leading-relaxed mt-3 max-w-2xl">
+          Capped below Top-quartile: the founder did not clear the bar on both Earned Insight
+          and Execution &amp; Learning Velocity. Vision and Talent Magnetism differentiate among
+          founders who clear those two — they don't substitute for them.
+        </p>
+      )}
+
+      {/* When there is no score, the question list IS the product. Accent = the one
+          primary action on the screen. */}
+      {!det && questions.length > 0 && (
+        <div className="mt-6 rounded-lg border border-accent/30 bg-accent-soft p-4">
+          <div className="text-2xs font-semibold uppercase tracking-wide text-accent mb-2">What would change this</div>
+          <ul className="space-y-2">
+            {questions.map((q, i) => (
+              <li key={i} className="text-sm text-gray-800 flex gap-2.5 leading-relaxed">
+                <span className="text-accent font-semibold tabular-nums flex-shrink-0">{i + 1}.</span>
+                <span>{q}</span>
+              </li>
+            ))}
+          </ul>
+          <p className="text-xs text-gray-500 mt-3">Ask these on the call. Then re-run.</p>
+        </div>
+      )}
+      {/* Only prescribe "take the call" when the gap is genuinely evidence. If the rubric
+          agent crashed, the reason above already says to re-run, and telling Danny to book a
+          call would be advice derived from a system failure. */}
+      {!det && questions.length === 0 && conviction.rung < 3 && !rubric?.error && (
+        <p className="text-sm text-gray-500 mt-4">
+          Get the founder on a call. Earned Insight and Learning Velocity are only readable once they have
+          answered questions.
+        </p>
+      )}
+
+      {det && questions.length > 0 && (
+        <div className="mt-6">
+          <DetailSection label="What would change this">
+            <ul className="space-y-1.5">
+              {questions.map((q, i) => (
+                <li key={i} className="flex gap-2.5"><span className="text-gray-300 flex-shrink-0">{i + 1}.</span><span>{q}</span></li>
+              ))}
+            </ul>
+          </DetailSection>
+        </div>
+      )}
+    </section>
+  );
+}
+
+// ════════════════════════════════════════════════════════
+// 2 ── Evidence strength
+// ════════════════════════════════════════════════════════
+
+function EvidenceStrength({ evidence, rung, tone }) {
+  if (!evidence) {
+    return (
+      <section className="border-t border-gray-200 pt-6">
+        <div className="text-2xs font-semibold uppercase tracking-wide text-gray-400 mb-2">Evidence strength</div>
+        <p className="text-sm text-gray-400">Not recorded for this run.</p>
+      </section>
+    );
+  }
+
+  const c = evidence.counts || {};
+  const counts = [
+    ['transcript', c.transcripts], ['deck', c.decks], ['URL', c.urls], ['note', c.notes],
+  ].filter(([, n]) => n > 0).map(([label, n]) => `${n} ${label}${n === 1 ? '' : 's'}`);
+
+  return (
+    <section className="border-t border-gray-200 pt-6">
+      <div className="text-2xs font-semibold uppercase tracking-wide text-gray-400 mb-3">Evidence strength</div>
+      <div className="flex items-center gap-3 mb-2">
+        {/* Four rungs. The fill is the confidence. */}
+        <div className="flex items-center gap-1" title={`Rung ${rung} of 4`}>
+          {[1, 2, 3, 4].map(i => (
+            <span key={i} className={`w-6 h-1.5 rounded-full ${i <= rung ? tone.dot : 'bg-gray-100'}`} />
+          ))}
+        </div>
+        <span className={`text-base font-semibold ${tone.head}`}>{evidence.label}</span>
+        <span className="text-xs text-gray-400 tabular-nums">{rung}/4</span>
+      </div>
+      <p className={`text-sm leading-relaxed max-w-2xl ${tone.body}`}>{evidence.meaning}</p>
+      <div className="flex items-center gap-1.5 mt-3 flex-wrap">
+        {counts.length > 0
+          ? counts.map(t => <Tag key={t}>{t}</Tag>)
+          : <span className="text-xs text-gray-400">Nothing readable reached the agents.</span>}
+      </div>
+    </section>
+  );
+}
+
+// ════════════════════════════════════════════════════════
+// 3 ── The four movements
+// ════════════════════════════════════════════════════════
+
+function Movements({ conviction, rubric, tone }) {
+  const movements = conviction?.movements;
+  if (!movements || Object.keys(movements).length === 0) return null;
+
+  return (
+    <section className="border-t border-gray-200 pt-6">
+      <div className="text-2xs font-semibold uppercase tracking-wide text-gray-400 mb-1">The four movements</div>
+      <p className="text-xs text-gray-400 mb-5">The Founder Rubric. These, and only these, produce the conviction score.</p>
+      {/* When the rubric agent crashed, conviction was computed from an empty movement set,
+          so every movement reads "the agent abstained". It didn't — it died. Say so. */}
+      {rubric?.error && (
+        <p className="text-sm text-danger mb-5">
+          The Founder Rubric agent failed, so nothing below was actually scored. These are empty slots, not judgments.
+        </p>
+      )}
+      <div className="space-y-6">
+        {Object.entries(movements).map(([key, m]) => (
+          <Movement key={key} m={m} tone={tone} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function Movement({ m, tone }) {
+  return (
+    <div className="border-l-2 border-gray-100 pl-4">
+      <div className="flex items-baseline justify-between gap-4">
+        <div className="min-w-0">
+          <span className={`text-sm font-semibold ${m.scorable ? tone.head : 'text-gray-400'}`}>{m.label}</span>
+          <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
+            <Tag>weight {m.weight}</Tag>
+            <Tag>{m.evidence_strength} evidence</Tag>
+          </div>
+        </div>
+        <div className="flex-shrink-0 text-right">
+          {m.scorable ? (
+            <span className={`text-3xl font-bold tabular-nums ${tone.head}`}>{m.score}</span>
+          ) : (
+            <span className="text-3xl font-bold tabular-nums text-gray-200">—</span>
+          )}
+        </div>
+      </div>
+
+      {m.blurb && <p className="text-xs text-gray-400 mt-2">{m.blurb}</p>}
+
+      {!m.scorable && m.reason && (
+        <p className="text-sm text-gray-500 mt-2 leading-relaxed">
+          <span className="font-medium text-gray-600">Not scorable</span> — {m.reason}
+        </p>
+      )}
+
+      {m.evidence && (
+        <p className={`text-sm leading-relaxed mt-2 ${m.scorable ? tone.body : 'text-gray-400'}`}>{m.evidence}</p>
+      )}
+
+      {m.quotes?.length > 0 && (
+        <div className="mt-3 space-y-1.5">
+          {m.quotes.map((q, i) => (
+            <p key={i} className="text-sm text-gray-600 italic border-l-2 border-gray-200 pl-3 leading-relaxed">“{q}”</p>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════
+// 4 ── Docks + calculation
+// ════════════════════════════════════════════════════════
+
+function Docks({ conviction }) {
+  if (!conviction?.determinate) return null;
+  const docks = conviction.docks || [];
+
+  return (
+    <section className="border-t border-gray-200 pt-6">
+      <div className="text-2xs font-semibold uppercase tracking-wide text-gray-400 mb-1">Docks</div>
+      <p className="text-xs text-gray-400 mb-4">Penalties only. Nothing here can raise a score.</p>
+
+      {docks.length === 0 ? (
+        <p className="text-sm text-gray-500">No docks. The bear found nothing scoreable, the market is not structurally dead, and no yellow flags fired.</p>
+      ) : (
+        <div className="space-y-3">
+          {docks.map((d, i) => (
+            <div key={i} className="flex items-baseline gap-4">
+              <span className="text-lg font-bold tabular-nums text-ink w-12 flex-shrink-0">{d.amount}</span>
+              <p className="text-sm text-gray-700 leading-relaxed">{d.why}</p>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {conviction.calculation && (
+        <p className="text-xs font-mono text-gray-400 mt-5 pt-4 border-t border-gray-100 break-words">
+          {conviction.calculation}
+        </p>
+      )}
+    </section>
+  );
+}
+
+// ════════════════════════════════════════════════════════
+// 5 ── Chip on shoulder + flags
+// ════════════════════════════════════════════════════════
+
+function ChipAndFlags({ rubric, determinate }) {
+  const chip = rubric?.chip_on_shoulder;
+  const flags = rubric?.flags;
+  const firedFlags = [
+    flags?.charisma_over_substance && 'Charisma over substance',
+    flags?.grievance_grandiosity && 'Grievance / grandiosity',
+  ].filter(Boolean);
+
+  if (!chip && firedFlags.length === 0) return null;
+
+  return (
+    <section className="border-t border-gray-200 pt-6">
+      <div className="text-2xs font-semibold uppercase tracking-wide text-gray-400 mb-4">Chip on shoulder & flags</div>
+
+      {chip && (
+        <div className="mb-4">
+          <div className="flex items-center gap-2 mb-1.5">
+            <span className="text-sm font-semibold text-ink">
+              {chip.present === true ? 'Present' : chip.present === false ? 'Not present' : 'Can’t tell'}
+            </span>
+            {chip.direction && <Tag>aimed at the {chip.direction}</Tag>}
+          </div>
+          {chip.read && <p className="text-sm text-gray-700 leading-relaxed">{chip.read}</p>}
+          <p className="text-xs text-gray-400 mt-2">
+            A variance amplifier, not a quality filter. It is not scored.
+          </p>
+        </div>
+      )}
+
+      {firedFlags.length > 0 && (
+        <div className="rounded-lg border border-danger/30 bg-danger-soft p-4">
+          <div className="flex items-center gap-1.5 flex-wrap mb-2">
+            {firedFlags.map(f => (
+              <span key={f} className="inline-flex items-center bg-white text-danger border border-danger/30 rounded-full px-2 py-0.5 text-xs font-semibold">{f}</span>
+            ))}
+          </div>
+          {flags?.flag_evidence && <p className="text-sm text-gray-700 leading-relaxed">{flags.flag_evidence}</p>}
+          {/* Only claim a dock when one actually happened. With no score there is no Docks
+              section and nothing was subtracted — saying otherwise invents arithmetic. */}
+          <p className="text-xs text-gray-500 mt-2">
+            {determinate
+              ? 'Each fired flag docked the score by 0.5. See Docks above.'
+              : 'These would each dock the score by 0.5 — but there is no score to dock.'}
+          </p>
+        </div>
+      )}
+    </section>
+  );
+}
+
+// ════════════════════════════════════════════════════════
+// 6 ── Personal Conviction — the human gate
+//
+// Deliberately blank. The rubric agent is explicitly forbidden from assessing this so it
+// can never inflate a quality score. Rendering it as an empty slot is the point: it makes
+// the one judgment Stu does not make visible on the page.
+// ════════════════════════════════════════════════════════
+
+function PersonalConviction() {
+  return (
+    <section className="border-t border-gray-200 pt-6">
+      <div className="text-2xs font-semibold uppercase tracking-wide text-gray-400 mb-3">Personal conviction</div>
+      <div className="rounded-lg border border-dashed border-gray-300 px-5 py-6">
+        <p className="text-lg font-semibold text-gray-300">Unanswered</p>
+        <p className="text-sm text-gray-600 mt-2 max-w-xl leading-relaxed">
+          Your call. Stu does not assess this. Would you want to work with them for ten years — and would you
+          take this call again if there were no deal in it?
+        </p>
+      </div>
+    </section>
+  );
+}
+
+// ════════════════════════════════════════════════════════
+// 7 ── What we didn't look at — derived, never authored
+// ════════════════════════════════════════════════════════
+
+function NotLookedAt({ evidence, contextNotes, assessment }) {
+  const dropped = evidence?.dropped || [];
+  const notes = Array.isArray(contextNotes) ? contextNotes : [];
+  // deck_status_reason and the dropped-deck row are two views of the same failed deck.
+  // Only fall back to deck_status_reason when the rung didn't already catch it.
+  const deckAlreadyDropped = dropped.some(d => d.type === 'deck');
+  const deckNote = assessment.deck_status === 'suspect' && !deckAlreadyDropped
+    ? assessment.deck_status_reason : null;
+
+  if (dropped.length === 0 && notes.length === 0 && !deckNote) return null;
+
+  return (
+    <section className="border-t border-gray-200 pt-6">
+      <div className="text-2xs font-semibold uppercase tracking-wide text-gray-400 mb-1">What we didn’t look at</div>
+      <p className="text-xs text-gray-400 mb-4">Inputs that were handed to Stu but never made it into the analysis.</p>
+      <ul className="space-y-2.5">
+        {dropped.map((d, i) => (
+          <li key={`d${i}`} className="text-sm text-gray-700 flex gap-3">
+            <span className="text-2xs uppercase tracking-wide text-gray-400 w-16 flex-shrink-0 pt-0.5">{d.type}</span>
+            <span><span className="font-medium">{d.label}</span> <span className="text-gray-500">— {d.reason}</span></span>
+          </li>
+        ))}
+        {deckNote && (
+          <li className="text-sm text-gray-700 flex gap-3">
+            <span className="text-2xs uppercase tracking-wide text-gray-400 w-16 flex-shrink-0 pt-0.5">deck</span>
+            <span className="text-gray-500">{deckNote}</span>
+          </li>
+        )}
+        {notes.map((n, i) => (
+          <li key={`n${i}`} className="text-sm text-gray-700 flex gap-3">
+            <span className="text-2xs uppercase tracking-wide text-gray-400 w-16 flex-shrink-0 pt-0.5">context</span>
+            <span className="text-gray-500">{n}</span>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+// ════════════════════════════════════════════════════════
+// Version strip
+// ════════════════════════════════════════════════════════
+
+function VersionStrip({ versions, currentId, show, onToggle }) {
+  if (!versions || versions.length <= 1) return null;
+  return (
+    <div className="mb-6">
+      <button onClick={onToggle} className="text-xs text-gray-400 hover:text-gray-600">
+        {show ? 'Hide' : 'Show'} version history ({versions.length})
+      </button>
+      {show && (
+        <div className="mt-2 space-y-1">
+          {versions.map(v => {
+            const c = parseOutput(v.conviction_output);
+            return (
+              <Link key={v.id} to={`/assess/${v.id}`}
+                className={`flex items-center justify-between rounded-lg px-3 py-2 text-sm ${v.id === parseInt(currentId) ? 'bg-accent-soft border border-accent/30' : 'bg-gray-50 hover:bg-gray-100'}`}>
+                <span>
+                  <span className="font-medium text-ink">v{v.version_number}</span>
+                  <span className="text-gray-400 ml-2">{new Date(v.created_at).toLocaleDateString()}</span>
+                  {v.change_summary && <span className="text-gray-400 ml-2">{v.change_summary}</span>}
+                </span>
+                <span className="flex items-center gap-2 flex-shrink-0">
+                  <span className="text-xs text-gray-500">
+                    {c?.determinate ? c.band.label : v.overall_signal || v.status}
+                  </span>
+                  <span className="text-sm font-bold tabular-nums text-ink w-8 text-right">
+                    {v.conviction_score ?? (c?.determinate ? c.score : '—')}
+                  </span>
+                </span>
+              </Link>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════
+// 8 ── The depth layer — informs, does not decide
+// ════════════════════════════════════════════════════════
+
+function Collapsible({ id, title, subtitle, children }) {
+  return (
+    <details id={id} className="border-t border-gray-200 pt-6 group">
+      <summary className="cursor-pointer list-none flex items-baseline justify-between gap-4">
+        <span>
+          <span className="text-2xs font-semibold uppercase tracking-wide text-gray-400">{title}</span>
+          {subtitle && <span className="block text-xs text-gray-400 mt-1">{subtitle}</span>}
+        </span>
+        <span className="text-xs text-accent font-medium flex-shrink-0 group-open:hidden">Show</span>
+        <span className="text-xs text-accent font-medium flex-shrink-0 hidden group-open:inline">Hide</span>
+      </summary>
+      <div className="mt-5">{children}</div>
+    </details>
+  );
+}
+
+function DepthLayer({ team, product, market, bear, synthesis }) {
+  const has = team || product || market || bear || synthesis;
+  if (!has) return null;
+
+  return (
+    <Collapsible
+      id="section-depth"
+      title="The depth layer"
+      subtitle="Team, Product, Market and the Bear. These inform the read — they do not decide it. The conviction score above comes only from the four movements."
+    >
+      <div className="space-y-8">
+        {synthesis && <SynthesisProse data={synthesis} />}
+        <DepthAgent label="Team" data={team}>{d => <TeamOutput data={d} />}</DepthAgent>
+        <DepthAgent label="Product" data={product}>{d => <ProductOutput data={d} />}</DepthAgent>
+        <DepthAgent label="Market" data={market}>{d => <MarketOutput data={d} />}</DepthAgent>
+        <DepthAgent label="Bear" data={bear}>{d => <BearOutput data={d} />}</DepthAgent>
+      </div>
+    </Collapsible>
+  );
+}
+
+function DepthAgent({ label, data, children }) {
+  if (!data) return null;
+  return (
+    <div>
+      <h3 className="text-sm font-semibold text-ink mb-3 pb-2 border-b border-gray-100">{label}</h3>
+      {/* An agent that died is an error, not a low score — say which. */}
+      {data.error
+        ? <p className="text-sm text-danger">This agent failed: {data.error}. Re-run — this is a system failure, not a judgment.</p>
+        : children(data)}
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════
+// Shared depth-layer helpers
+// ════════════════════════════════════════════════════════
+
+// Quote verification is the one place a second colour earns its keep in the depth layer:
+// an unverified quote is a trust divergence, which is exactly what danger is for.
 const VERIFY_META = {
-  verbatim: { icon: '✓', label: 'Verbatim', cls: 'text-emerald-600 bg-emerald-50 border-emerald-200', title: 'Found word-for-word in the source materials' },
-  paraphrased: { icon: '≈', label: 'Paraphrased', cls: 'text-amber-600 bg-amber-50 border-amber-200', title: 'Closely matches the source, not word-for-word' },
-  unverified: { icon: '⚠', label: 'Unverified', cls: 'text-red-600 bg-red-50 border-red-200', title: 'Not found in the source materials — confirm before citing' },
+  verbatim: { label: 'Verbatim', cls: 'text-gray-500 bg-gray-50 border-gray-200', title: 'Found word-for-word in the source materials' },
+  paraphrased: { label: 'Paraphrased', cls: 'text-gray-500 bg-gray-50 border-gray-200', title: 'Closely matches the source, not word-for-word' },
+  unverified: { label: 'Unverified', cls: 'text-danger bg-danger-soft border-danger/30', title: 'Not found in the source materials — confirm before citing' },
 };
 
 function QuoteVerifyBadge({ verification }) {
   const m = VERIFY_META[verification];
   if (!m) return null;
   return (
-    <span className={`flex-shrink-0 text-[9px] font-semibold px-1.5 py-0.5 rounded border ${m.cls}`} title={m.title}>
-      {m.icon} {m.label}
+    <span className={`flex-shrink-0 text-2xs font-semibold px-1.5 py-0.5 rounded border ${m.cls}`} title={m.title}>
+      {m.label}
     </span>
   );
 }
 
 function QuoteIntegritySummary({ integrity }) {
   if (!integrity) return null;
-  const parts = [];
-  if (integrity.verbatim) parts.push(<span key="v" className="text-emerald-600">{'✓'} {integrity.verbatim}</span>);
-  if (integrity.paraphrased) parts.push(<span key="p" className="text-amber-600">{'≈'} {integrity.paraphrased}</span>);
-  if (integrity.unverified) parts.push(<span key="u" className="text-red-600">{'⚠'} {integrity.unverified}</span>);
-  if (parts.length === 0) return null;
+  const parts = [
+    integrity.verbatim && `${integrity.verbatim} verbatim`,
+    integrity.paraphrased && `${integrity.paraphrased} paraphrased`,
+  ].filter(Boolean);
+  if (!parts.length && !integrity.unverified) return null;
   return (
-    <span className="text-[10px] font-medium flex items-center gap-2" title="Quote verification against source materials">
-      {parts}
+    <span className="text-2xs text-gray-400 flex items-center gap-2" title="Quote verification against source materials">
+      {parts.join(' · ')}
+      {integrity.unverified > 0 && <span className="text-danger font-semibold">{integrity.unverified} unverified</span>}
     </span>
   );
-}
-
-function scoreColor(score) {
-  if (score >= 7) return 'text-emerald-600';
-  if (score >= 5) return 'text-amber-600';
-  return 'text-red-500';
-}
-function scoreBg(score) {
-  if (score >= 7) return 'bg-emerald-500';
-  if (score >= 5) return 'bg-amber-500';
-  return 'bg-red-500';
 }
 
 function SubcategoryCard({ label, score, evidence, extras }) {
   return (
     <div className="bg-gray-50 rounded-lg p-3">
-      <div className="flex items-center justify-between mb-2">
+      <div className="flex items-center justify-between gap-2 mb-2">
         <span className="text-sm font-semibold text-gray-700">{label}</span>
-        <span className={`text-lg font-black ${scoreColor(score)}`}>{score}</span>
-      </div>
-      <div className="w-full bg-gray-200 rounded-full h-1 mb-2">
-        <div className={`h-1 rounded-full ${scoreBg(score)}`} style={{ width: `${score * 10}%` }} />
+        <Score value={score} max={10} />
       </div>
       <p className="text-xs text-gray-500 leading-relaxed">{evidence}</p>
       {extras}
@@ -477,16 +822,11 @@ function SubcategoryCard({ label, score, evidence, extras }) {
 function RisksList({ risks }) {
   if (!risks || risks.length === 0) return null;
   return (
-    <div className="card p-4">
-      <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Risks</h3>
+    <DetailSection label="Risks">
       <div className="space-y-2">
         {risks.map((r, i) => (
           <div key={i} className="flex items-start gap-2">
-            <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded shrink-0 mt-0.5 ${
-              r.severity === 'high' ? 'bg-red-100 text-red-700' :
-              r.severity === 'medium' ? 'bg-amber-100 text-amber-700' :
-              'bg-gray-100 text-gray-600'
-            }`}>{r.severity}</span>
+            <span className="text-2xs font-semibold uppercase text-gray-400 w-14 flex-shrink-0 pt-0.5">{r.severity}</span>
             <div>
               <p className="text-sm text-gray-800">{r.risk}</p>
               {r.evidence && <p className="text-xs text-gray-400 mt-0.5">{r.evidence}</p>}
@@ -494,260 +834,81 @@ function RisksList({ risks }) {
           </div>
         ))}
       </div>
-    </div>
+    </DetailSection>
   );
 }
 
 function QuestionsList({ questions, title }) {
   if (!questions || questions.length === 0) return null;
   return (
-    <div className="card p-4">
-      <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">{title || 'Open Questions'}</h3>
+    <DetailSection label={title || 'Open questions'}>
       <ul className="space-y-1.5">
         {questions.map((q, i) => (
-          <li key={i} className="text-sm text-gray-600 flex gap-2">
-            <span className="text-blue-500 font-bold shrink-0">{i + 1}.</span>
-            <span>{q}</span>
-          </li>
+          <li key={i} className="flex gap-2"><span className="text-gray-300 flex-shrink-0">{i + 1}.</span><span>{q}</span></li>
         ))}
       </ul>
-    </div>
+    </DetailSection>
   );
 }
 
-// ════════════════════════════════════════════════════════
-// Meeting Prep — a briefing, not an eval. Own layout, no tabs, no scores.
-// ════════════════════════════════════════════════════════
-
-function MeetingPrepDetail({ assessment, brief, isRunning, isComplete, error, onRerun, rerunning }) {
+// ── Synthesis prose. The verdict, pillar scores and score_calculation are NOT rendered
+// here — they live at the top of the page, computed from conviction. This is prose only. ──
+function SynthesisProse({ data }) {
+  const p = data.pillar_scores;
   return (
-    <div className="max-w-3xl mx-auto">
-      <div className="flex items-center gap-2 text-sm text-gray-400 mb-4">
-        <Link to="/assess" className="hover:text-gray-600">Assess</Link>
-        <span>/</span>
-        <span className="text-gray-700">Meeting Prep</span>
-      </div>
+    <div>
+      <h3 className="text-sm font-semibold text-ink mb-3 pb-2 border-b border-gray-100">Synthesis</h3>
 
-      <div className="flex items-start justify-between mb-6">
-        <div>
-          <h1 className="text-xl font-bold text-gray-900">{assessment.founder_name || 'Unknown Founder'}</h1>
-          <p className="text-sm text-gray-500 mt-0.5">{assessment.founder_company || ''}</p>
-        </div>
-        {(error || (!isRunning && !isComplete)) && (
-          <button onClick={onRerun} disabled={rerunning}
-            className="text-xs px-3 py-1.5 rounded border border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100 disabled:opacity-50 transition">
-            {rerunning ? 'Starting…' : 'Re-run'}
-          </button>
-        )}
-      </div>
-
-      {isRunning && <div className="text-center py-12 text-gray-500 text-sm">Preparing the briefing…</div>}
-      {error && <div className="card p-4 text-sm text-red-600">The briefing failed to generate. <button onClick={onRerun} disabled={rerunning} className="underline">{rerunning ? 'Starting…' : 'Retry'}</button></div>}
-      {!isRunning && !error && !brief && <div className="text-center py-12 text-gray-500 text-sm">Not available.</div>}
-
-      {brief && (
-        <div className="space-y-4">
-          <MemoSection title="Founder Profile">
-            <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-line">{brief.founder_profile}</p>
-          </MemoSection>
-
-          {brief.company_snapshot && (
-            <MemoSection title="Company Snapshot">
-              <div className="space-y-2">
-                {brief.company_snapshot.one_liner && <p className="text-sm text-gray-800 font-medium">{brief.company_snapshot.one_liner}</p>}
-                {brief.company_snapshot.stage_and_traction && <p className="text-sm text-gray-700"><span className="font-semibold text-gray-800">Stage & traction: </span>{brief.company_snapshot.stage_and_traction}</p>}
-                {brief.company_snapshot.product && <p className="text-sm text-gray-700"><span className="font-semibold text-gray-800">Product: </span>{brief.company_snapshot.product}</p>}
-                {brief.company_snapshot.competitors && <p className="text-sm text-gray-700"><span className="font-semibold text-gray-800">Competitors: </span>{brief.company_snapshot.competitors}</p>}
-              </div>
-            </MemoSection>
-          )}
-
-          {brief.thesis_fit && (
-            <MemoSection title="Thesis Fit">
-              <p className="text-sm font-bold text-gray-900 mb-1">{brief.thesis_fit.verdict}</p>
-              <p className="text-sm text-gray-700 leading-relaxed">{brief.thesis_fit.reasoning}</p>
-            </MemoSection>
-          )}
-
-          {brief.market_context && (
-            <MemoSection title="Market Context">
-              <p className="text-sm text-gray-700 leading-relaxed">{brief.market_context}</p>
-            </MemoSection>
-          )}
-
-          {brief.questions_to_ask && brief.questions_to_ask.length > 0 && (
-            <MemoSection title="Questions to Ask">
-              <ul className="space-y-1.5">
-                {brief.questions_to_ask.map((q, i) => (
-                  <li key={i} className="text-sm text-gray-700 flex gap-2"><span className="text-blue-500 font-bold shrink-0">{i + 1}.</span>{q}</li>
-                ))}
-              </ul>
-            </MemoSection>
-          )}
-
-          {brief.danny_angle && (
-            <MemoSection title="Danny's Angle">
-              <div className="space-y-3">
-                {brief.danny_angle.watch_for && <p className="text-sm text-gray-700 leading-relaxed">{brief.danny_angle.watch_for}</p>}
-                {brief.danny_angle.lean_in_signals?.length > 0 && (
-                  <div>
-                    <p className="text-xs font-semibold text-emerald-700 mb-1">Lean-in signals</p>
-                    <ul className="space-y-1">{brief.danny_angle.lean_in_signals.map((s, i) => <li key={i} className="text-sm text-gray-600 flex gap-2"><span className="text-emerald-500 shrink-0">+</span>{s}</li>)}</ul>
-                  </div>
-                )}
-                {brief.danny_angle.pass_signals?.length > 0 && (
-                  <div>
-                    <p className="text-xs font-semibold text-red-700 mb-1">Pass signals</p>
-                    <ul className="space-y-1">{brief.danny_angle.pass_signals.map((s, i) => <li key={i} className="text-sm text-gray-600 flex gap-2"><span className="text-red-500 shrink-0">-</span>{s}</li>)}</ul>
-                  </div>
-                )}
-              </div>
-            </MemoSection>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ════════════════════════════════════════════════════════
-// Synthesis View
-// ════════════════════════════════════════════════════════
-
-function SynthesisView({ data }) {
-  return (
-    <div className="space-y-4">
-      {/* Verdict banner */}
-      {data.overall_signal && (
-        <div className={`rounded-xl border p-5 ${SIGNAL_BG[data.overall_signal] || 'bg-gray-50 border-gray-200'}`}>
-          <div className="flex items-start justify-between gap-4">
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-3 mb-2">
-                <span className={`text-2xl font-black ${SIGNAL_TEXT[data.overall_signal] || 'text-gray-700'}`}>{data.overall_signal}</span>
-                {data.overall_score && (
-                  <span className={`text-3xl font-black ${scoreColor(data.overall_score)}`}>
-                    {data.overall_score}<span className="text-base font-medium text-gray-400">/10</span>
-                  </span>
-                )}
-              </div>
-              {data.one_liner && <p className="text-sm text-gray-800 font-medium leading-snug">{data.one_liner}</p>}
-            </div>
-            {data.recommended_next_step && (
-              <div className="text-right shrink-0">
-                <p className="text-[10px] text-gray-400 uppercase tracking-wider">Next Step</p>
-                <p className="text-sm font-semibold text-blue-600 mt-0.5">{data.recommended_next_step}</p>
+      {p && (p.team != null || p.product != null || p.market != null) && (
+        <DetailSection label="Pillar scores — depth only, not the verdict">
+          <div className="flex items-start gap-8">
+            {[['Team', p.team], ['Product', p.product], ['Market', p.market]].map(([label, val]) => (
+              val == null ? null : (
+                <div key={label}>
+                  <div className="text-2xl font-bold tabular-nums text-ink">{val}</div>
+                  <p className="text-xs text-gray-500 mt-0.5">{label}</p>
+                </div>
+              )
+            ))}
+            {data.bear_adjustment != null && data.bear_adjustment !== 0 && (
+              <div>
+                <div className="text-2xl font-bold tabular-nums text-ink">{data.bear_adjustment}</div>
+                <p className="text-xs text-gray-500 mt-0.5">Bear</p>
               </div>
             )}
           </div>
-        </div>
+        </DetailSection>
       )}
 
-      {/* Pillar scores */}
-      {data.pillar_scores && (
-        <div className="card p-4">
-          <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Pillar Scores</h3>
-          <div className="grid grid-cols-3 gap-4">
-            {[
-              { key: 'team', label: 'Team', weight: '45%' },
-              { key: 'product', label: 'Product', weight: '25%' },
-              { key: 'market', label: 'Market', weight: '30%' },
-            ].map(({ key, label, weight }) => {
-              const val = data.pillar_scores[key];
-              if (val == null) return null;
-              return (
-                <div key={key} className="text-center">
-                  <div className={`text-3xl font-black ${scoreColor(val)}`}>{val}</div>
-                  <p className="text-sm font-semibold text-gray-700 mt-1">{label}</p>
-                  <p className="text-[10px] text-gray-400">{weight} weight</p>
-                </div>
-              );
-            })}
-          </div>
-          {data.bear_adjustment != null && data.bear_adjustment !== 0 && (
-            <div className="mt-3 pt-3 border-t border-gray-100 flex items-center justify-between">
-              <span className="text-xs text-gray-500">Bear Adjustment</span>
-              <span className="text-sm font-bold text-red-600">{data.bear_adjustment}</span>
-            </div>
-          )}
-          {data.score_calculation && (
-            <div className="mt-2 pt-2 border-t border-gray-100">
-              <p className="text-[10px] text-gray-400 font-mono">{data.score_calculation}</p>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Executive Summary */}
       {data.executive_summary && (
-        <div className="card p-4">
-          <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Executive Summary</h3>
-          <p className="text-sm text-gray-600 whitespace-pre-wrap leading-relaxed">{data.executive_summary}</p>
-        </div>
+        <DetailSection label="Executive summary">
+          <p className="whitespace-pre-wrap">{data.executive_summary}</p>
+        </DetailSection>
       )}
 
-      {/* Consensus & Disagreements */}
-      {(data.agent_consensus || data.agent_disagreements) && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {data.agent_consensus && data.agent_consensus.length > 0 && (
-            <div className="card p-4">
-              <h3 className="text-xs font-semibold text-emerald-600 uppercase tracking-wider mb-2">Agent Consensus</h3>
-              <ul className="space-y-1.5">
-                {data.agent_consensus.map((c, i) => (
-                  <li key={i} className="text-sm text-gray-600 flex gap-2"><span className="text-emerald-500 shrink-0">+</span>{c}</li>
-                ))}
-              </ul>
-            </div>
-          )}
-          {data.agent_disagreements && data.agent_disagreements.length > 0 && (
-            <div className="card p-4">
-              <h3 className="text-xs font-semibold text-amber-600 uppercase tracking-wider mb-2">Agent Disagreements</h3>
-              <ul className="space-y-1.5">
-                {data.agent_disagreements.map((d, i) => (
-                  <li key={i} className="text-sm text-gray-600 flex gap-2"><span className="text-amber-500 shrink-0">~</span>{d}</li>
-                ))}
-              </ul>
-            </div>
-          )}
-        </div>
+      {data.agent_consensus?.length > 0 && (
+        <DetailSection label="Agent consensus">
+          <ul className="space-y-1.5">
+            {data.agent_consensus.map((c, i) => <li key={i} className="flex gap-2"><span className="text-gray-300 flex-shrink-0">+</span>{c}</li>)}
+          </ul>
+        </DetailSection>
       )}
 
-      <QuestionsList questions={data.top_questions} title="Top Questions for Next Meeting" />
-
-      {/* Override note */}
-      {data.override && data.override !== 'null' && typeof data.override === 'object' && (
-        <div className="card p-3 bg-blue-50 border-blue-200">
-          <p className="text-xs text-blue-700">
-            <span className="font-bold">Synthesis Override ({data.override.adjustment > 0 ? '+' : ''}{data.override.adjustment}):</span> {data.override.justification}
-          </p>
-        </div>
+      {data.agent_disagreements?.length > 0 && (
+        <DetailSection label="Agent disagreements">
+          <ul className="space-y-1.5">
+            {data.agent_disagreements.map((d, i) => <li key={i} className="flex gap-2"><span className="text-gray-300 flex-shrink-0">~</span>{d}</li>)}
+          </ul>
+        </DetailSection>
       )}
+
+      <QuestionsList questions={data.top_questions} title="Top questions for the next meeting" />
     </div>
   );
 }
 
 // ════════════════════════════════════════════════════════
-// Agent Output Router
-// ════════════════════════════════════════════════════════
-
-function AgentOutput({ data, type }) {
-  if (!data) return <div className="text-center py-8 text-gray-500 text-sm">Agent output not yet available</div>;
-  if (data.error) return <div className="card p-4 text-sm text-red-600">Agent error: {data.error}</div>;
-
-  if (type === 'team') return <TeamOutput data={data} />;
-  if (type === 'product') return <ProductOutput data={data} />;
-  if (type === 'market') return <MarketOutput data={data} />;
-  if (type === 'bear') return <BearOutput data={data} />;
-
-  // Fallback for any unknown agent type
-  return (
-    <div className="card p-4">
-      <pre className="text-xs text-gray-500 whitespace-pre-wrap">{JSON.stringify(data, null, 2)}</pre>
-    </div>
-  );
-}
-
-// ════════════════════════════════════════════════════════
-// TEAM Output
+// TEAM
 // ════════════════════════════════════════════════════════
 
 function TeamOutput({ data }) {
@@ -755,62 +916,32 @@ function TeamOutput({ data }) {
   const subs = data.subcategories;
 
   return (
-    <div className="space-y-4">
-      {/* Verdict Banner */}
+    <div>
       {v && (
-        <div className={`rounded-xl border p-5 ${SIGNAL_BG[v.signal] || 'bg-gray-50 border-gray-200'}`}>
-          <div className="flex items-start justify-between gap-4">
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-3 mb-2">
-                <span className={`text-2xl font-black ${SIGNAL_TEXT[v.signal] || 'text-gray-700'}`}>{v.signal}</span>
-                <span className={`text-3xl font-black ${scoreColor(v.score)}`}>{v.score}<span className="text-base font-medium text-gray-400">/10</span></span>
-                {data.pillar_score && (
-                  <span className="text-sm text-gray-400 font-mono ml-2">Pillar: {data.pillar_score}</span>
-                )}
-              </div>
-              <p className="text-sm text-gray-800 font-medium leading-snug">{v.one_liner}</p>
-            </div>
-            <div className="text-right shrink-0">
-              <p className="text-[10px] text-gray-400 uppercase tracking-wider">Archetype</p>
-              <p className="text-xs font-mono text-gray-600 mt-0.5">{v.archetype}</p>
-              {data.stage_classification && (
-                <>
-                  <p className="text-[10px] text-gray-400 uppercase tracking-wider mt-2">Stage</p>
-                  <p className="text-xs font-medium text-gray-600 mt-0.5">{data.stage_classification}</p>
-                </>
-              )}
-            </div>
+        <DetailSection label="Read">
+          <div className="flex items-baseline gap-3 mb-2">
+            <span className="text-2xl font-bold tabular-nums text-ink">{v.score}</span>
+            <span className="text-sm font-semibold text-gray-600">{v.signal}</span>
+            {v.archetype && <Tag>{v.archetype}</Tag>}
+            {data.stage_classification && <Tag>{data.stage_classification}</Tag>}
           </div>
-        </div>
+          <p className="text-sm text-gray-800 font-medium">{v.one_liner}</p>
+        </DetailSection>
       )}
 
-      {/* Snapshot */}
-      {data.snapshot && data.snapshot.length > 0 && (
-        <div className="card p-4">
-          <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Snapshot</h3>
+      {data.snapshot?.length > 0 && (
+        <DetailSection label="Snapshot">
           <ul className="space-y-1.5">
-            {data.snapshot.map((bullet, i) => (
-              <li key={i} className="text-sm text-gray-700 flex gap-2">
-                <span className="text-gray-300 shrink-0">-</span><span>{bullet}</span>
-              </li>
-            ))}
+            {data.snapshot.map((b, i) => <li key={i} className="flex gap-2"><span className="text-gray-300 flex-shrink-0">-</span><span>{b}</span></li>)}
           </ul>
-        </div>
+        </DetailSection>
       )}
 
-      {/* The Read */}
-      {data.the_read && (
-        <div className="card p-4 border-l-4 border-l-gray-900">
-          <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">The Read</h3>
-          <p className="text-sm text-gray-700 leading-relaxed">{data.the_read}</p>
-        </div>
-      )}
+      {data.the_read && <DetailSection label="The read"><p>{data.the_read}</p></DetailSection>}
 
-      {/* Subcategory Scores */}
       {subs && (
-        <div className="card p-4">
-          <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-4">Team Subcategories</h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <DetailSection label="Subcategories">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {[
               { key: 'founder_problem_fit', label: 'Founder-Problem Fit', weight: '2x' },
               { key: 'sales_capability', label: 'Sales Capability', weight: '2x' },
@@ -828,62 +959,44 @@ function TeamOutput({ data }) {
               if (!sub) return null;
               return (
                 <SubcategoryCard
-                  key={key}
-                  label={weight ? `${label} (${weight})` : label}
-                  score={sub.score}
-                  evidence={sub.evidence}
-                  extras={
-                    <>
-                      {sub.insight_type && (
-                        <span className="inline-block text-[10px] font-mono text-gray-400 mt-1">
-                          {sub.insight_type === 'earned_insider' ? 'EARNED' : 'SYNTHESIZED'}
-                        </span>
-                      )}
-                      {sub.fit_signal && (
-                        <span className={`inline-block ml-2 text-[10px] font-medium px-2 py-0.5 rounded-full ${FIT_COLORS[sub.fit_signal] || 'text-gray-500 bg-gray-50'}`}>
-                          {sub.fit_signal}
-                        </span>
-                      )}
-                    </>
-                  }
+                  key={key} label={weight ? `${label} (${weight})` : label}
+                  score={sub.score} evidence={sub.evidence}
+                  extras={(sub.insight_type || sub.fit_signal) && (
+                    <div className="flex items-center gap-1.5 mt-2">
+                      {sub.insight_type && <Tag>{sub.insight_type === 'earned_insider' ? 'earned' : 'synthesized'}</Tag>}
+                      {sub.fit_signal && <Tag>{sub.fit_signal} fit</Tag>}
+                    </div>
+                  )}
                 />
               );
             })}
           </div>
-        </div>
+        </DetailSection>
       )}
 
-      {/* Key Quotes */}
-      {data.key_quotes && data.key_quotes.length > 0 && (
-        <div className="card p-4">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Key Quotes</h3>
-            {data.quote_integrity && (
-              <QuoteIntegritySummary integrity={data.quote_integrity} />
-            )}
-          </div>
+      {data.key_quotes?.length > 0 && (
+        <DetailSection label="Key quotes">
+          {data.quote_integrity && <div className="mb-2"><QuoteIntegritySummary integrity={data.quote_integrity} /></div>}
           <div className="space-y-3">
             {data.key_quotes.map((q, i) => (
-              <div key={i} className={`border-l-3 pl-3 ${QUOTE_COLORS[q.signal] || 'border-l-gray-300'}`}>
+              <div key={i} className="border-l-2 border-gray-200 pl-3">
                 <div className="flex items-start gap-2">
-                  <p className="text-sm text-gray-800 italic flex-1">"{q.quote}"</p>
+                  <p className="text-sm text-gray-800 italic flex-1">“{q.quote}”</p>
                   {q.verification && <QuoteVerifyBadge verification={q.verification} />}
                 </div>
                 <p className="text-xs text-gray-500 mt-1">
-                  <span className={`font-medium ${q.signal === 'POSITIVE' ? 'text-emerald-600' : q.signal === 'NEGATIVE' ? 'text-red-600' : 'text-amber-600'}`}>
-                    {q.signal}
-                  </span>
+                  <span className="font-semibold uppercase tracking-wide text-gray-400">{q.signal}</span>
                   {' — '}{q.read}
                 </p>
               </div>
             ))}
           </div>
           {data.quote_integrity?.has_unverified && (
-            <p className="text-[11px] text-red-500 mt-3 flex items-center gap-1">
-              <span>&#9888;</span> Unverified quotes were not found in the source materials — treat as paraphrase or potential model error and confirm before citing.
+            <p className="text-xs text-danger mt-3">
+              Unverified quotes were not found in the source materials — treat as paraphrase or model error and confirm before citing.
             </p>
           )}
-        </div>
+        </DetailSection>
       )}
 
       <RisksList risks={data.risks} />
@@ -893,53 +1006,26 @@ function TeamOutput({ data }) {
 }
 
 // ════════════════════════════════════════════════════════
-// PRODUCT Output
+// PRODUCT
 // ════════════════════════════════════════════════════════
 
 function ProductOutput({ data }) {
   const subs = data.subcategories;
-
   return (
-    <div className="space-y-4">
-      {/* Pillar score header */}
-      {data.pillar_score && (
-        <div className="card p-4 flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-gray-700">Product Pillar Score</h3>
-          <span className={`text-3xl font-black ${scoreColor(data.pillar_score)}`}>
-            {data.pillar_score}<span className="text-base font-medium text-gray-400">/10</span>
-          </span>
-        </div>
+    <div>
+      {data.pillar_score != null && (
+        <DetailSection label="Pillar score">
+          <span className="text-2xl font-bold tabular-nums text-ink">{data.pillar_score}</span>
+          <span className="text-sm text-gray-400">/10</span>
+        </DetailSection>
       )}
+      {data.product_thesis && <DetailSection label="Product thesis"><p>{data.product_thesis}</p></DetailSection>}
+      {data.build_vs_buy_risk && <DetailSection label="Build vs. buy risk"><p>{data.build_vs_buy_risk}</p></DetailSection>}
+      {data.vision_gap && <DetailSection label="Vision gap"><p>{data.vision_gap}</p></DetailSection>}
 
-      {/* Product Thesis */}
-      {data.product_thesis && (
-        <div className="card p-4 border-l-4 border-l-blue-500">
-          <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Product Thesis</h3>
-          <p className="text-sm text-gray-700 leading-relaxed">{data.product_thesis}</p>
-        </div>
-      )}
-
-      {/* Build vs Buy + Vision Gap */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {data.build_vs_buy_risk && (
-          <div className="card p-4">
-            <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Build vs. Buy Risk</h3>
-            <p className="text-sm text-gray-600 leading-relaxed">{data.build_vs_buy_risk}</p>
-          </div>
-        )}
-        {data.vision_gap && (
-          <div className="card p-4">
-            <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Vision Gap</h3>
-            <p className="text-sm text-gray-600 leading-relaxed">{data.vision_gap}</p>
-          </div>
-        )}
-      </div>
-
-      {/* Subcategory Scores */}
       {subs && (
-        <div className="card p-4">
-          <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-4">Product Subcategories</h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <DetailSection label="Subcategories">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {[
               { key: 'product_velocity', label: 'Product Velocity' },
               { key: 'customer_proximity', label: 'Customer Proximity' },
@@ -955,7 +1041,7 @@ function ProductOutput({ data }) {
               return <SubcategoryCard key={key} label={label} score={sub.score} evidence={sub.evidence} />;
             })}
           </div>
-        </div>
+        </DetailSection>
       )}
 
       <RisksList risks={data.risks} />
@@ -965,53 +1051,37 @@ function ProductOutput({ data }) {
 }
 
 // ════════════════════════════════════════════════════════
-// MARKET Output
+// MARKET
 // ════════════════════════════════════════════════════════
 
 function MarketOutput({ data }) {
   const subs = data.subcategories;
-
   return (
-    <div className="space-y-4">
-      {/* Pillar score header */}
-      {data.pillar_score && (
-        <div className="card p-4 flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-gray-700">Market Pillar Score</h3>
-          <span className={`text-3xl font-black ${scoreColor(data.pillar_score)}`}>
-            {data.pillar_score}<span className="text-base font-medium text-gray-400">/10</span>
-          </span>
-        </div>
+    <div>
+      {data.pillar_score != null && (
+        <DetailSection label="Pillar score">
+          <span className="text-2xl font-bold tabular-nums text-ink">{data.pillar_score}</span>
+          <span className="text-sm text-gray-400">/10</span>
+        </DetailSection>
       )}
-
-      {/* Why Now */}
-      {data.why_now && (
-        <div className="card p-4 border-l-4 border-l-blue-500">
-          <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Why Now</h3>
-          <p className="text-sm text-gray-700 leading-relaxed">{data.why_now}</p>
-        </div>
+      {/* structurally_dead is what actually docks the conviction score — surface it. */}
+      {data.structurally_dead === true && (
+        <DetailSection label="Structurally dead market">
+          {/* State the judgment, not the arithmetic — an indeterminate run has no score to
+              dock. The Docks section above is the authority on what was actually applied. */}
+          <p className="text-danger">
+            The market agent judged this category structurally dead — the one market condition that docks the
+            conviction score. See Docks.
+          </p>
+        </DetailSection>
       )}
+      {data.why_now && <DetailSection label="Why now"><p>{data.why_now}</p></DetailSection>}
+      {data.competitive_moat && <DetailSection label="Competitive moat"><p>{data.competitive_moat}</p></DetailSection>}
+      {data.kill_shot_risk && <DetailSection label="Kill shot risk"><p>{data.kill_shot_risk}</p></DetailSection>}
 
-      {/* Competitive Moat + Kill Shot */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {data.competitive_moat && (
-          <div className="card p-4">
-            <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Competitive Moat</h3>
-            <p className="text-sm text-gray-600 leading-relaxed">{data.competitive_moat}</p>
-          </div>
-        )}
-        {data.kill_shot_risk && (
-          <div className="card p-4 border-red-200">
-            <h3 className="text-xs font-semibold text-red-600 uppercase tracking-wider mb-2">Kill Shot Risk</h3>
-            <p className="text-sm text-gray-600 leading-relaxed">{data.kill_shot_risk}</p>
-          </div>
-        )}
-      </div>
-
-      {/* Subcategory Scores */}
       {subs && (
-        <div className="card p-4">
-          <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-4">Market Subcategories</h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <DetailSection label="Subcategories">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {[
               { key: 'market_timing', label: 'Market Timing' },
               { key: 'market_structure', label: 'Market Structure' },
@@ -1028,7 +1098,7 @@ function MarketOutput({ data }) {
               return <SubcategoryCard key={key} label={label} score={sub.score} evidence={sub.evidence} />;
             })}
           </div>
-        </div>
+        </DetailSection>
       )}
 
       <RisksList risks={data.risks} />
@@ -1038,124 +1108,94 @@ function MarketOutput({ data }) {
 }
 
 // ════════════════════════════════════════════════════════
-// BEAR Output
+// BEAR
 // ════════════════════════════════════════════════════════
 
 function BearOutput({ data }) {
   return (
-    <div className="space-y-4">
-      {/* Bear adjustment badge */}
+    <div>
       {data.bear_adjustment != null && (
-        <div className="card p-4 flex items-center justify-between bg-red-50 border-red-200">
-          <span className="text-sm font-semibold text-red-700">Bear Score Adjustment</span>
-          <span className="text-2xl font-black text-red-600">{data.bear_adjustment}</span>
-        </div>
+        <DetailSection label="Bear adjustment">
+          <span className="text-2xl font-bold tabular-nums text-ink">{data.bear_adjustment}</span>
+          <p className="text-xs text-gray-400 mt-1">Clamped to [-1.5, 0] before it docks the conviction score. It is never a boost.</p>
+        </DetailSection>
       )}
 
-      {/* Kill shot */}
-      {data.kill_shot_risk && (
-        <div className="card p-4 border-l-4 border-l-red-500">
-          <h3 className="text-xs font-semibold text-red-600 uppercase tracking-wider mb-2">Kill Shot Risk</h3>
-          <p className="text-sm text-gray-700 leading-relaxed">{data.kill_shot_risk}</p>
-        </div>
-      )}
+      {data.kill_shot_risk && <DetailSection label="Kill shot risk"><p>{data.kill_shot_risk}</p></DetailSection>}
 
-      {/* 12-Month Kill scenario */}
+      {/* twelve_month_kill is {scenario, probability, adjustment} — there is no `evidence`
+          field in the prompt schema, so it is not rendered. */}
       {data.twelve_month_kill && (
-        <div className="card p-4 border-l-4 border-l-orange-400">
-          <div className="flex items-center justify-between mb-2">
-            <h3 className="text-xs font-semibold text-orange-600 uppercase tracking-wider">12-Month Kill Scenario</h3>
-            {data.twelve_month_kill.probability && (
-              <span className="text-xs font-bold text-orange-700 bg-orange-50 px-2 py-0.5 rounded">{data.twelve_month_kill.probability}</span>
-            )}
-          </div>
-          {data.twelve_month_kill.scenario && <p className="text-sm text-gray-700 leading-relaxed">{data.twelve_month_kill.scenario}</p>}
-          {data.twelve_month_kill.evidence && <p className="text-xs text-gray-500 mt-1">{data.twelve_month_kill.evidence}</p>}
-        </div>
+        <DetailSection label="12-month kill scenario">
+          {data.twelve_month_kill.probability && <div className="mb-1.5"><Tag>{data.twelve_month_kill.probability} probability</Tag></div>}
+          {data.twelve_month_kill.scenario && <p>{data.twelve_month_kill.scenario}</p>}
+          {data.twelve_month_kill.adjustment != null && (
+            <p className="text-xs text-gray-400 mt-1">Contributed {data.twelve_month_kill.adjustment} to the bear adjustment.</p>
+          )}
+        </DetailSection>
       )}
 
-      {/* Bundling Risk */}
+      {/* bundling_risk is {assessment, defensible, adjustment} — NOT {severity, scenario,
+          evidence}. The old component read those three nonexistent fields and rendered an
+          empty header. */}
       {data.bundling_risk && (
-        <div className="card p-4 border-l-4 border-l-amber-400">
-          <div className="flex items-center justify-between mb-2">
-            <h3 className="text-xs font-semibold text-amber-600 uppercase tracking-wider">Bundling Risk</h3>
-            {data.bundling_risk.severity && (
-              <span className="text-xs font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded">{data.bundling_risk.severity}</span>
-            )}
-          </div>
-          {data.bundling_risk.scenario && <p className="text-sm text-gray-700 leading-relaxed">{data.bundling_risk.scenario}</p>}
-          {data.bundling_risk.evidence && <p className="text-xs text-gray-500 mt-1">{data.bundling_risk.evidence}</p>}
-        </div>
+        <DetailSection label="Bundling risk">
+          {data.bundling_risk.defensible != null && (
+            <div className="mb-1.5"><Tag>{data.bundling_risk.defensible ? 'defensible' : 'not defensible'}</Tag></div>
+          )}
+          {data.bundling_risk.assessment && <p>{data.bundling_risk.assessment}</p>}
+          {data.bundling_risk.adjustment != null && (
+            <p className="text-xs text-gray-400 mt-1">Contributed {data.bundling_risk.adjustment} to the bear adjustment.</p>
+          )}
+        </DetailSection>
       )}
 
-      {/* Narrative */}
-      {data.narrative && (
-        <div className="card p-4">
-          <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Bear Case</h3>
-          <p className="text-sm text-gray-600 whitespace-pre-wrap leading-relaxed">{data.narrative}</p>
-        </div>
-      )}
+      {data.narrative && <DetailSection label="Bear case"><p className="whitespace-pre-wrap">{data.narrative}</p></DetailSection>}
 
-      {/* Primary risks */}
-      {data.primary_risks && data.primary_risks.length > 0 && (
-        <div className="card p-4">
-          <h3 className="text-xs font-semibold text-red-600 uppercase tracking-wider mb-3">Primary Risks</h3>
-          <div className="space-y-3">
+      {data.primary_risks?.length > 0 && (
+        <DetailSection label="Primary risks">
+          <div className="space-y-2.5">
             {data.primary_risks.map((r, i) => (
-              <div key={i} className="bg-gray-50 rounded-lg p-3">
-                <div className="flex items-center gap-2 mb-1">
-                  <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded ${
-                    r.severity === 'high' ? 'bg-red-100 text-red-700' :
-                    r.severity === 'medium' ? 'bg-amber-100 text-amber-700' :
-                    'bg-gray-100 text-gray-600'
-                  }`}>{r.severity}</span>
-                  <span className="text-sm font-medium text-gray-800">{r.risk}</span>
+              <div key={i} className="flex items-start gap-2">
+                <span className="text-2xs font-semibold uppercase text-gray-400 w-14 flex-shrink-0 pt-0.5">{r.severity}</span>
+                <div>
+                  <p className="text-sm text-gray-800 font-medium">{r.risk}</p>
+                  {r.detail && <p className="text-xs text-gray-500 mt-0.5">{r.detail}</p>}
+                  {r.mitigation && <p className="text-xs text-gray-400 mt-0.5">Mitigation: {r.mitigation}</p>}
                 </div>
-                {r.detail && <p className="text-xs text-gray-500 mt-1">{r.detail}</p>}
-                {r.mitigation && <p className="text-xs text-gray-400 mt-1">Mitigation: {r.mitigation}</p>}
               </div>
             ))}
           </div>
-        </div>
+        </DetailSection>
       )}
 
-      {/* Failure scenarios */}
-      {data.failure_scenarios && data.failure_scenarios.length > 0 && (
-        <div className="card p-4">
-          <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Failure Scenarios</h3>
-          <ul className="text-sm text-gray-600 space-y-1.5">
-            {data.failure_scenarios.map((s, i) => <li key={i} className="flex gap-2"><span className="text-red-400 shrink-0">-</span> {s}</li>)}
+      {data.failure_scenarios?.length > 0 && (
+        <DetailSection label="Failure scenarios">
+          <ul className="space-y-1.5">
+            {data.failure_scenarios.map((s, i) => <li key={i} className="flex gap-2"><span className="text-gray-300 flex-shrink-0">-</span>{s}</li>)}
           </ul>
-        </div>
+        </DetailSection>
       )}
 
-      {/* Deck omissions */}
-      {data.deck_omissions && data.deck_omissions.length > 0 && (
-        <div className="card p-4">
-          <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Deck Omissions</h3>
-          <ul className="text-sm text-gray-600 space-y-1.5">
-            {data.deck_omissions.map((o, i) => <li key={i} className="flex gap-2"><span className="text-amber-500 shrink-0">?</span> {o}</li>)}
+      {data.deck_omissions?.length > 0 && (
+        <DetailSection label="Deck omissions">
+          <ul className="space-y-1.5">
+            {data.deck_omissions.map((o, i) => <li key={i} className="flex gap-2"><span className="text-gray-300 flex-shrink-0">?</span>{o}</li>)}
           </ul>
-        </div>
+        </DetailSection>
       )}
 
-      {/* Assumptions */}
-      {data.assumptions_required && data.assumptions_required.length > 0 && (
-        <div className="card p-4">
-          <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Required Assumptions</h3>
+      {data.assumptions_required?.length > 0 && (
+        <DetailSection label="Required assumptions">
           <div className="space-y-2">
             {data.assumptions_required.map((a, i) => (
               <div key={i} className="flex items-start gap-2">
-                <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded shrink-0 mt-0.5 ${
-                  a.likelihood === 'high' ? 'bg-emerald-100 text-emerald-700' :
-                  a.likelihood === 'medium' ? 'bg-amber-100 text-amber-700' :
-                  'bg-red-100 text-red-700'
-                }`}>{a.likelihood}</span>
+                <span className="text-2xs font-semibold uppercase text-gray-400 w-14 flex-shrink-0 pt-0.5">{a.likelihood}</span>
                 <p className="text-sm text-gray-700">{a.assumption}</p>
               </div>
             ))}
           </div>
-        </div>
+        </DetailSection>
       )}
 
       <QuestionsList questions={data.key_questions} />
@@ -1165,28 +1205,31 @@ function BearOutput({ data }) {
 
 // ════════════════════════════════════════════════════════
 // Deal Memo — Danny's 7-M structure, assembled from the already-computed
-// team/product/market/bear/synthesis outputs. No new LLM call: the underlying prose is
-// already written to the "Sequoia standard" by the synthesis prompt, so this is a
-// reorganization pass, not a rewrite. Every field below is traced to a real, verified
-// field in server/agents/prompts.js — see the two honest gaps called out inline:
-// Model has no dedicated unit-economics agent, and Conditions has no deal-terms agent.
+// team/product/market/bear/synthesis outputs. No new LLM call. Two honest gaps are called
+// out inline: Model has no dedicated unit-economics agent, Conditions has no deal-terms agent.
 // ════════════════════════════════════════════════════════
 
 function sub(obj, key) { return obj && obj.subcategories && obj.subcategories[key]; }
 
 function buildDealMemo({ team, product, market, bear, synthesis }) {
   if (!synthesis) return null;
+  const conviction = synthesis.conviction || null;
   return {
     recommendation: {
-      signal: synthesis.overall_signal,
-      score: synthesis.overall_score,
+      // The recommendation is the conviction band — not a pillar average. When conviction
+      // is indeterminate there is no signal and no score, and the memo must say so.
+      determinate: !!conviction?.determinate,
+      signal: conviction?.determinate ? conviction.band.label : 'Insufficient evidence',
+      action: conviction?.determinate ? conviction.band.action : null,
+      score: conviction?.determinate ? conviction.score : null,
+      reason: conviction?.determinate ? null : conviction?.reason,
       oneLiner: synthesis.one_liner,
       nextStep: synthesis.recommended_next_step,
       summary: synthesis.executive_summary,
       consensus: synthesis.agent_consensus,
       disagreements: synthesis.agent_disagreements,
     },
-    management: team && {
+    management: team && !team.error && {
       verdict: team.verdict,
       theRead: team.the_read,
       snapshot: team.snapshot,
@@ -1204,7 +1247,7 @@ function buildDealMemo({ team, product, market, bear, synthesis }) {
       flywheel: sub(product, 'flywheel_design'),
       note: 'Assembled from the Market and Product agents’ unit-economics and defensibility subscores — Stu does not run a dedicated financial-model agent. Treat as directional.',
     },
-    market: market && {
+    market: market && !market.error && {
       whyNow: market.why_now,
       competitiveMoat: market.competitive_moat,
       killShotRisk: market.kill_shot_risk,
@@ -1220,7 +1263,7 @@ function buildDealMemo({ team, product, market, bear, synthesis }) {
       ['Customer Proximity', sub(product, 'customer_proximity')],
       ['Category Momentum', sub(market, 'category_momentum')],
     ].filter(([, s]) => s && s.score != null),
-    malfeasance: bear && {
+    malfeasance: bear && !bear.error && {
       primaryRisks: bear.primary_risks,
       twelveMonthKill: bear.twelve_month_kill,
       bundlingRisk: bear.bundling_risk,
@@ -1230,7 +1273,7 @@ function buildDealMemo({ team, product, market, bear, synthesis }) {
     },
     conditions: {
       topQuestions: synthesis.top_questions,
-      assumptions: bear && bear.assumptions_required,
+      assumptions: bear && !bear.error && bear.assumptions_required,
       nextStep: synthesis.recommended_next_step,
       note: 'Stu does not evaluate deal terms, valuation, or round structure — bring these separately.',
     },
@@ -1239,13 +1282,13 @@ function buildDealMemo({ team, product, market, bear, synthesis }) {
 
 function MemoSection({ title, subtitle, note, children }) {
   return (
-    <div className="card p-4">
-      <div className="flex items-baseline justify-between mb-3">
-        <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">{title}</h3>
-        {subtitle && <span className="text-[10px] text-gray-400">{subtitle}</span>}
+    <div>
+      <div className="flex items-baseline justify-between gap-3 mb-2 pb-1.5 border-b border-gray-100">
+        <h3 className="text-2xs font-semibold uppercase tracking-wide text-gray-400">{title}</h3>
+        {subtitle && <span className="text-2xs text-gray-400">{subtitle}</span>}
       </div>
-      {children}
-      {note && <p className="text-[11px] text-gray-400 italic mt-3 pt-3 border-t border-gray-100">{note}</p>}
+      <div className="text-sm text-gray-700 leading-relaxed">{children}</div>
+      {note && <p className="text-xs text-gray-400 italic mt-3">{note}</p>}
     </div>
   );
 }
@@ -1256,9 +1299,9 @@ function MemoSubList({ items }) {
     <div className="space-y-3">
       {items.map((s, i) => (
         <div key={i}>
-          <div className="flex items-center justify-between mb-0.5">
+          <div className="flex items-center justify-between gap-2 mb-0.5">
             <span className="text-sm font-medium text-gray-700">{s.label}</span>
-            <span className={`text-sm font-bold ${scoreColor(s.score)}`}>{s.score}/10</span>
+            <Score value={s.score} max={10} />
           </div>
           {s.evidence && <p className="text-xs text-gray-500 leading-snug">{s.evidence}</p>}
         </div>
@@ -1267,277 +1310,232 @@ function MemoSubList({ items }) {
   );
 }
 
-function MemoView({ team, product, market, bear, synthesis }) {
+function MemoSectionCollapsed({ team, product, market, bear, synthesis }) {
   const memo = buildDealMemo({ team, product, market, bear, synthesis });
-  if (!memo) return <div className="text-center py-8 text-gray-500 text-sm">Deal memo not available — synthesis hasn’t completed yet.</div>;
+  if (!memo) return null;
   const { recommendation: r, management: m, model, market: mkt, momentum, malfeasance: mf, conditions: c } = memo;
 
   return (
-    <div className="space-y-4">
-      {/* I. Recommendation */}
-      <div className={`rounded-xl border p-5 ${SIGNAL_BG[r.signal] || 'bg-gray-50 border-gray-200'}`}>
-        <p className="text-[10px] text-gray-400 uppercase tracking-wider mb-1">I. Recommendation</p>
-        <div className="flex items-center gap-3 mb-2">
-          <span className={`text-2xl font-black ${SIGNAL_TEXT[r.signal] || 'text-gray-700'}`}>{r.signal}</span>
-          <span className={`text-3xl font-black ${scoreColor(r.score)}`}>{r.score}<span className="text-base font-medium text-gray-400">/10</span></span>
-          {r.nextStep && <span className="text-xs text-gray-500 ml-auto">Next: <span className="font-semibold text-gray-700">{r.nextStep}</span></span>}
-        </div>
-        <p className="text-sm text-gray-800 font-medium leading-snug mb-3">{r.oneLiner}</p>
-        {r.summary && <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-line">{r.summary}</p>}
-      </div>
-
-      {/* II. Management */}
-      <MemoSection title="II. Management">
-        {m ? (
-          <div className="space-y-3">
-            {m.verdict && <p className="text-sm text-gray-800 font-medium">{m.verdict.one_liner} <span className="text-gray-400 font-normal">({m.verdict.archetype})</span></p>}
-            {m.theRead && <p className="text-sm text-gray-700 leading-relaxed">{m.theRead}</p>}
-            <MemoSubList items={m.subs} />
+    <Collapsible id="section-memo" title="Deal memo" subtitle="The 7-M structure, assembled from the outputs above. No new analysis.">
+      <div className="space-y-7">
+        <MemoSection title="I. Recommendation">
+          <div className="flex items-baseline gap-3 mb-2">
+            <span className={`text-3xl font-bold tabular-nums ${r.determinate ? 'text-ink' : 'text-gray-200'}`}>
+              {r.determinate ? r.score : '—'}
+            </span>
+            <span className={`text-lg font-semibold ${r.determinate ? 'text-ink' : 'text-gray-400'}`}>{r.signal}</span>
+            {r.action && <span className="text-xs text-gray-500 ml-auto">{r.action}</span>}
           </div>
-        ) : <p className="text-sm text-gray-400">Team agent output not available.</p>}
-      </MemoSection>
+          {r.reason && <p className="mb-2">{r.reason}</p>}
+          {r.oneLiner && <p className="font-medium text-gray-800 mb-2">{r.oneLiner}</p>}
+          {r.summary && <p className="whitespace-pre-line">{r.summary}</p>}
+        </MemoSection>
 
-      {/* III. Model */}
-      <MemoSection title="III. Model" note={model.note}>
-        <div className="space-y-3">
-          {[['Unit Economics Structure', model.unitEconomics], ['Moat Architecture', model.moat], ['Flywheel Design', model.flywheel]]
-            .filter(([, s]) => s && s.score != null)
-            .map(([label, s], i) => (
-              <div key={i}>
-                <div className="flex items-center justify-between mb-0.5">
-                  <span className="text-sm font-medium text-gray-700">{label}</span>
-                  <span className={`text-sm font-bold ${scoreColor(s.score)}`}>{s.score}/10</span>
+        <MemoSection title="II. Management">
+          {m ? (
+            <div className="space-y-3">
+              {m.verdict && <p className="font-medium text-gray-800">{m.verdict.one_liner} <span className="text-gray-400 font-normal">({m.verdict.archetype})</span></p>}
+              {m.theRead && <p>{m.theRead}</p>}
+              <MemoSubList items={m.subs} />
+            </div>
+          ) : <p className="text-gray-400">Team agent output not available.</p>}
+        </MemoSection>
+
+        <MemoSection title="III. Model" note={model.note}>
+          <div className="space-y-3">
+            {[['Unit Economics Structure', model.unitEconomics], ['Moat Architecture', model.moat], ['Flywheel Design', model.flywheel]]
+              .filter(([, s]) => s && s.score != null)
+              .map(([label, s], i) => (
+                <div key={i}>
+                  <div className="flex items-center justify-between gap-2 mb-0.5">
+                    <span className="text-sm font-medium text-gray-700">{label}</span>
+                    <Score value={s.score} max={10} />
+                  </div>
+                  <p className="text-xs text-gray-500 leading-snug">{s.evidence}</p>
                 </div>
-                <p className="text-xs text-gray-500 leading-snug">{s.evidence}</p>
+              ))}
+          </div>
+        </MemoSection>
+
+        <MemoSection title="IV. Market">
+          {mkt ? (
+            <div className="space-y-3">
+              {mkt.whyNow && <p><span className="font-semibold text-gray-800">Why now: </span>{mkt.whyNow}</p>}
+              {mkt.competitiveMoat && <p><span className="font-semibold text-gray-800">Competitive moat: </span>{mkt.competitiveMoat}</p>}
+              <MemoSubList items={mkt.subs} />
+            </div>
+          ) : <p className="text-gray-400">Market agent output not available.</p>}
+        </MemoSection>
+
+        <MemoSection title="V. Momentum" subtitle="cross-agent">
+          <MemoSubList items={momentum.map(([label, s]) => ({ label, ...s }))} />
+        </MemoSection>
+
+        <MemoSection title="VI. Malfeasance" note={mf?.note}>
+          {mf ? (
+            <div className="space-y-3">
+              {mf.narrative && <p>{mf.narrative}</p>}
+              {mf.twelveMonthKill?.scenario && (
+                <p><span className="font-semibold text-gray-800">12-month kill scenario ({mf.twelveMonthKill.probability}): </span>{mf.twelveMonthKill.scenario}</p>
+              )}
+              {mf.bundlingRisk?.assessment && (
+                <p><span className="font-semibold text-gray-800">Bundling risk ({mf.bundlingRisk.defensible ? 'defensible' : 'not defensible'}): </span>{mf.bundlingRisk.assessment}</p>
+              )}
+              {mf.primaryRisks?.length > 0 && (
+                <div className="space-y-2 pt-1">
+                  {mf.primaryRisks.map((rk, i) => (
+                    <div key={i} className="flex items-start gap-2">
+                      <span className="text-2xs font-semibold uppercase text-gray-400 w-14 flex-shrink-0 pt-0.5">{rk.severity}</span>
+                      <p>{rk.risk}{rk.mitigation && <span className="text-gray-400"> — {rk.mitigation}</span>}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : <p className="text-gray-400">Bear agent output not available.</p>}
+        </MemoSection>
+
+        <MemoSection title="VII. Conditions" note={c.note}>
+          <div className="space-y-3">
+            {c.nextStep && <p><span className="font-semibold text-gray-800">Recommended next step: </span>{c.nextStep}</p>}
+            {c.topQuestions?.length > 0 && (
+              <div>
+                <p className="text-xs font-semibold text-gray-500 mb-1">What needs to be true / next questions</p>
+                <ul className="space-y-1">
+                  {c.topQuestions.map((q, i) => <li key={i} className="flex gap-2"><span className="text-gray-300 flex-shrink-0">{i + 1}.</span>{q}</li>)}
+                </ul>
               </div>
+            )}
+          </div>
+        </MemoSection>
+      </div>
+    </Collapsible>
+  );
+}
+
+// ════════════════════════════════════════════════════════
+// Materials
+// ════════════════════════════════════════════════════════
+
+function MaterialsCollapsed({ inputs }) {
+  return (
+    <Collapsible id="section-inputs" title="Materials" subtitle={`${inputs.length} input${inputs.length === 1 ? '' : 's'} handed to the agents`}>
+      {inputs.length === 0 ? (
+        <p className="text-sm text-gray-400">No input materials recorded.</p>
+      ) : (
+        <div className="space-y-4">
+          {inputs.map((inp, i) => (
+            <div key={i}>
+              <div className="flex items-center gap-2 mb-1.5 flex-wrap">
+                <Tag>{inp.input_type}</Tag>
+                <span className="text-sm font-medium text-gray-700">{inp.label || inp.input_type}</span>
+                {inp.source_url && (
+                  <a href={inp.source_url} target="_blank" rel="noopener noreferrer" className="text-xs text-accent hover:underline truncate">{inp.source_url}</a>
+                )}
+              </div>
+              <p className="text-xs text-gray-500 max-h-32 overflow-y-auto whitespace-pre-wrap bg-gray-50 rounded-lg p-3">
+                {(inp.content || '').slice(0, 2000)}{(inp.content || '').length > 2000 ? '…' : ''}
+              </p>
+            </div>
           ))}
         </div>
-      </MemoSection>
+      )}
+    </Collapsible>
+  );
+}
 
-      {/* IV. Market */}
-      <MemoSection title="IV. Market">
-        {mkt ? (
-          <div className="space-y-3">
-            {mkt.whyNow && <p className="text-sm text-gray-700 leading-relaxed"><span className="font-semibold text-gray-800">Why now: </span>{mkt.whyNow}</p>}
-            {mkt.competitiveMoat && <p className="text-sm text-gray-700 leading-relaxed"><span className="font-semibold text-gray-800">Competitive moat: </span>{mkt.competitiveMoat}</p>}
-            <MemoSubList items={mkt.subs} />
-          </div>
-        ) : <p className="text-sm text-gray-400">Market agent output not available.</p>}
-      </MemoSection>
+// ════════════════════════════════════════════════════════
+// Meeting Prep — a briefing, not an eval. Own layout, no verdict, no scores.
+// ════════════════════════════════════════════════════════
 
-      {/* V. Momentum */}
-      <MemoSection title="V. Momentum" subtitle="cross-agent">
-        <MemoSubList items={momentum.map(([label, s]) => ({ label, ...s }))} />
-      </MemoSection>
+function MeetingPrepDetail({ assessment, brief, isRunning, isComplete, error, onRerun, rerunning }) {
+  return (
+    <div className="max-w-3xl mx-auto">
+      <div className="flex items-center gap-2 text-sm text-gray-400 mb-4">
+        <Link to="/assess" className="hover:text-gray-600">Assess</Link>
+        <span>/</span>
+        <span className="text-gray-700">Meeting Prep</span>
+      </div>
 
-      {/* VI. Malfeasance */}
-      <MemoSection title="VI. Malfeasance" note={mf?.note}>
-        {mf ? (
-          <div className="space-y-3">
-            {mf.narrative && <p className="text-sm text-gray-700 leading-relaxed">{mf.narrative}</p>}
-            {mf.twelveMonthKill && (
-              <p className="text-sm text-gray-700"><span className="font-semibold text-gray-800">12-month kill scenario ({mf.twelveMonthKill.probability}): </span>{mf.twelveMonthKill.scenario}</p>
-            )}
-            {mf.primaryRisks && mf.primaryRisks.length > 0 && (
-              <div className="space-y-2 pt-2">
-                {mf.primaryRisks.map((rk, i) => (
-                  <div key={i} className="flex items-start gap-2">
-                    <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded shrink-0 mt-0.5 ${
-                      rk.severity === 'high' ? 'bg-red-100 text-red-700' : rk.severity === 'medium' ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-600'
-                    }`}>{rk.severity}</span>
-                    <p className="text-sm text-gray-700">{rk.risk}{rk.mitigation && <span className="text-gray-400"> — {rk.mitigation}</span>}</p>
-                  </div>
-                ))}
+      <PageHeader
+        title={assessment.founder_name || 'Unknown Founder'}
+        subtitle={assessment.founder_company || null}
+        actions={(error || (!isRunning && !isComplete)) && (
+          <button onClick={onRerun} disabled={rerunning}
+            className="text-xs font-medium px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-40">
+            {rerunning ? 'Starting…' : 'Re-run'}
+          </button>
+        )}
+      />
+
+      {isRunning && <div className="text-center py-12 text-gray-400 text-sm animate-pulse">Preparing the briefing…</div>}
+      {error && (
+        <div className="rounded-lg border border-danger/30 bg-danger-soft p-4 text-sm text-gray-700">
+          The briefing failed to generate.{' '}
+          <button onClick={onRerun} disabled={rerunning} className="text-accent font-medium underline">{rerunning ? 'Starting…' : 'Retry'}</button>
+        </div>
+      )}
+      {!isRunning && !error && !brief && <EmptyState title="Not available" />}
+
+      {brief && (
+        <div className="space-y-7">
+          <MemoSection title="Founder Profile">
+            <p className="whitespace-pre-line">{brief.founder_profile}</p>
+          </MemoSection>
+
+          {brief.company_snapshot && (
+            <MemoSection title="Company Snapshot">
+              <div className="space-y-2">
+                {brief.company_snapshot.one_liner && <p className="font-medium text-gray-800">{brief.company_snapshot.one_liner}</p>}
+                {brief.company_snapshot.stage_and_traction && <p><span className="font-semibold text-gray-800">Stage & traction: </span>{brief.company_snapshot.stage_and_traction}</p>}
+                {brief.company_snapshot.product && <p><span className="font-semibold text-gray-800">Product: </span>{brief.company_snapshot.product}</p>}
+                {brief.company_snapshot.competitors && <p><span className="font-semibold text-gray-800">Competitors: </span>{brief.company_snapshot.competitors}</p>}
               </div>
-            )}
-          </div>
-        ) : <p className="text-sm text-gray-400">Bear agent output not available.</p>}
-      </MemoSection>
+            </MemoSection>
+          )}
 
-      {/* VII. Conditions */}
-      <MemoSection title="VII. Conditions" note={c.note}>
-        <div className="space-y-3">
-          {c.nextStep && <p className="text-sm text-gray-700"><span className="font-semibold text-gray-800">Recommended next step: </span>{c.nextStep}</p>}
-          {c.topQuestions && c.topQuestions.length > 0 && (
-            <div>
-              <p className="text-xs font-semibold text-gray-500 mb-1">What needs to be true / next questions</p>
-              <ul className="space-y-1">
-                {c.topQuestions.map((q, i) => <li key={i} className="text-sm text-gray-600 flex gap-2"><span className="text-blue-500 font-bold shrink-0">{i + 1}.</span>{q}</li>)}
+          {brief.thesis_fit && (
+            <MemoSection title="Thesis Fit">
+              <p className="font-semibold text-ink mb-1">{brief.thesis_fit.verdict}</p>
+              <p>{brief.thesis_fit.reasoning}</p>
+            </MemoSection>
+          )}
+
+          {brief.market_context && (
+            <MemoSection title="Market Context"><p>{brief.market_context}</p></MemoSection>
+          )}
+
+          {brief.questions_to_ask?.length > 0 && (
+            <MemoSection title="Questions to Ask">
+              <ul className="space-y-1.5">
+                {brief.questions_to_ask.map((q, i) => (
+                  <li key={i} className="flex gap-2"><span className="text-gray-300 flex-shrink-0">{i + 1}.</span>{q}</li>
+                ))}
               </ul>
-            </div>
+            </MemoSection>
+          )}
+
+          {brief.danny_angle && (
+            <MemoSection title="Danny's Angle">
+              <div className="space-y-3">
+                {brief.danny_angle.watch_for && <p>{brief.danny_angle.watch_for}</p>}
+                {brief.danny_angle.lean_in_signals?.length > 0 && (
+                  <div>
+                    <p className="text-xs font-semibold text-gray-500 mb-1">Lean-in signals</p>
+                    <ul className="space-y-1">{brief.danny_angle.lean_in_signals.map((s, i) => <li key={i} className="flex gap-2"><span className="text-gray-300 flex-shrink-0">+</span>{s}</li>)}</ul>
+                  </div>
+                )}
+                {brief.danny_angle.pass_signals?.length > 0 && (
+                  <div>
+                    <p className="text-xs font-semibold text-gray-500 mb-1">Pass signals</p>
+                    <ul className="space-y-1">{brief.danny_angle.pass_signals.map((s, i) => <li key={i} className="flex gap-2"><span className="text-gray-300 flex-shrink-0">-</span>{s}</li>)}</ul>
+                  </div>
+                )}
+              </div>
+            </MemoSection>
           )}
         </div>
-      </MemoSection>
-    </div>
-  );
-}
-
-// ════════════════════════════════════════════════════════
-// Steward-Operator Rubric View
-// ════════════════════════════════════════════════════════
-
-function RubricTraitRow({ label, score, evidence }) {
-  const [open, setOpen] = useState(false);
-  const s = typeof score === 'number' ? score : 5;
-  return (
-    <div className="bg-gray-50 rounded-lg p-3">
-      <div className="flex items-center justify-between mb-2">
-        <button
-          onClick={() => setOpen(!open)}
-          className="text-sm font-semibold text-gray-700 hover:text-gray-900 text-left flex-1"
-        >
-          <span className="text-gray-300 mr-1">{open ? '-' : '+'}</span>
-          {label}
-        </button>
-        <span className={`text-lg font-black ${scoreColor(s)}`}>{s}<span className="text-xs font-medium text-gray-400">/10</span></span>
-      </div>
-      <div className="w-full bg-gray-200 rounded-full h-1 mb-2">
-        <div className={`h-1 rounded-full ${scoreBg(s)}`} style={{ width: `${s * 10}%` }} />
-      </div>
-      {open && evidence && (
-        <p className="text-xs text-gray-500 leading-relaxed mt-2">{evidence}</p>
       )}
-    </div>
-  );
-}
-
-function RubricView({ rubric, assessmentComplete, onRun, running }) {
-  if (!assessmentComplete) {
-    return (
-      <div className="text-center py-8 text-gray-500 text-sm">
-        The Steward-Operator rubric runs after the main assessment completes.
-      </div>
-    );
-  }
-
-  if (!rubric) {
-    return (
-      <div className="card p-6 text-center">
-        <h3 className="text-sm font-semibold text-gray-800 mb-1">Steward-Operator Rubric</h3>
-        <p className="text-xs text-gray-500 mb-4 max-w-md mx-auto">
-          A 9-trait diagnostic overlay that scores operating discipline under capital trust. Supplements the main assessment.
-        </p>
-        <button
-          onClick={onRun}
-          disabled={running}
-          className="inline-flex items-center px-4 py-2 rounded-md bg-gray-900 text-white text-sm font-medium hover:bg-gray-800 disabled:opacity-50"
-        >
-          {running ? 'Starting...' : 'Run Steward-Operator Rubric'}
-        </button>
-      </div>
-    );
-  }
-
-  if (rubric.status === 'running' || rubric.status === 'pending') {
-    return (
-      <div className="card p-6 text-center">
-        <p className="text-sm text-gray-600 animate-pulse">Scoring against the 9-trait rubric...</p>
-      </div>
-    );
-  }
-
-  if (rubric.status === 'error') {
-    return (
-      <div className="card p-4 bg-red-50 border-red-200">
-        <p className="text-sm text-red-700 font-semibold">Rubric run failed</p>
-        {rubric.error && <p className="text-xs text-red-600 mt-1">{rubric.error}</p>}
-        <button
-          onClick={onRun}
-          disabled={running}
-          className="mt-3 text-xs text-red-700 hover:text-red-900 underline"
-        >
-          Retry
-        </button>
-      </div>
-    );
-  }
-
-  const data = (() => {
-    try { return typeof rubric.output === 'string' ? JSON.parse(rubric.output) : rubric.output; }
-    catch { return null; }
-  })();
-
-  if (!data) {
-    return <div className="text-center py-8 text-gray-500 text-sm">Could not parse rubric output</div>;
-  }
-
-  const threshold = data.threshold || rubric.threshold || 'Pass';
-  const style = THRESHOLD_STYLES[threshold] || THRESHOLD_STYLES['Pass'];
-  const overallScore = data.overall_score ?? rubric.overall_score ?? 0;
-  const hitsCount = data.hits_count ?? 0;
-  const flagged = data.flagged ?? !!rubric.flagged;
-
-  return (
-    <div className="space-y-4">
-      {flagged && (
-        <div className="rounded-xl border-2 border-purple-400 bg-purple-50 p-4">
-          <div className="flex items-center gap-3">
-            <span className="text-xl">*</span>
-            <div>
-              <p className="text-sm font-bold text-purple-800 uppercase tracking-wider">Flagged for Review</p>
-              <p className="text-xs text-purple-700 mt-0.5">Overall score of {overallScore}/9 clears the review threshold.</p>
-            </div>
-          </div>
-        </div>
-      )}
-
-      <div className={`rounded-xl border p-5 ${style.bg}`}>
-        <div className="flex items-start justify-between gap-4">
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-3 mb-2">
-              <span className={`text-3xl font-black ${style.text}`}>
-                {overallScore}<span className="text-base font-medium text-gray-400">/9</span>
-              </span>
-              <span className={`text-xs font-bold uppercase tracking-wider px-2 py-1 rounded ${style.badge}`}>
-                {threshold}
-              </span>
-            </div>
-            <p className="text-xs text-gray-600 mt-1">{hitsCount} of 9 traits scored {'>='} 7</p>
-            {data.summary && <p className="text-sm text-gray-800 font-medium leading-snug mt-3">{data.summary}</p>}
-          </div>
-          <button
-            onClick={onRun}
-            disabled={running}
-            className="text-xs text-gray-500 hover:text-gray-700 underline shrink-0"
-          >
-            Re-run
-          </button>
-        </div>
-      </div>
-
-      <div className="card p-4">
-        <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">9 Traits</h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          {RUBRIC_TRAITS.map(({ key, label }) => {
-            const t = data.traits?.[key] || {};
-            return <RubricTraitRow key={key} label={label} score={t.score} evidence={t.evidence} />;
-          })}
-        </div>
-      </div>
-
-      <div className="card p-4">
-        <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Tiebreakers</h3>
-        <div className="space-y-3">
-          {[
-            { key: 't1_names_weakness_unprompted', label: 'T1 — Names own weakness unprompted' },
-            { key: 't2_tailors_ask_with_specificity', label: 'T2 — Tailors investor ask with specificity' },
-          ].map(({ key, label }) => {
-            const tb = data.tiebreakers?.[key] || {};
-            const passed = !!tb.passed;
-            return (
-              <div key={key} className="flex items-start gap-3">
-                <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded shrink-0 mt-0.5 ${passed ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-200 text-gray-600'}`}>
-                  {passed ? 'Pass' : 'Fail'}
-                </span>
-                <div className="flex-1">
-                  <p className="text-sm font-semibold text-gray-700">{label}</p>
-                  {tb.evidence && <p className="text-xs text-gray-500 mt-0.5">{tb.evidence}</p>}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
     </div>
   );
 }

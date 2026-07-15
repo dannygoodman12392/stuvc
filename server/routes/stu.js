@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../db');
-const { anthropicFor } = require('../lib/providerKeys');
+const { anthropicFor, MODEL } = require('../lib/providerKeys');
 
 // ── Tool definitions for Claude ──
 const TOOLS = [
@@ -133,7 +133,7 @@ const TOOLS = [
       type: 'object',
       properties: {
         founder_id: { type: 'number', description: 'Filter by founder' },
-        signal: { type: 'string', description: 'Filter by signal: Invest, Monitor, Pass' }
+        signal: { type: 'string', description: 'Filter by conviction band: Anchor-grade, Top-quartile, Monitor, Pass with respect, Insufficient evidence. (Invest/Monitor/Pass is the retired ladder and only matches assessments run before 2026-07-14.)' }
       }
     }
   },
@@ -340,7 +340,10 @@ function executeTool(toolName, input, userId) {
     }
 
     case 'get_assessments': {
-      let sql = `SELECT oa.id, oa.overall_signal, oa.status, oa.created_at,
+      // conviction_score/band/evidence_rung are selected so the model answering over this
+      // can tell an unscored assessment ("we haven't learned enough") from a rejection.
+      // Without them, "Insufficient evidence" is just a string that reads like a verdict.
+      let sql = `SELECT oa.id, oa.overall_signal, oa.conviction_score, oa.conviction_band, oa.evidence_rung, oa.status, oa.created_at,
         f.name as founder_name, f.company as founder_company
         FROM opportunity_assessments oa
         LEFT JOIN founders f ON oa.founder_id = f.id WHERE oa.created_by = ?`;
@@ -542,7 +545,7 @@ router.post('/chat', async (req, res) => {
       let response;
       try {
         response = await client.messages.create({
-          model: 'claude-sonnet-4-6',
+          model: MODEL,
           max_tokens: 4096,
           system: systemPrompt,
           tools: TOOLS,

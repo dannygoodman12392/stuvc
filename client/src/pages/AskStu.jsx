@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { api } from '../utils/api';
+import { ConvictionBadge } from '../components/ui';
 
 const SUGGESTIONS = [
   'Show me everyone in Active Diligence',
@@ -355,7 +356,7 @@ function ToolResultCard({ tool, result }) {
                 <p className="text-sm text-gray-900">{a.founder_name || 'Unknown'}</p>
                 <p className="text-xs text-gray-400">{new Date(a.created_at).toLocaleDateString()}</p>
               </div>
-              <span className={`badge text-[10px] ${signalBadge(a.overall_signal)}`}>{a.overall_signal || a.status}</span>
+              <ConvictionBadge assessment={a} size="xs" />
             </Link>
           ))}
         </div>
@@ -418,7 +419,8 @@ function statusBadge(status) {
   return map[status] || 'badge-gray';
 }
 
-function signalBadge(signal) {
-  const map = { 'Invest': 'badge-green', 'Monitor': 'badge-amber', 'Pass': 'badge-red' };
-  return map[signal] || 'badge-gray';
-}
+// signalBadge is gone — the verdict vocabulary lives in ConvictionBadge (components/ui.jsx)
+// so there is exactly one place that knows what a band looks like. This map keyed on the
+// retired Invest/Monitor/Pass ladder and, worse, sent "Insufficient evidence" to badge-gray
+// while a real Pass went red — making "we don't know" and "we said no" different colors of
+// the same claim.

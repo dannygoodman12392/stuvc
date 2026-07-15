@@ -2,6 +2,9 @@
   "name": "superior-os-server",
   "version": "1.0.0",
   "private": true,
+  "scripts": {
+    "test": "node --test \"test/*.test.js\""
+  },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
     "@modelcontextprotocol/sdk": "^1.29.0",

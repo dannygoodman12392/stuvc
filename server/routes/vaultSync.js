@@ -66,7 +66,8 @@ const ASSESSMENT_TYPE_FILTER = "(a.assessment_type IS NULL OR a.assessment_type 
 // GET /api/vault-sync/assessments — a light list for the local task to dedupe against.
 router.get('/assessments', (req, res) => {
   const rows = db.prepare(`
-    SELECT a.id, a.founder_id, a.group_id, a.version_number, a.status, a.overall_signal, a.created_at,
+    SELECT a.id, a.founder_id, a.group_id, a.version_number, a.status, a.overall_signal,
+           a.conviction_score, a.conviction_band, a.evidence_rung, a.created_at,
            f.name as founder_name, f.company as founder_company
     FROM opportunity_assessments a
     LEFT JOIN founders f ON a.founder_id = f.id
@@ -93,7 +94,12 @@ router.get('/assessments/:id', (req, res) => {
 
   const agents = mapAgentOutputs(a);
   const synthesis = safeParse(a.synthesis_output);
-  const rubric = db.prepare(
+  // The Founder Rubric now runs inline on every assessment and IS the conviction score.
+  // This used to read `steward_operator_evaluations` — the ARCHIVED 9-trait rubric,
+  // retired 2026-06-25 — and export it to the vault under the key `rubric`. Anything
+  // reading the vault was getting the retired framework labelled as the current one.
+  const rubric = safeParse(a.rubric_output);
+  const legacyStewardOperator = db.prepare(
     'SELECT output, overall_score, threshold, flagged, status FROM steward_operator_evaluations WHERE assessment_id = ? ORDER BY id DESC LIMIT 1'
   ).get(a.id);
   const inputs = db.prepare(
@@ -104,8 +110,19 @@ router.get('/assessments/:id', (req, res) => {
     id: a.id, founder_id: a.founder_id, founder_name: a.founder_name, founder_company: a.founder_company,
     status: a.status, overall_signal: a.overall_signal, created_at: a.created_at,
     group_id: a.group_id, version_number: a.version_number,
+    // The verdict, and — just as important — how much it is worth trusting. Without the
+    // rung and band, "Insufficient evidence" is just a string that reads like a rejection.
+    conviction: safeParse(a.conviction_output),
+    conviction_score: a.conviction_score,
+    conviction_band: a.conviction_band,
+    evidence_rung: a.evidence_rung,
+    evidence: safeParse(a.evidence_output),
+    context_notes: safeParse(a.context_notes),
     agents, synthesis,
-    rubric: rubric ? { ...rubric, output: safeParse(rubric.output) } : null,
+    rubric, // Founder Rubric — the four movements that decided the score
+    legacy_steward_operator: legacyStewardOperator
+      ? { ...legacyStewardOperator, output: safeParse(legacyStewardOperator.output), note: 'ARCHIVED 9-trait rubric, retired 2026-06-25. Historical rows only.' }
+      : null,
     inputs,
   });
 });

@@ -424,6 +424,21 @@ addColumn('sourced_founders', 'affinity_reason', 'TEXT');
 addColumn('opportunity_assessments', 'deck_status', 'TEXT');        // 'ok' | 'suspect'
 addColumn('opportunity_assessments', 'deck_status_reason', 'TEXT');
 
+// ── Conviction engine (see server/lib/conviction.js) ──
+// Assess used to emit a 0-10 score and one of three words (Invest/Monitor/Pass) at
+// identical confidence whether it had read a marketing page or a deck plus two
+// transcripts. These columns make evidence strength a first-class, queryable fact
+// rather than something the reader has to infer.
+addColumn('opportunity_assessments', 'conviction_score', 'REAL');       // 1-10, NULL when indeterminate
+addColumn('opportunity_assessments', 'conviction_band', 'TEXT');        // anchor | memo | monitor | pass | indeterminate
+addColumn('opportunity_assessments', 'conviction_output', 'TEXT');      // full JSON from computeConviction
+addColumn('opportunity_assessments', 'evidence_rung', 'INTEGER');       // 0-4, computed from inputs, never from the LLM
+addColumn('opportunity_assessments', 'evidence_output', 'TEXT');        // full JSON from computeEvidenceRung (incl. dropped inputs)
+addColumn('opportunity_assessments', 'rubric_output', 'TEXT');          // Founder Rubric agent: the 4 movements
+// What the context assembler truncated or dropped. Was console.warn-only, so Danny
+// never learned his transcript had been cut. This is the "what we didn't look at" source.
+addColumn('opportunity_assessments', 'context_notes', 'TEXT');
+
 // Job run log — every scheduled/triggered job records its outcome here so failures are
 // durable and surfaced (not swallowed in console). Powers the healthcheck board.
 db.exec(`

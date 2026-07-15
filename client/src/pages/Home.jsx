@@ -55,7 +55,7 @@ export default function Home() {
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           {[
             { to: '/assess?task=prep', label: 'Meeting Prep', desc: 'Founder + company + website + materials → a briefing with the questions to ask and what to probe.' },
-            { to: '/assess?task=assessment', label: 'Founder Assessment', desc: 'Score a founder against your Steward-Operator rubric from a transcript or your notes.' },
+            { to: '/assess?task=assessment', label: 'Founder Assessment', desc: 'Score a founder against the Founder Rubric — four movements, one conviction score. Needs a call transcript.' },
             { to: '/assess?task=memo', label: 'Deal Memo', desc: 'Full multi-agent eval → your Recommendation › Management › Model › Market › Momentum › Malfeasance › Conditions memo.' },
             { to: '/ask?topic=thesis', label: 'Thesis Update', desc: 'Work through ideas with Stu; evolve your positions from the week’s deal flow.' },
           ].map(t => (

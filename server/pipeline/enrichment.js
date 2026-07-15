@@ -12,9 +12,7 @@
  *
  * `deps.client` is injectable for tests (no network).
  */
-const { anthropicFor } = require('../lib/providerKeys');
-
-const MODEL = 'claude-sonnet-4-6';
+const { anthropicFor, MODEL } = require('../lib/providerKeys');
 
 const SYSTEM = `You are a top-decile talent and founder analyst for a pre-seed venture fund.
 You evaluate people on their potential to build or join a category-defining ("unicorn") company.

@@ -150,6 +150,83 @@ export function Score({ value, max = 100, label }) {
   );
 }
 
+// ── Conviction badge — the ONE place the verdict vocabulary lives ─────────────
+//
+// The old vocabulary was Invest / Monitor / Pass, coloured green / amber / red and
+// re-implemented inline on four different screens. The Founder Rubric's ladder has
+// four bands plus an indeterminate state, and the indeterminate state is the whole
+// point of the rebuild: "we have not learned enough to judge this" is NOT a Pass.
+//
+// The old list badges rendered it as one. FounderDetail did
+//   signal === 'Invest' ? green : signal === 'Monitor' ? amber : RED
+// so "Insufficient evidence" fell through to bright red — a company we know nothing
+// about looked identical to a company we rejected, on the screen Danny actually scans.
+//
+// Per tailwind.config.js the bands are TYPOGRAPHIC, never coloured by value: rank reads
+// as weight, not hue. Indeterminate is the one visually distinct state — dashed and dim,
+// because it is a different KIND of thing, not a worse score.
+const BAND_STYLE = {
+  anchor: 'border-ink bg-ink text-white font-bold',
+  memo: 'border-ink bg-white text-ink font-bold',
+  monitor: 'border-gray-300 bg-white text-gray-600 font-medium',
+  pass: 'border-gray-200 bg-white text-gray-400 font-normal',
+  indeterminate: 'border-dashed border-gray-300 bg-gray-50 text-gray-400 font-normal italic',
+};
+
+const BAND_LABEL = {
+  anchor: 'Anchor-grade',
+  memo: 'Top-quartile',
+  monitor: 'Monitor',
+  pass: 'Pass with respect',
+  indeterminate: 'Insufficient evidence',
+};
+
+// `conviction_band` is the ONLY source of truth. Deliberately no fallback to
+// overall_signal.
+//
+// The tempting fallback — map the signal string onto a band — is wrong, and the live
+// DB shows exactly why: the legacy rows carry signals "Pass", "Pass On", and "Monitor".
+// "Monitor" is BOTH a retired Invest/Monitor/Pass value AND a current band label. A
+// string match would dress a row scored 5.8 under the old Team45/Product25/Market30
+// average — at temperature 1.0, so not even reproducible — as though the Founder Rubric
+// had judged it. That is the same class of lie this rebuild exists to remove, so a row
+// without a band is reported as what it is: old.
+export function convictionBand({ conviction_band }) {
+  return conviction_band && BAND_STYLE[conviction_band] ? conviction_band : null;
+}
+
+export function ConvictionBadge({ assessment, score, size = 'sm' }) {
+  if (!assessment) return null;
+  const band = convictionBand(assessment);
+  const value = score !== undefined ? score : assessment.conviction_score;
+  const pad = size === 'xs' ? 'px-1.5 py-0.5 text-2xs' : 'px-2 py-0.5 text-xs';
+
+  // Legacy row scored under the old ladder — say so rather than dressing it as a band.
+  if (!band) {
+    const legacy = assessment.overall_signal || assessment.status;
+    if (!legacy) return null;
+    return (
+      <span title="Scored under the retired Invest/Monitor/Pass ladder" className={`inline-flex items-center gap-1 rounded-full border ${pad} border-gray-200 bg-white text-gray-400 font-normal`}>
+        {legacy}
+        <span className="text-gray-300">·</span>
+        <span className="text-gray-300">old</span>
+      </span>
+    );
+  }
+
+  return (
+    <span
+      title={band === 'indeterminate' ? 'Not enough evidence to score — this is not a pass' : BAND_LABEL[band]}
+      className={`inline-flex items-center gap-1.5 rounded-full border ${pad} ${BAND_STYLE[band]}`}
+    >
+      {band !== 'indeterminate' && value != null && (
+        <span className="tabular-nums font-bold">{value}</span>
+      )}
+      {BAND_LABEL[band]}
+    </span>
+  );
+}
+
 // ── Tag (the only metadata chip, always neutral) ──────────────────────────────
 export function Tag({ children }) {
   if (!children) return null;

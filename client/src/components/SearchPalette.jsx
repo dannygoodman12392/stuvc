@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../utils/api';
+import { ConvictionBadge } from './ui';
 
 export default function SearchPalette({ open, onClose }) {
   const [query, setQuery] = useState('');
@@ -151,13 +152,7 @@ export default function SearchPalette({ open, onClose }) {
                         <div className="text-sm text-gray-700">{a.founder_name || 'Assessment'} {a.founder_company ? `(${a.founder_company})` : ''}</div>
                         <div className="text-xs text-gray-400">{new Date(a.created_at).toLocaleDateString()}</div>
                       </div>
-                      {a.overall_signal && (
-                        <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
-                          a.overall_signal === 'Invest' ? 'bg-emerald-50 text-emerald-600' :
-                          a.overall_signal === 'Monitor' ? 'bg-amber-50 text-amber-600' :
-                          'bg-red-50 text-red-600'
-                        }`}>{a.overall_signal}</span>
-                      )}
+                      <ConvictionBadge assessment={a} size="xs" />
                     </button>
                   ))}
                 </div>

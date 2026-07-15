@@ -8,6 +8,7 @@
  * source that fails to discover or summarize is skipped, never breaking the digest.
  */
 const db = require('../db');
+const { MODEL } = require('../lib/providerKeys');
 
 const UA = 'Mozilla/5.0 (compatible; StuDailyBrief/1.0; +https://stu.vc)';
 
@@ -161,7 +162,7 @@ async function summarize(anthropic, { author, title, text }, { variety = '' } = 
   if (body.length < 200) return null;
   try {
     const resp = await anthropic.messages.create({
-      model: 'claude-sonnet-4-6',
+      model: MODEL,
       max_tokens: 600,
       system: `You distill an essay/chapter from a respected operator/investor into sharp, durable lessons for a venture investor who wants to learn from the greats. Be specific and non-generic — capture the actual argument, not platitudes.
 Return ONLY JSON: {"one_liner":"<=140 chars, what this piece is really about","takeaways":["3-5 crisp, concrete lessons — each a full sentence a smart VC would underline"]}`,

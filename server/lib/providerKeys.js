@@ -28,6 +28,11 @@ const ENV_BY_PROVIDER = {
   enrichlayer: 'ENRICHLAYER_API_KEY',
 };
 
+// The model, in one place. It was hardcoded at 19 call sites, which is how commit
+// 8e232a5 ("replace retired model ID everywhere") happened — and how it would have
+// happened again on the next retirement.
+const MODEL = process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-6';
+
 // Approx claude-sonnet-4 list price (USD/token). Used only for soft spend caps and
 // usage transparency — NOT an invoice. Cheap to keep roughly current.
 const PRICE = { input: 3 / 1e6, output: 15 / 1e6 };
@@ -185,6 +190,7 @@ function anthropicFor(userId, feature = null) {
 }
 
 module.exports = {
+  MODEL,
   isOwner,
   resolveKey,
   readUserKey,

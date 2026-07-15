@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../db');
-const { anthropicFor } = require('../lib/providerKeys');
+const { anthropicFor, MODEL } = require('../lib/providerKeys');
 
 // GET /api/calls/:founderId
 router.get('/:founderId', (req, res) => {
@@ -25,7 +25,7 @@ router.post('/:founderId', async (req, res) => {
   if (client) {
     try {
       const response = await client.messages.create({
-        model: 'claude-sonnet-4-6',
+        model: MODEL,
         max_tokens: 2048,
         system: `You are an investment analyst at Superior Studios, a Chicago-based pre-seed venture fund. Parse meeting transcripts and extract structured call summaries. Be specific, not generic. Pull exact quotes when relevant.`,
         messages: [{
