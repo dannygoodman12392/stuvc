@@ -227,6 +227,82 @@ router.get('/inbox', (req, res) => {
   });
 });
 
+// ══════════════════════════════════════════════════════════════════════
+// GET /api/pipeline/stats — the Home dashboard.
+//
+// Danny asked for "a dashboard covering pipeline stats" and also, separately and
+// emphatically: "I want to inflate my pipeline numbers." Both are true, and the
+// line between them is what this endpoint encodes.
+//
+// SHIPPED: funnel STATE — how many sit at each stage, which sources produce. That
+// describes the board so he can navigate it, and it's what his own Permute spec
+// asked for ("Count of founders by Source, so I can see which channel is
+// producing volume"). A description isn't a score.
+//
+// NOT SHIPPED: a headline pipeline size, a growth trend, or conversion rates.
+// Every one of those goes UP when he adds a name, which pays him to do the thing
+// he already told me he does for the number's sake.
+//
+// The only progress metric is DECIDED — and its increment requires a dated
+// falsifiable prediction (see routes/today.js), because a bare pass=+1 would pay
+// him to fire his ten-second "cool but indefensible" reflex faster, and his own
+// Portfolio Pattern Analysis says undocumented passes on strong founders are his
+// most fixable blind spot.
+// ══════════════════════════════════════════════════════════════════════
+router.get('/stats', (req, res) => {
+  const uid = req.user.id;
+  const rows = db.prepare(PIPELINE_SQL).all(uid);
+  const live = rows.filter((r) => (r.pipeline_tracks || '').includes('investment'));
+  const staged = live.map((r) => stageOf(r));
+
+  const bySource = {};
+  for (const r of live) {
+    const s = r.sourced_via || r.source || 'Unknown';
+    bySource[s] = (bySource[s] || 0) + 1;
+  }
+
+  res.json({
+    // Deliberately NOT summed into a total anywhere on the client.
+    funnel: {
+      found: staged.filter((s) => s === 'found').length,
+      met: staged.filter((s) => s === 'met').length,
+      assessed: staged.filter((s) => s === 'assessed').length,
+      decided: staged.filter((s) => s === 'decided').length,
+      invested: staged.filter((s) => s === 'invested').length,
+    },
+    by_source: Object.entries(bySource)
+      .map(([source, n]) => ({ source, n }))
+      .sort((a, b) => b.n - a.n)
+      .slice(0, 8),
+    inbox_waiting: db.prepare(
+      `SELECT COUNT(*) n FROM sourced_founders
+       WHERE user_id = ? AND status IN ('pending','starred') AND list_scope = 'pipeline'
+         AND COALESCE(do_not_resurface, 0) = 0`
+    ).get(uid).n,
+    // The one progress number. Decided, not sourced.
+    decided_this_week: db.prepare(
+      `SELECT COUNT(*) n FROM decisions WHERE created_by = ? AND decided_at >= date('now','-7 day')`
+    ).get(uid).n,
+    // Null until there is something to say — n=0 is not 50/50. The only question
+    // here that compounds.
+    calibration: (() => {
+      const d = db.prepare(
+        `SELECT stu_band, band, outcome FROM decisions
+         WHERE created_by = ? AND stu_band IS NOT NULL AND stu_band != 'indeterminate'`
+      ).all(uid);
+      const disagreed = d.filter((r) => r.stu_band !== r.band);
+      const resolved = disagreed.filter((r) => r.outcome && r.outcome !== 'unresolved');
+      return {
+        decisions: d.length,
+        disagreed: disagreed.length,
+        right_when_disagreed: resolved.length
+          ? Math.round((resolved.filter((r) => r.outcome === 'right').length / resolved.length) * 100)
+          : null,
+      };
+    })(),
+  });
+});
+
 // ── GET /api/pipeline/:id — one company, everything attached to it ──
 // The detail page's substrate. Same record, more of it.
 router.get('/:id', (req, res) => {

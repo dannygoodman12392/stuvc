@@ -181,6 +181,8 @@ export const api = {
   // The inbox — the seam between the sourcing engine and the tracker. Approving
   // promotes in one transaction and keeps the source chain intact.
   getPipelineInbox: (params) => request('/pipeline/inbox?' + new URLSearchParams(params || {})),
+  // Funnel STATE for the Home dashboard — never a pipeline-size scoreboard.
+  getPipelineStats: () => request('/pipeline/stats'),
 
   // The attention engine — cross-stage integrity checks, computed from pipeline state.
   getAttention: () => request('/today/attention'),

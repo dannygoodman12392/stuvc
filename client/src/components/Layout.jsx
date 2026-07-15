@@ -15,16 +15,27 @@ import { api, fetchAppVersion } from '../utils/api';
 // but folds into Pipeline; its engine has never once run.
 //
 // Every dead door is a reason not to open the building.
-// Pipeline is the product — sourcing is its inbox and assess is its detail page,
-// so they were never separate places to go. Talent is genuinely separate:
-// different people, inverted lens, a different customer (Danny's founders).
+// Four destinations, each one job.
 //
-// The end state is two destinations. Assess is still here because it is currently
-// the ONLY way to start a run — dropping it from the nav before the detail page
-// can launch a read would be a regression wearing a simplification's clothes. It
-// goes when that path exists, and not before.
+// Danny: "we're conflating two actions here: 1) I need an inbox to study and
+// triage new founders (true sourcing) and 2) the ability to manage a pipeline
+// (like a kanban)... right now, this screen is a jumble." He was right — I'd
+// applied the one-record insight to the SCREENS when it only ever applied to the
+// data. Triaging a stranger and managing a company you know are different jobs.
+//
+//   Home      what needs you today, and where the funnel stands
+//   Sourcing  the inbox — study, triage, Track promotes onto the board
+//   Pipeline  the kanban — move companies you know through your deal stages
+//   Talent    genuinely separate: different people, inverted lens, and the
+//             customer is Danny's founders rather than Danny
+//
+// Assess is reachable from a company card. It stays in the nav only until the
+// card can launch a read on its own; dropping it sooner would remove the only way
+// to start one, which is a regression wearing a simplification's clothes.
 const navConfig = [
-  { to: '/', label: 'Pipeline' },
+  { to: '/', label: 'Home' },
+  { to: '/sourcing', label: 'Sourcing' },
+  { to: '/pipeline', label: 'Pipeline' },
   { to: '/assess', label: 'Assess' },
   { to: '/talent', label: 'Talent' },
 ];
@@ -34,8 +45,11 @@ const utilityConfig = [
   { to: '/releases', label: 'Releases' }, // Danny likes the changelog — it stays.
 ];
 
-// Screens rebuilt on the design system. These run to the glass.
-const BLEED_ROUTES = ['/', '/pipeline'];
+// Screens rebuilt on the design system: they own their own padding, so Layout
+// must not wrap them in the legacy centered column. Sourcing and Pipeline run to
+// the glass (dense tables — whitespace at the edges reads as absence). Home sets
+// its own modest gutter, because a card grid isn't a table.
+const BLEED_ROUTES = ['/', '/sourcing', '/pipeline'];
 
 export default function Layout({ children }) {
   const { user, logout } = useAuth();
