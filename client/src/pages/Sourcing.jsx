@@ -58,6 +58,7 @@ export default function Sourcing() {
   const [cursor, setCursor] = useState(0);
   const [err, setErr] = useState(null);
   const [justTracked, setJustTracked] = useState(null);
+  const [running, setRunning] = useState(false);
   // The study half of the job. Danny on the original inbox: "I liked it as an
   // inbox where I could vote Pass/Add to Pipeline or jump off to see their
   // LinkedIn. I could see a bit about the founder. That paradigm worked well."
@@ -131,6 +132,33 @@ export default function Sourcing() {
 
   const open = rows.find((r) => r.id === openId) || null;
 
+  // The manual sweep. It fires two engines and takes minutes, so the honest thing
+  // is to say it's working and keep polling — not to spin, and not to claim it
+  // finished. The old button returned instantly and the run log then reported the
+  // Exa sweep's 0 while the connectors added 167, which is how "Find Founders"
+  // came to mean "nothing happens".
+  async function runScout() {
+    setRunning(true);
+    try {
+      await api.triggerSourcing();
+      const started = Date.now();
+      const poll = setInterval(async () => {
+        const d = await api.getPipelineInbox({ scope }).catch(() => null);
+        if (d) setData(d);
+        // 6 minutes: a full sweep with enrichment took ~100s per connector when I
+        // measured it, and there are nine.
+        if (d?.last_run && new Date(d.last_run.ran_at).getTime() > started - 5000) {
+          clearInterval(poll); setRunning(false);
+        } else if (Date.now() - started > 360000) {
+          clearInterval(poll); setRunning(false);
+        }
+      }, 8000);
+    } catch (e) {
+      setErr(e.message);
+      setRunning(false);
+    }
+  }
+
   if (err) return <div className="p-4 text-small text-danger">{err}</div>;
 
   return (
@@ -141,6 +169,7 @@ export default function Sourcing() {
           {scope === 'pipeline' ? 'verified Illinois tie' : 'no Illinois tie — national frontier'}
         </span>
         <div className="flex-1" />
+        <ScoutState data={data} running={running} onRun={runScout} />
         <input
           className="input w-48 border-0 bg-transparent focus:ring-0 px-0"
           placeholder="Filter…"
@@ -460,6 +489,57 @@ function Detail({ row, onClose, onTriage }) {
         </div>
       </aside>
     </>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// Is the scout alive?
+//
+// Danny: "it didn't seem to be sourcing new founders for me on any time
+// interval? I would click 'Find Founders' and it wouldn't really work."
+//
+// It was running. It just never said so — the cron recorded nothing at all, and
+// the manual run recorded only the Exa sweep's zero while the connectors added
+// 167 rows. So this states the last run plainly, including the case that has
+// been true for most of this app's life: never recorded one.
+// ══════════════════════════════════════════════════════════════════════════
+function ScoutState({ data, running, onRun }) {
+  if (!data) return null;
+  const last = data.last_run;
+
+  const when = last
+    ? (() => {
+        const mins = Math.round((Date.now() - new Date(last.ran_at).getTime()) / 60000);
+        if (mins < 2) return 'just now';
+        if (mins < 60) return `${mins}m ago`;
+        if (mins < 48 * 60) return `${Math.round(mins / 60)}h ago`;
+        return `${Math.round(mins / 1440)}d ago`;
+      })()
+    : null;
+
+  return (
+    <div className="flex items-center gap-2">
+      <span className="text-mini text-ink-4 truncate max-w-[380px]" title={last?.detail || ''}>
+        {running ? (
+          <span className="text-ink-2">Sweeping — this takes a few minutes…</span>
+        ) : !last ? (
+          // Never-run and found-nothing are completely different states, and
+          // conflating them is what taught him the tool was broken.
+          <span className="text-ink-3">Scout has never recorded a run</span>
+        ) : (
+          <>
+            <span className={last.status === 'error' ? 'text-ink-2' : 'text-ink-4'}>
+              Scout ran {when}
+            </span>
+            {data.arrived_today > 0 && <span className="text-ink-2"> · {data.arrived_today} arrived today</span>}
+            {last.status === 'error' && <span className="text-ink-2"> · failed</span>}
+          </>
+        )}
+      </span>
+      <button onClick={onRun} disabled={running} className="btn-secondary h-6 text-mini">
+        {running ? 'Sweeping…' : 'Run scout'}
+      </button>
+    </div>
   );
 }
 

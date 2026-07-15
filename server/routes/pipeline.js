@@ -213,6 +213,19 @@ router.get('/inbox', (req, res) => {
       created_at DESC
   `).all(req.user.id, req.query.scope || 'pipeline');
 
+  // ── When did the scout last run, and what did it find? ──
+  // Danny: "it didn't seem to be sourcing new founders for me on any time
+  // interval? I would click 'Find Founders' and it wouldn't really work."
+  //
+  // It was running. The log only ever recorded the Exa sweep (which produces
+  // almost nothing) and discarded the connector results (which produce
+  // everything), so a day that added 167 founders reported "0 found". An
+  // automation you can't see is one you don't believe in, so the answer goes at
+  // the top of the screen where the work happens — not in a Health page nobody
+  // opens.
+  const { lastRun } = require('../services/health');
+  const last = lastRun('early_signal_sources', req.user.id) || lastRun('sourcing_run', req.user.id);
+
   res.json({
     rows,
     total: rows.length,
@@ -223,6 +236,16 @@ router.get('/inbox', (req, res) => {
       `SELECT COUNT(*) n FROM sourced_founders
        WHERE user_id = ? AND status IN ('pending','starred') AND list_scope = 'watchlist'
          AND COALESCE(do_not_resurface, 0) = 0`
+    ).get(req.user.id).n,
+    last_run: last
+      ? { job: last.job, status: last.status, detail: last.detail, ran_at: last.ran_at }
+      : // Null is not "it failed" — it's "no run has ever been recorded", which is
+        // a different and more useful thing to say. The cron recorded nothing until
+        // 2026-07-15, so this is the honest state of most databases.
+        null,
+    arrived_today: db.prepare(
+      `SELECT COUNT(*) n FROM sourced_founders
+       WHERE user_id = ? AND DATE(created_at) = DATE('now')`
     ).get(req.user.id).n,
   });
 });
