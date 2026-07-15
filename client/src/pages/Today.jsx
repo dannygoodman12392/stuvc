@@ -34,12 +34,14 @@ const ago = (s) => {
   return `${n}d ago`;
 };
 
-function Lane({ label, count, children }) {
-  if (!count) return null;
+// `always` keeps a lane on screen with a real (possibly zero) count — used for
+// "Yours", which must always offer the add box. Never fake the number to do it.
+function Lane({ label, count, always = false, children }) {
+  if (!count && !always) return null;
   return (
     <section className="mb-8">
       <h2 className="text-2xs font-semibold uppercase tracking-[0.12em] text-gray-400 mb-2">
-        {label} <span className="tabular-nums text-gray-300">{count}</span>
+        {label} {count > 0 && <span className="tabular-nums text-gray-300">{count}</span>}
       </h2>
       <div className="border-t border-gray-100">{children}</div>
     </section>
@@ -83,11 +85,18 @@ export default function Today() {
   useEffect(load, [load]);
 
   const addTask = async (e) => {
-    e.preventDefault();
+    if (e) e.preventDefault();
     const title = newTask.trim();
     if (!title) return;
     setNewTask('');
-    await api.addTodayItem({ title });
+    try {
+      await api.addTodayItem({ title });
+    } catch (err) {
+      // Put it back rather than eat it. Losing a task you typed is the fastest way
+      // to teach someone the list can't be trusted with their thinking.
+      setNewTask(title);
+      return;
+    }
     load();
   };
 
@@ -209,7 +218,7 @@ export default function Today() {
       </Lane>
 
       {/* ── HIS — the list is his; agents are guests ── */}
-      <Lane label="Yours" count={data.items.length || 1}>
+      <Lane label="Yours" count={data.items.length} always>
         {data.items.map((i) => (
           <Row
             key={i.id}
@@ -225,11 +234,16 @@ export default function Today() {
             <Quote>{i.quote}</Quote>
           </Row>
         ))}
+        {/* Explicit Enter handling. A single-input form relies on HTML's implicit
+            submission, which measurably did not fire here — the task vanished into
+            nothing and the user learns the box is broken. Don't rely on it. */}
         <form onSubmit={addTask} className="py-3">
           <input
             value={newTask}
             onChange={(e) => setNewTask(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addTask(); } }}
             placeholder="+ add"
+            aria-label="Add a task"
             className="w-full text-sm bg-transparent border-none outline-none placeholder:text-gray-300 text-ink"
           />
         </form>

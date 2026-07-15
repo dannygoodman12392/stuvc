@@ -51,11 +51,15 @@ router.get('/', (req, res) => {
     WHERE a.created_by = ? AND a.is_deleted = 0 AND a.status IN ('complete','partial')
       AND a.assessment_type = 'assessment'
       AND NOT EXISTS (SELECT 1 FROM decisions d WHERE d.assessment_id = a.id)
+      -- Dedupe by FOUNDER, not by group. Seen on the real screen: "Gatsby Robotics"
+      -- appeared twice, because two separate assessment groups exist for the same
+      -- company. Danny doesn't have two Gatsby decisions to make — he has one.
       AND a.id = (
         SELECT a2.id FROM opportunity_assessments a2
-        WHERE a2.is_deleted = 0 AND (
-          (a2.group_id IS NOT NULL AND a2.group_id = a.group_id) OR (a2.group_id IS NULL AND a2.id = a.id))
-        ORDER BY a2.version_number DESC LIMIT 1)
+        WHERE a2.is_deleted = 0 AND a2.created_by = a.created_by
+          AND a2.status IN ('complete','partial') AND a2.assessment_type = 'assessment'
+          AND (a2.founder_id = a.founder_id OR (a2.founder_id IS NULL AND a2.id = a.id))
+        ORDER BY a2.created_at DESC, a2.version_number DESC LIMIT 1)
     ORDER BY a.created_at DESC
   `).all(uid);
 
