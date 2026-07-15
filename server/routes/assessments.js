@@ -5,7 +5,7 @@ const db = require('../db');
 const runManager = require('../agents/runManager');
 const { fetchUrlContent } = require('../agents/urlFetcher');
 
-const { anthropicFor, MODEL } = require('../lib/providerKeys');
+const { anthropicFor, loadUserApiKeys, MODEL } = require('../lib/providerKeys');
 const { computeEvidenceRung, computeConviction, bandFor } = require('../lib/conviction');
 
 // ── Why this exists ──
@@ -403,6 +403,9 @@ router.post('/:id/rerun', async (req, res) => {
 
 async function processInputsAndRun(assessmentId, inputs, founderId, previousAssessmentId) {
   const insertInput = db.prepare('INSERT INTO assessment_inputs (assessment_id, input_type, label, content, source_url, file_name) VALUES (?, ?, ?, ?, ?, ?)');
+  // Same BYOK contract as the LLM path: keys resolve per-user, never a shared default.
+  const ownerId = db.prepare('SELECT created_by FROM opportunity_assessments WHERE id = ?').get(assessmentId)?.created_by;
+  const userKeys = ownerId ? loadUserApiKeys(ownerId) : {};
 
   // Every ingestion problem we hit, collected as we go. Previously each of these was
   // a console.warn and nothing else — so a deck that failed to extract, or a URL that
@@ -487,7 +490,12 @@ async function processInputsAndRun(assessmentId, inputs, founderId, previousAsse
       const urlStr = typeof url === 'string' ? url : url.url;
       if (!urlStr) continue;
       console.log(`[Assessment] Fetching URL: ${urlStr}`);
-      const fetched = await fetchUrlContent(urlStr);
+      // The Exa key lets the crawler render client-rendered sites. Roughly half the
+      // startup sites worth assessing are unreadable without it — cadrian.ai and
+      // avanthealth.com both return ~0 chars to a plain fetch. Resolved per-user, same
+      // BYOK contract as everything else; absent, the crawler degrades to reporting the
+      // site as unreadable rather than scoring an empty page.
+      const fetched = await fetchUrlContent(urlStr, { exaKey: userKeys.exa });
       if (fetched.error) {
         console.warn(`[Assessment] URL fetch failed for ${urlStr}: ${fetched.error}`);
         insertInput.run(assessmentId, 'url', `${fetched.title || urlStr} (fetch failed)`, `Failed to fetch: ${fetched.error}`, urlStr, null);
