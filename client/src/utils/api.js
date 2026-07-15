@@ -175,6 +175,16 @@ export const api = {
   getHome: () => request('/home'),
 
   // ── Today — the surface ──
+  // Pipeline — the front door. One connected read over the founders spine.
+  getPipeline: (params) => request('/pipeline?' + new URLSearchParams(params || {})),
+  getPipelineCompany: (id) => request(`/pipeline/${id}`),
+  // The inbox — the seam between the sourcing engine and the tracker. Approving
+  // promotes in one transaction and keeps the source chain intact.
+  getPipelineInbox: (params) => request('/pipeline/inbox?' + new URLSearchParams(params || {})),
+
+  // The attention engine — cross-stage integrity checks, computed from pipeline state.
+  getAttention: () => request('/today/attention'),
+
   getToday: () => request('/today'),
   addTodayItem: (body) => request('/today/items', { method: 'POST', body: JSON.stringify(body) }),
   updateTodayItem: (id, body) => request(`/today/items/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),

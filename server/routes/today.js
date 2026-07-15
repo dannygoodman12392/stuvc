@@ -27,8 +27,17 @@ const express = require('express');
 const router = express.Router();
 const db = require('../db');
 const commitments = require('../lib/commitments');
+const attention = require('../lib/attention');
 
 const today = () => new Date().toISOString().slice(0, 10);
+
+// ── GET /api/today/attention ──
+// The cross-stage integrity checks. Danny's own four rules from his Permute spec,
+// plus going-cold and predictions-due. See lib/attention.js for provenance.
+// Every check returns a row even when clean — silence must mean "I looked".
+router.get('/attention', (req, res) => {
+  res.json(attention.checks(req.user.id));
+});
 
 // ── GET /api/today ──
 router.get('/', (req, res) => {

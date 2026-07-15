@@ -81,11 +81,16 @@ function AppRoutes() {
         <Onboarding />
       } />
       <Route path="/ask" element={<ProtectedRoute><AskStu /></ProtectedRoute>} />
-      {/* Today replaces Home. The old Home was four task buttons — a menu, which you
-          only open when you already know what you want, which is why it never got
-          opened. Today tells you what expires instead of asking what you'd like. */}
-      <Route path="/" element={user ? <ProtectedRoute><Today /></ProtectedRoute> : <Landing />} />
-      <Route path="/pipeline" element={<ProtectedRoute><Pipeline /></ProtectedRoute>} />
+      {/* PIPELINE IS THE FRONT DOOR.
+          Home was four task buttons — a menu, which you only open when you already
+          know what you want, which is why it never got opened. Today replaced it and
+          was the wrong answer to the right question: Danny never asked for it, and
+          asked five times for "my personal Affinity/Harmonic — sourcing, tracking,
+          assessing." That is one sentence about one object, and Pipeline is the
+          screen that holds it. Today's lanes are filters on this board now; the
+          attention engine underneath it lives at the top of Pipeline. */}
+      <Route path="/" element={user ? <ProtectedRoute><Pipeline /></ProtectedRoute> : <Landing />} />
+      <Route path="/pipeline" element={<Navigate to="/" replace />} />
       <Route path="/discover" element={<ProtectedRoute><Discover /></ProtectedRoute>} />
       <Route path="/founders/new" element={<ProtectedRoute><AddFounder /></ProtectedRoute>} />
       <Route path="/founders/:id" element={<ProtectedRoute><FounderDetail /></ProtectedRoute>} />

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { NavLink, useMatch } from 'react-router-dom';
+import { NavLink, useMatch, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import DannyAI from './DannyAI';
 import SearchPalette from './SearchPalette';
@@ -15,9 +15,16 @@ import { api, fetchAppVersion } from '../utils/api';
 // but folds into Pipeline; its engine has never once run.
 //
 // Every dead door is a reason not to open the building.
+// Pipeline is the product — sourcing is its inbox and assess is its detail page,
+// so they were never separate places to go. Talent is genuinely separate:
+// different people, inverted lens, a different customer (Danny's founders).
+//
+// The end state is two destinations. Assess is still here because it is currently
+// the ONLY way to start a run — dropping it from the nav before the detail page
+// can launch a read would be a regression wearing a simplification's clothes. It
+// goes when that path exists, and not before.
 const navConfig = [
-  { to: '/', label: 'Today' },
-  { to: '/pipeline', label: 'Pipeline' },
+  { to: '/', label: 'Pipeline' },
   { to: '/assess', label: 'Assess' },
   { to: '/talent', label: 'Talent' },
 ];
@@ -27,8 +34,13 @@ const utilityConfig = [
   { to: '/releases', label: 'Releases' }, // Danny likes the changelog — it stays.
 ];
 
+// Screens rebuilt on the design system. These run to the glass.
+const BLEED_ROUTES = ['/', '/pipeline'];
+
 export default function Layout({ children }) {
   const { user, logout } = useAuth();
+  const { pathname } = useLocation();
+  const bleed = BLEED_ROUTES.includes(pathname);
   const navItems = navConfig;
   const utilityItems = user?.role === 'admin'
     ? [...utilityConfig, { to: '/admin', label: 'Admin' }]
@@ -202,10 +214,17 @@ export default function Layout({ children }) {
         </header>
 
         <div className="flex-1 flex overflow-hidden">
-          <main className="flex-1 overflow-y-auto bg-gray-50">
-            <div className="max-w-5xl mx-auto px-5 py-8 md:px-8">
-              {children}
-            </div>
+          {/* FULL BLEED, for the screens that have been rebuilt on the design system.
+              This wrapper used to be `max-w-5xl mx-auto px-5 py-8` for EVERY page,
+              which centered each screen in a narrow column inside a wide frame — the
+              single strongest "this app is empty" signal there is. Whitespace at the
+              EDGES reads as absence; whitespace BETWEEN dense elements reads as calm.
+
+              Bleed is opt-in per route rather than global only because the not-yet-
+              rebuilt pages still assume the old padded column. Each one drops off this
+              list as it gets rebuilt, and then this whole branch goes away. */}
+          <main className="flex-1 overflow-y-auto bg-ground-2">
+            {bleed ? children : <div className="max-w-5xl mx-auto px-5 py-8 md:px-8">{children}</div>}
           </main>
 
           {/* Stu AI toggle */}

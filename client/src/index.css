@@ -2,141 +2,139 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ══════════════════════════════════════════════════════════════════════════
+   Primitives. See tailwind.config.js for the five rules these implement.
+
+   The old file contained six badge colors and four signal colors while the
+   config directly above it claimed "TWO colors only." The config was right and
+   was losing 125-to-58 to hardcoded blues. Colored badges are gone: a
+   conviction band is TYPOGRAPHIC. Coloring the verdict is how a tool tells you
+   what to think before you've read it.
+   ══════════════════════════════════════════════════════════════════════════ */
+
 @layer base {
   body {
-    @apply bg-white text-gray-900 antialiased;
+    @apply bg-ground-2 text-ink antialiased;
     font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+    /* Tabular figures everywhere by default. A score column that shifts as the
+       digits change is the fastest way to make a table feel amateur. */
+    font-variant-numeric: tabular-nums;
   }
 
   *:focus-visible {
-    @apply outline-none ring-2 ring-blue-500/40 ring-offset-1 rounded-sm;
+    @apply outline-none ring-2 ring-accent/30 ring-offset-1 rounded-sm;
   }
 
   ::selection {
-    @apply bg-blue-100;
+    @apply bg-accent-soft;
   }
 
-  ::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
-  }
-  ::-webkit-scrollbar-track {
-    @apply bg-transparent;
-  }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-track { @apply bg-transparent; }
   ::-webkit-scrollbar-thumb {
-    @apply bg-gray-200 rounded-full border-2 border-transparent;
+    @apply bg-line-2 rounded-full border-2 border-transparent;
     background-clip: padding-box;
   }
-  ::-webkit-scrollbar-thumb:hover {
-    @apply bg-gray-300;
-  }
+  ::-webkit-scrollbar-thumb:hover { @apply bg-line-3; }
 }
 
 @layer components {
-  /* Cards */
-  .card {
-    @apply bg-white border border-gray-200 rounded-xl;
+  /* ── THE ROW. The most important primitive in the product. ──
+     32px, 8px horizontal padding, a single hairline, full bleed. Hover-in is
+     instant and only the fade-OUT is animated — that asymmetry is what reads as
+     speed, and Linear ships exactly this. */
+  .row {
+    @apply flex items-center h-row px-2 border-b border-line text-small;
+    transition: background-color 150ms cubic-bezier(0.2, 0, 0, 1);
   }
-  .card-hover {
-    @apply bg-white border border-gray-200 rounded-xl transition-all duration-150;
+  .row:hover {
+    @apply bg-ground-3;
+    transition-duration: 0ms;
   }
-  .card-hover:hover {
-    @apply bg-gray-50 border-gray-300;
+  .row-selected { @apply bg-ground-4; }
+
+  /* The one primary ink in the row. Everything else must recede. */
+  .row-primary { @apply text-ink font-medium truncate; }
+  .row-meta { @apply text-ink-3 text-mini truncate; }
+
+  /* A column of numbers the eye scans downward. */
+  .num { @apply font-mono tabular-nums; }
+
+  /* ── Section labels ── */
+  .label {
+    @apply block text-micro font-semibold uppercase text-ink-4 mb-2;
   }
 
-  /* Buttons */
+  /* ── Buttons. One primary action per screen; everything else is quiet. ── */
   .btn-primary {
-    @apply bg-gray-900 text-white text-sm font-medium px-4 py-2 rounded-lg transition-all duration-150 inline-flex items-center gap-2;
+    @apply bg-ink text-white text-small font-medium px-3 h-row rounded transition inline-flex items-center gap-2;
   }
-  .btn-primary:hover {
-    @apply bg-gray-800;
-  }
-  .btn-primary:disabled {
-    @apply opacity-40 cursor-not-allowed;
-  }
+  .btn-primary:hover { @apply bg-ink-2; }
+  .btn-primary:disabled { @apply bg-ink-4 cursor-not-allowed; }
 
   .btn-secondary {
-    @apply bg-white text-gray-700 text-sm font-medium px-4 py-2 rounded-lg border border-gray-200 transition-all duration-150 inline-flex items-center gap-2;
+    @apply bg-ground text-ink-2 text-small font-medium px-3 h-row rounded border border-line-2 transition inline-flex items-center gap-2;
   }
-  .btn-secondary:hover {
-    @apply bg-gray-50 border-gray-300;
-  }
-  .btn-secondary:disabled {
-    @apply opacity-40 cursor-not-allowed;
-  }
+  .btn-secondary:hover { @apply bg-ground-3 border-line-3; }
+  .btn-secondary:disabled { @apply text-ink-4 cursor-not-allowed; }
 
   .btn-ghost {
-    @apply text-gray-500 text-sm font-medium px-3 py-1.5 rounded-lg transition-all duration-150 inline-flex items-center gap-2;
+    @apply text-ink-3 text-small font-medium px-2 h-row rounded transition inline-flex items-center gap-2;
   }
-  .btn-ghost:hover {
-    @apply bg-gray-100 text-gray-700;
-  }
-
-  .btn-danger {
-    @apply bg-white text-red-600 text-sm font-medium px-4 py-2 rounded-lg border border-red-200 transition-all duration-150 inline-flex items-center gap-2;
-  }
-  .btn-danger:hover {
-    @apply bg-red-50;
-  }
+  .btn-ghost:hover { @apply bg-ground-3 text-ink; }
 
   .btn-accent {
-    @apply bg-blue-600 text-white text-sm font-semibold px-4 py-2 rounded-lg transition-all duration-150 inline-flex items-center gap-2;
+    @apply bg-accent text-white text-small font-medium px-3 h-row rounded transition inline-flex items-center gap-2;
   }
-  .btn-accent:hover {
-    @apply bg-blue-700;
-  }
+  .btn-accent:hover { @apply bg-accent-hover; }
 
-  /* Inputs */
+  .btn-danger {
+    @apply bg-ground text-danger text-small font-medium px-3 h-row rounded border border-line-2 transition inline-flex items-center gap-2;
+  }
+  .btn-danger:hover { @apply bg-danger-soft; }
+
+  /* ── Inputs ── */
   .input {
-    @apply bg-white border border-gray-200 rounded-lg px-3 py-2 text-gray-900 text-sm placeholder-gray-400 transition-all;
+    @apply bg-ground border border-line-2 rounded px-2 h-row text-ink text-small placeholder-ink-4 transition w-full;
   }
-  .input:focus {
-    @apply outline-none border-blue-400 ring-2 ring-blue-500/10;
+  .input:focus { @apply outline-none border-accent ring-2 ring-accent/15; }
+
+  .textarea {
+    @apply bg-ground border border-line-2 rounded px-3 py-2 text-ink text-regular placeholder-ink-4 transition w-full;
   }
+  .textarea:focus { @apply outline-none border-accent ring-2 ring-accent/15; }
 
   .select {
-    @apply bg-white border border-gray-200 rounded-lg px-3 py-2 text-gray-900 text-sm transition-all appearance-none pr-8 cursor-pointer;
-    background-image: url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20fill%3D%22none%22%20viewBox%3D%220%200%2020%2020%22%3E%3Cpath%20stroke%3D%22%239ca3af%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%20stroke-width%3D%221.5%22%20d%3D%22m6%208%204%204%204-4%22%2F%3E%3C%2Fsvg%3E');
-    background-size: 1.25rem;
-    background-position: right 0.5rem center;
+    @apply bg-ground border border-line-2 rounded pl-2 pr-7 h-row text-ink text-small transition appearance-none cursor-pointer;
+    background-image: url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20fill%3D%22none%22%20viewBox%3D%220%200%2020%2020%22%3E%3Cpath%20stroke%3D%22%237c828c%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%20stroke-width%3D%221.5%22%20d%3D%22m6%208%204%204%204-4%22%2F%3E%3C%2Fsvg%3E');
+    background-size: 1.1rem;
+    background-position: right 0.375rem center;
     background-repeat: no-repeat;
   }
-  .select:focus {
-    @apply outline-none border-blue-400 ring-2 ring-blue-500/10;
-  }
+  .select:focus { @apply outline-none border-accent ring-2 ring-accent/15; }
 
-  .label {
-    @apply block text-xs font-medium text-gray-500 mb-1.5;
-  }
+  /* ── Conviction bands are TYPOGRAPHIC, never colored. ──
+     The band is carried by weight and position on the ink ramp. An anchor-grade
+     read is dark and heavy; a pass recedes. Color would tell Danny the verdict
+     before he read the evidence — which is the exact failure the conviction
+     engine's evidence gate exists to prevent, one layer down. */
+  .band { @apply text-mini font-semibold tracking-tight; }
+  .band-anchor { @apply text-ink font-bold; }
+  .band-memo { @apply text-ink font-semibold; }
+  .band-monitor { @apply text-ink-2 font-medium; }
+  .band-pass { @apply text-ink-3 font-normal; }
+  .band-indeterminate { @apply text-ink-4 font-normal italic; }
 
-  /* Badges */
-  .badge {
-    @apply inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium;
-  }
-  .badge-green {
-    @apply bg-emerald-50 text-emerald-700;
-  }
-  .badge-blue {
-    @apply bg-blue-50 text-blue-700;
-  }
-  .badge-amber {
-    @apply bg-amber-50 text-amber-700;
-  }
-  .badge-gray {
-    @apply bg-gray-100 text-gray-600;
-  }
-  .badge-red {
-    @apply bg-red-50 text-red-700;
-  }
-  .badge-purple {
-    @apply bg-purple-50 text-purple-700;
-  }
+  /* ── AI provenance. Machine text recedes to ink-3 and carries no badge. ──
+     Granola's rule: your text is black, the machine's is grey, and the only
+     affordance is provenance on hover. */
+  .machine { @apply text-ink-3; }
+  .mine { @apply text-ink; }
 
-  /* Signal indicators */
-  .signal-strong-pass { @apply text-emerald-600; }
-  .signal-pass { @apply text-blue-600; }
-  .signal-watch { @apply text-amber-600; }
-  .signal-pass-on { @apply text-red-600; }
+  /* ── The attention hue. The ONLY non-accent state color in the product. ──
+     Reserved for the attention engine when a check is NOT clean. */
+  .attn-open { @apply bg-attention-soft border-attention-line; }
+  .attn-clear { @apply bg-ground border-line; }
 }
 
 @layer utilities {
@@ -144,7 +142,8 @@
     -ms-overflow-style: none;
     scrollbar-width: none;
   }
-  .scrollbar-hide::-webkit-scrollbar {
-    display: none;
-  }
+  .scrollbar-hide::-webkit-scrollbar { display: none; }
+
+  /* Full bleed. Whitespace at the EDGES reads as absence. */
+  .bleed { @apply w-full max-w-none; }
 }
