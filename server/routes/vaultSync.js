@@ -127,6 +127,60 @@ router.get('/assessments/:id', (req, res) => {
   });
 });
 
+// ── POST /api/vault-sync/commitments — the Listener's write path ──
+//
+// This is the one place data flows INTO Stu from the outside, and it exists for a
+// specific reason: the `founder-call-auto-workup` scheduled task already reads
+// Granola every night and already writes a workup to the vault. It runs on Danny's
+// machine, holds VAULT_SYNC_SECRET, and is the only thing in the stack that sees a
+// transcript. Rather than build a second Granola integration inside Stu — which the
+// engineering review priced at 4-6 days and which may not even be possible, since
+// Granola has no webhook — the task that already works gets a way to push what it
+// found.
+//
+// Scope is deliberately one table. Not a general write API. The vault-sync channel
+// is owner-only and secret-gated precisely because Stu's shareable MCP surface has an
+// explicit boundary against founders/assessments/notes; this must not become a hole
+// in it. Commitments only, owner only, idempotent.
+router.post('/commitments', (req, res) => {
+  const rows = Array.isArray(req.body?.commitments) ? req.body.commitments : null;
+  if (!rows) return res.status(400).json({ error: 'body must be { commitments: [...] }' });
+  if (rows.length > 200) return res.status(400).json({ error: 'max 200 per call' });
+
+  const { record } = require('../lib/commitments');
+  const out = { created: 0, deduped: 0, skipped: [] };
+
+  for (const r of rows) {
+    // Resolve the founder by id, or by name — the task knows "Dan Preiss" from the
+    // Granola title, not a database id.
+    let founderId = r.founder_id || null;
+    if (!founderId && r.founder_name) {
+      const f = db.prepare(
+        'SELECT id FROM founders WHERE created_by = ? AND is_deleted = 0 AND LOWER(name) = LOWER(?) LIMIT 1'
+      ).get(OWNER_ID, String(r.founder_name).trim());
+      founderId = f?.id || null;
+    }
+    if (!founderId) { out.skipped.push({ reason: 'no matching founder', name: r.founder_name }); continue; }
+
+    try {
+      const w = record({
+        founderId,
+        owedBy: r.owed_by,
+        commitment: r.commitment,
+        quote: r.quote, // required — a commitment without the verbatim line is a paraphrase
+        statedAt: r.stated_at,
+        dueAt: r.due_at,
+        sourceRef: r.source_ref,
+        createdBy: OWNER_ID,
+      });
+      if (w.created) out.created++; else out.deduped++;
+    } catch (e) {
+      out.skipped.push({ reason: e.message, commitment: String(r.commitment || '').slice(0, 60) });
+    }
+  }
+  res.json(out);
+});
+
 module.exports = router;
 module.exports.timingSafeEqual = timingSafeEqual;
 module.exports.mapAgentOutputs = mapAgentOutputs;

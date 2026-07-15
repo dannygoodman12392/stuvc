@@ -107,6 +107,15 @@ export default function Today() {
     data.undecided.length + data.i_owe.length + data.they_owe.length +
     data.predictions_due.length + data.items.length;
 
+  // Prod showed rows titled "Dan Preiss" and "Stealth" — a founder name and a
+  // placeholder, neither of which is a company. Prefer the company, fall back to the
+  // person, and never render "Stealth" as if it were an identity.
+  const nameFor = (r) => {
+    const co = (r.founder_company || '').trim();
+    if (co && !/^stealth$/i.test(co)) return co;
+    return r.founder_name || co || 'Untitled';
+  };
+
   return (
     <div className="max-w-3xl mx-auto px-6 py-10">
       <header className="mb-10 flex items-baseline justify-between">
@@ -136,22 +145,36 @@ export default function Today() {
           <Row key={a.assessment_id}>
             <div className="flex items-baseline gap-2">
               <Link to={`/assess/${a.assessment_id}`} className="text-sm font-medium text-ink hover:text-accent">
-                {a.founder_company || a.founder_name || 'Untitled'}
+                {nameFor(a)}
               </Link>
               <span className="text-xs text-gray-400">{ago(a.created_at)}</span>
             </div>
-            {/* Three genuinely different states, and the screen must not blur them:
-                never scored by this engine · scored and held · scored. */}
             <p className="text-xs text-gray-500 mt-0.5">
-              {a.predates_engine
-                ? 'Scored under the old engine — re-run to get a read.'
-                : a.conviction_band === 'indeterminate' || a.conviction_score == null
-                  ? 'Not enough evidence to score — Stu is holding. Take the call.'
-                  : `Stu says ${a.conviction_score} · ${a.conviction_band}. You haven’t made the call.`}
+              {a.conviction_band === 'indeterminate' || a.conviction_score == null
+                ? 'Not enough evidence to score — Stu is holding. Take the call.'
+                : `Stu says ${a.conviction_score} · ${a.conviction_band}. You haven’t made the call.`}
             </p>
           </Row>
         ))}
       </Lane>
+
+      {/* Legacy assessments collapse to ONE row. There is nothing to decide from a
+          row the engine never scored — it's a chore, not a judgment. Nine of them at
+          full weight buried the one that mattered. */}
+      {data.needs_rerun?.count > 0 && (
+        <section className="mb-8">
+          <div className="flex items-baseline justify-between py-3 border-t border-b border-gray-100">
+            <p className="text-xs text-gray-400">
+              <span className="tabular-nums text-gray-500">{data.needs_rerun.count}</span>{' '}
+              {data.needs_rerun.count === 1 ? 'assessment predates' : 'assessments predate'} the current
+              rubric — no read on {data.needs_rerun.count === 1 ? 'it' : 'them'} yet.
+            </p>
+            <Link to="/assess" className="text-2xs text-gray-400 hover:text-accent whitespace-nowrap">
+              re-run
+            </Link>
+          </div>
+        </section>
+      )}
 
       {/* ── I OWE — the Q10 ledger, his side ── */}
       <Lane label="You owe" count={data.i_owe.length}>
@@ -160,7 +183,7 @@ export default function Today() {
             <div className="flex items-baseline gap-2 flex-wrap">
               <span className="text-sm text-ink">{c.commitment}</span>
               <span className="text-xs text-gray-400">
-                {c.founder_company || c.founder_name}
+                {nameFor(c)}
               </span>
               {c.overdue && <span className="text-2xs text-danger font-medium">overdue</span>}
               {c.due_at && !c.overdue && (
@@ -183,7 +206,7 @@ export default function Today() {
           >
             <div className="flex items-baseline gap-2 flex-wrap">
               <span className="text-sm text-gray-600">{c.commitment}</span>
-              <span className="text-xs text-gray-400">{c.founder_company || c.founder_name}</span>
+              <span className="text-xs text-gray-400">{nameFor(c)}</span>
               <span className="text-2xs text-danger">
                 {Math.abs(daysUntil(c.due_at))}d late
               </span>
@@ -198,7 +221,7 @@ export default function Today() {
         {data.predictions_due.map((d) => (
           <Row key={d.id}>
             <div className="flex items-baseline gap-2 flex-wrap">
-              <span className="text-sm text-ink">{d.founder_company || d.founder_name}</span>
+              <span className="text-sm text-ink">{nameFor(d)}</span>
               <span className="text-2xs text-gray-400">{daysUntil(d.resolve_by)}d</span>
             </div>
             <p className="text-xs text-gray-500 mt-0.5">{d.prediction}</p>

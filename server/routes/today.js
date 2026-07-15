@@ -82,12 +82,26 @@ router.get('/', (req, res) => {
     ORDER BY d.resolve_by ASC
   `).all(uid);
 
+  // Split the lane. Seen on the real production screen: nine rows, all reading
+  // "Scored under the old engine — re-run to get a read." Nine rows carrying one bit
+  // of information between them, with the only row that mattered (Dan Preiss, met
+  // today, round closing next week) at the same visual weight as Ghost Social from
+  // 92 days ago. That is a migration backlog wearing a to-do list's clothes.
+  //
+  // A legacy row is not a decision Danny can make — there is nothing to decide FROM.
+  // It's one chore: re-run them. So it collapses to one row, and the lane goes back
+  // to holding actual decisions.
+  const legacy = undecided.filter((a) => a.predates_engine);
+  const real = undecided.filter((a) => !a.predates_engine);
+
   res.json({
     // The headline. Decided — never pipeline count.
     decided_this_week: db.prepare(
       `SELECT COUNT(*) n FROM decisions WHERE created_by = ? AND decided_at >= date('now','-7 day')`
     ).get(uid).n,
-    undecided,
+    undecided: real,
+    // One row, not nine.
+    needs_rerun: { count: legacy.length, ids: legacy.map((a) => a.assessment_id) },
     i_owe: owed.i_owe,
     they_owe: owed.they_owe,
     predictions_due: predictions,
