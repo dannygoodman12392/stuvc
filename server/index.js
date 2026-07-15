@@ -52,6 +52,41 @@ seedIfEmpty();
     } else {
       console.log(`[Migration] Airtable import v4 already ran at ${flag.ran_at}, skipping.`);
     }
+    // ── Illinois tie repair (idempotent) ──
+    // PRODUCTION HAS ITS OWN DATABASE. Shipping lib/ilTie.js only stops NEW bad
+    // ties; every row already on prod's board keeps its fabricated one until this
+    // runs there. On 2026-07-15 that was 55 of 85 founders on the IL-tied board
+    // who were Stanford / Yale / CMU / Wharton alumni with no Illinois connection.
+    //
+    // Safe to run on every boot: nothing is deleted (a row that loses its tie moves
+    // to the national Frontier Watch), and the gate reads the PROFILE rather than
+    // its own previous output, so the answer is stable. Flagged anyway so a normal
+    // boot doesn't re-scan every row.
+    // NB: this SUPERSEDES `sourcing_tie_cleanup_v1` further down, which ran the old
+    // broken gate and DELETED anything it judged untied — so it kept the Stanford
+    // rows and may well have deleted real Illinois founders. That damage isn't
+    // recoverable here. This one never deletes: an untied row moves to the
+    // watchlist, where Danny can still see it and I can still be wrong.
+    const ilTieFlag = db.prepare("SELECT * FROM migration_flags WHERE key = 'il_tie_repartition_v1'").get();
+    if (!ilTieFlag) {
+      try {
+        const { repartition, splitSchoolSettings } = require('./migrations/repartition-il-ties');
+        // Config first — it is the CAUSE. Cleaning rows while the setting still
+        // merges pedigree into the tie list just re-poisons them on the next run.
+        const split = splitSchoolSettings(1);
+        const { total, changed } = repartition({ apply: true });
+        db.prepare("INSERT INTO migration_flags (key) VALUES ('il_tie_repartition_v1')").run();
+        console.log(
+          `[Migration] IL tie repair: ${changed}/${total} sourced founders re-partitioned; ` +
+            `schools split ${split.was || '?'} -> ${split.tie || '?'} tie / ${split.pedigree || '?'} pedigree.`
+        );
+      } catch (e) {
+        // Never take the server down over a data repair. A board with stale ties is
+        // bad; a board that won't load is worse.
+        console.error('[Migration] IL tie repair FAILED (server continues):', e.message);
+      }
+    }
+
     // Backfill Airtable record IDs (idempotent — only sets NULL IDs)
     const backfillFlag = db.prepare("SELECT * FROM migration_flags WHERE key = 'airtable_backfill_ids_v1'").get();
     if (!backfillFlag) {
@@ -292,6 +327,10 @@ app.use('/api/vault-sync', require('./routes/vaultSync'));
 // Today is the surface — the screen Danny opens at 9am and works from all day.
 // It also serves /api/today/decisions and /api/today/commitments.
 app.use('/api/today', requireAuth, require('./routes/today'));
+// The front door. One connected read over the founders spine — sourcing joins in,
+// assessments and decisions hang off. See routes/pipeline.js for why there is no
+// companies table.
+app.use('/api/pipeline', requireAuth, require('./routes/pipeline'));
 app.use('/api/founders', requireAuth, require('./routes/founders'));
 app.use('/api/notes', requireAuth, require('./routes/notes'));
 app.use('/api/sourcing', requireAuth, require('./routes/sourcing'));
