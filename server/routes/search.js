@@ -39,7 +39,7 @@ router.get('/', (req, res) => {
 
   // Search assessments
   const assessments = db.prepare(`
-    SELECT a.id, a.overall_signal, a.status, a.created_at, a.founder_id, f.name as founder_name, f.company as founder_company
+    SELECT a.id, a.overall_signal, a.conviction_score, a.conviction_band, a.evidence_rung, a.status, a.created_at, a.founder_id, f.name as founder_name, f.company as founder_company
     FROM opportunity_assessments a
     LEFT JOIN founders f ON a.founder_id = f.id
     WHERE a.is_deleted = 0 AND a.created_by = ? AND (

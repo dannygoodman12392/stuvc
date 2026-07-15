@@ -70,7 +70,9 @@ router.get('/:id', (req, res) => {
   if (!founder) return res.status(404).json({ error: 'Founder not found' });
 
   const notes = db.prepare('SELECT n.*, u.name as author FROM founder_notes n LEFT JOIN users u ON n.created_by = u.id WHERE n.founder_id = ? ORDER BY n.created_at DESC').all(req.params.id);
-  const assessments = db.prepare('SELECT id, overall_signal, status, created_at FROM opportunity_assessments WHERE founder_id = ? ORDER BY created_at DESC').all(req.params.id);
+  // conviction_band/score are REQUIRED by ConvictionBadge — without them it takes the
+  // legacy branch and labels a freshly-scored Anchor-grade assessment "old".
+  const assessments = db.prepare('SELECT id, overall_signal, conviction_score, conviction_band, evidence_rung, status, created_at FROM opportunity_assessments WHERE founder_id = ? ORDER BY created_at DESC').all(req.params.id);
   const calls = db.prepare('SELECT id, structured_summary, created_at FROM call_logs WHERE founder_id = ? ORDER BY created_at DESC').all(req.params.id);
   const deals = db.prepare('SELECT id, decision, created_at FROM deal_room WHERE founder_id = ? ORDER BY created_at DESC').all(req.params.id);
 

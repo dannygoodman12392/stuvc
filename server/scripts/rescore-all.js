@@ -1,9 +1,55 @@
 #!/usr/bin/env node
 /**
- * rescore-all.js
+ * rescore-all.js — DISABLED 2026-07-14. Read this before re-enabling it.
+ *
  * Creates new assessments for 6 companies using filesystem materials + CRM data.
- * Run from server/ directory: node scripts/rescore-all.js
+ *
+ * ── Why it is disabled ──
+ * This script does not call the runner. It contains its OWN copy-pasted fork of the
+ * scoring engine, and that fork is now a fossil of every bug the conviction rebuild
+ * removed:
+ *   - Team 45% / Product 25% / Market 30%      (the rubric says Market is a weighed
+ *                                               risk note, not a third of the score)
+ *   - `(teamScore || 0)`                        (a crashed agent scores 0 → flips to Pass)
+ *   - the ±1 LLM override                       (an agent that can move its own score)
+ *   - writes 'Invest' / 'Monitor' / 'Pass'      (the retired ladder)
+ *   - never writes conviction_score/band        (so rows disagree with themselves)
+ *   - no temperature                            (samples its own verdicts)
+ *
+ * Running it would silently revert whatever it touched to the old engine, and the
+ * output would look completely normal.
+ *
+ * ── Why it can't just be rewired ──
+ * The new engine's score comes from the `founderRubric` agent's four movements. Old
+ * assessments have no `rubric_output` — the agent didn't exist when they ran. So there
+ * is nothing to recompute FROM; the rubric has to actually run. That is an LLM call,
+ * which is what a normal re-run already does.
+ *
+ * ── What to do instead ──
+ * Re-run through the real runner, which is the single source of truth for scoring:
+ *   POST /api/assessments  { founder_id, group_id, inputs }   (increments the version)
+ * or, for a batch, follow migrations/rescore-rubric-v3.js — it does this correctly by
+ * calling `require('../routes/assessments')._internal.runAssessmentAgents`.
+ *
+ * If you rewrite this script, delete the fork below and call the runner.
  */
+
+if (!process.env.RESCORE_ALL_I_READ_THE_HEADER) {
+  console.error(`
+rescore-all.js is DISABLED.
+
+It carries its own fork of the pre-2026-07-14 scoring engine (Team45/Product25/Market30,
+the (teamScore || 0) dead-agent bug, the ±1 override, Invest/Monitor/Pass, no temperature).
+Running it would silently revert assessments to the old ladder and write no conviction score.
+
+Re-run through the real runner instead — see migrations/rescore-rubric-v3.js for the
+correct pattern, or POST /api/assessments with the same group_id.
+
+Read the header of this file. If you have rewritten it to call the runner, set
+RESCORE_ALL_I_READ_THE_HEADER=1 to proceed.
+`);
+  process.exit(1);
+}
 
 const path = require('path');
 const fs = require('fs');
@@ -24,6 +70,7 @@ if (!process.env.ANTHROPIC_API_KEY) {
 const Anthropic = require('@anthropic-ai/sdk');
 const db = require('../db');
 const AGENT_PROMPTS = require('../agents/prompts');
+const { MODEL } = require('../lib/providerKeys');
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -216,7 +263,7 @@ function robustJsonParse(text) {
 
 async function runAgent(prompt, context, retries = 1) {
   const response = await client.messages.create({
-    model: 'claude-sonnet-4-6',
+    model: MODEL,
     max_tokens: 4096,
     system: prompt.system,
     messages: [{ role: 'user', content: prompt.user(context) }],
@@ -234,7 +281,7 @@ async function runAgent(prompt, context, retries = 1) {
 
 async function runSynthesis(agentOutputs, context) {
   const response = await client.messages.create({
-    model: 'claude-sonnet-4-6',
+    model: MODEL,
     max_tokens: 4096,
     system: AGENT_PROMPTS.synthesis.system,
     messages: [{ role: 'user', content: AGENT_PROMPTS.synthesis.user(agentOutputs, context) }],

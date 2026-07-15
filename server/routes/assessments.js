@@ -5,7 +5,28 @@ const db = require('../db');
 const runManager = require('../agents/runManager');
 const { fetchUrlContent } = require('../agents/urlFetcher');
 
-const { anthropicFor } = require('../lib/providerKeys');
+const { anthropicFor, MODEL } = require('../lib/providerKeys');
+const { computeEvidenceRung, computeConviction, bandFor } = require('../lib/conviction');
+
+// ── Why this exists ──
+// No temperature was ever set anywhere in this server, so every call ran at the API
+// default of 1.0 — including every scoring agent. Stu was sampling its own verdicts.
+// The proof is in the database: six founders were assessed twice on byte-identical
+// inputs (same assessment_inputs, same total char counts, ~24h apart) and the overall
+// score moved every time.
+//
+//   Hale          18,150 chars → 5.8 then 5.3   (Δ 0.5)
+//   Gil           21,937 chars → 6.8 then 6.3   (Δ 0.5)
+//   kya labs      47,907 chars → 6.0 then 5.8   (Δ 0.2)
+//   The Graph     30,600 chars → 5.9 then 5.8   (Δ 0.1)
+//   Ghost Social     170 chars → 2.8 then 1.7   (Δ 1.1)
+//
+// Median |Δ| 0.35, max 1.1. That is the instrument's own noise floor on identical
+// input — wide enough to move a company across a band boundary for no reason at all.
+// An evaluation instrument that returns a different answer to the same question is
+// not an instrument. Judgment gets temperature 0; prose generation elsewhere can
+// keep its default.
+const SCORING_TEMPERATURE = 0;
 
 // ── GET /api/assessments — list all (only latest version per group) ──
 router.get('/', (req, res) => {
@@ -179,18 +200,43 @@ router.post('/:id/override', (req, res) => {
   if (adjustment < -1 || adjustment > 1) return res.status(400).json({ error: 'adjustment must be between -1 and 1' });
 
   const synthesis = JSON.parse(assessment.synthesis_output || '{}');
-  const baseScore = synthesis.overall_score || 0;
 
-  synthesis.override = { adjustment, justification: justification || '' };
-  const newScore = round1(baseScore + adjustment);
+  // A GP may adjust a score. A GP may not conjure one.
+  //
+  // This route used to do `const baseScore = synthesis.overall_score || 0`. On an
+  // indeterminate run overall_score is null, so `|| 0` made the base zero and a +1
+  // override produced a confident 1.0 "Pass with respect" — a fabricated verdict on an
+  // assessment the engine had explicitly refused to score. It then wrote the retired
+  // Invest/Monitor/Pass vocabulary and left conviction_band untouched, so the row
+  // disagreed with itself.
+  if (typeof synthesis.overall_score !== 'number' || assessment.conviction_band === 'indeterminate') {
+    return res.status(409).json({
+      error: 'This assessment has no conviction score to override.',
+      detail: synthesis.insufficient_evidence_reason
+        || 'The evidence did not support a score. An override would invent one. Add a call transcript and re-run instead.',
+    });
+  }
+
+  const baseScore = synthesis.overall_score;
+  const newScore = Math.max(1, Math.min(10, round1(baseScore + adjustment)));
+  const band = bandFor(newScore);
+
+  synthesis.override = { adjustment, justification: justification || '', by: 'GP', base: baseScore };
   synthesis.overall_score = newScore;
   synthesis.score_calculation = (synthesis.score_calculation || '') + ` → GP override ${adjustment > 0 ? '+' : ''}${adjustment} = ${newScore}`;
-  synthesis.overall_signal = newScore >= 7.0 ? 'Invest' : newScore >= 5.0 ? 'Monitor' : 'Pass';
+  synthesis.overall_signal = band.label;
+  synthesis.recommended_next_step = band.action;
+  if (synthesis.conviction) {
+    synthesis.conviction.score = newScore;
+    synthesis.conviction.band = band;
+    synthesis.conviction.gp_override = synthesis.override;
+  }
 
-  db.prepare('UPDATE opportunity_assessments SET synthesis_output = ?, overall_signal = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
-    .run(JSON.stringify(synthesis), synthesis.overall_signal, req.params.id);
+  // Keep the denormalised columns in step with the JSON. They used to drift.
+  db.prepare('UPDATE opportunity_assessments SET synthesis_output = ?, overall_signal = ?, conviction_score = ?, conviction_band = ?, conviction_output = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+    .run(JSON.stringify(synthesis), band.label, newScore, band.key, JSON.stringify(synthesis.conviction || null), req.params.id);
 
-  res.json({ id: assessment.id, overall_score: newScore, overall_signal: synthesis.overall_signal, override: synthesis.override });
+  res.json({ id: assessment.id, overall_score: newScore, overall_signal: band.label, conviction_band: band.key, override: synthesis.override });
 });
 
 // ── PATCH /api/assessments/:id/synthesis — patch synthesis fields directly ──
@@ -206,13 +252,31 @@ router.patch('/:id/synthesis', (req, res) => {
     synthesis[key] = value;
   }
 
-  // Update overall_signal based on score if score changed
+  // Re-derive the band if the score was patched. This used to write the retired
+  // Invest/Monitor/Pass ladder and leave conviction_band alone, so the row's JSON and
+  // its columns disagreed about the verdict.
+  let bandUpdate = null;
   if (patches.overall_score !== undefined) {
-    synthesis.overall_signal = synthesis.overall_score >= 7.0 ? 'Invest' : synthesis.overall_score >= 5.0 ? 'Monitor' : 'Pass';
+    if (typeof synthesis.overall_score !== 'number') {
+      return res.status(400).json({ error: 'overall_score must be a number, or omit it to leave the verdict alone.' });
+    }
+    synthesis.overall_score = Math.max(1, Math.min(10, round1(synthesis.overall_score)));
+    bandUpdate = bandFor(synthesis.overall_score);
+    synthesis.overall_signal = bandUpdate.label;
+    synthesis.recommended_next_step = bandUpdate.action;
+    if (synthesis.conviction) {
+      synthesis.conviction.score = synthesis.overall_score;
+      synthesis.conviction.band = bandUpdate;
+    }
   }
 
-  db.prepare('UPDATE opportunity_assessments SET synthesis_output = ?, overall_signal = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
-    .run(JSON.stringify(synthesis), synthesis.overall_signal || assessment.overall_signal, req.params.id);
+  if (bandUpdate) {
+    db.prepare('UPDATE opportunity_assessments SET synthesis_output = ?, overall_signal = ?, conviction_score = ?, conviction_band = ?, conviction_output = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+      .run(JSON.stringify(synthesis), bandUpdate.label, synthesis.overall_score, bandUpdate.key, JSON.stringify(synthesis.conviction || null), req.params.id);
+  } else {
+    db.prepare('UPDATE opportunity_assessments SET synthesis_output = ?, overall_signal = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+      .run(JSON.stringify(synthesis), synthesis.overall_signal || assessment.overall_signal, req.params.id);
+  }
 
   res.json({ id: assessment.id, synthesis });
 });
@@ -244,34 +308,18 @@ router.get('/:id/steward-operator', (req, res) => {
   res.json(evaluation);
 });
 
-// ── POST /api/assessments/:id/steward-operator — trigger rubric run ──
+// ── POST /api/assessments/:id/steward-operator — RETIRED ──
+// The 9-trait Steward-Operator rubric was replaced by the Founder Rubric on 2026-06-25
+// (canonical: Brain/02 Frameworks/Founder Rubric.md). The Founder Rubric now runs inside
+// every assessment as the `founderRubric` agent and produces the conviction score.
+//
+// This endpoint is gone rather than rewired. Leaving it live would let a click score a
+// founder against a retired framework — which is worse than the button not existing.
+// The GET above still serves historical evaluations so old assessments render.
 router.post('/:id/steward-operator', (req, res) => {
-  const assessment = db.prepare('SELECT * FROM opportunity_assessments WHERE id = ? AND is_deleted = 0 AND created_by = ?').get(req.params.id, req.user.id);
-  if (!assessment) return res.status(404).json({ error: 'Assessment not found' });
-  if (assessment.status !== 'complete' && assessment.status !== 'partial') {
-    return res.status(400).json({ error: 'Assessment must be complete before running the Steward-Operator rubric' });
-  }
-
-  // Don't stack concurrent runs
-  const existing = db.prepare(
-    "SELECT * FROM steward_operator_evaluations WHERE assessment_id = ? AND status = 'running' ORDER BY id DESC LIMIT 1"
-  ).get(req.params.id);
-  if (existing) return res.json(existing);
-
-  const result = db.prepare(
-    "INSERT INTO steward_operator_evaluations (assessment_id, status) VALUES (?, 'running')"
-  ).run(assessment.id);
-  const evaluationId = result.lastInsertRowid;
-  const record = db.prepare('SELECT * FROM steward_operator_evaluations WHERE id = ?').get(evaluationId);
-
-  res.json(record);
-
-  // Fire-and-forget background run (matches existing assessment agent pattern)
-  runStewardOperator(assessment, evaluationId).catch(err => {
-    console.error('[StewardOperator] Error:', err);
-    db.prepare(
-      "UPDATE steward_operator_evaluations SET status = 'error', error = ?, completed_at = CURRENT_TIMESTAMP WHERE id = ?"
-    ).run(err?.message || String(err), evaluationId);
+  return res.status(410).json({
+    error: 'The Steward-Operator rubric was retired on 2026-06-25 and replaced by the Founder Rubric.',
+    detail: 'The Founder Rubric now runs automatically inside every assessment and produces the conviction score. There is nothing to trigger — re-run the assessment instead.',
   });
 });
 
@@ -342,12 +390,19 @@ router.post('/:id/rerun', async (req, res) => {
 async function processInputsAndRun(assessmentId, inputs, founderId, previousAssessmentId) {
   const insertInput = db.prepare('INSERT INTO assessment_inputs (assessment_id, input_type, label, content, source_url, file_name) VALUES (?, ?, ?, ?, ?, ?)');
 
+  // Every ingestion problem we hit, collected as we go. Previously each of these was
+  // a console.warn and nothing else — so a deck that failed to extract, or a URL that
+  // 403'd, was scored anyway and the reader was never told. deck_status in particular
+  // was only ever written by a one-time migration, which meant the loud red
+  // "this score is suspect" banner in the UI had been dead for every run since.
+  const ingestionProblems = [];
+
   // Process decks. HARD RULE: never store unreadable deck data silently. A PDF is
   // extracted to text server-side; a link (DocSend/Slides) or unreadable/empty file
   // becomes an explicit "[NOT INGESTED]" marker so agents see the gap instead of garbage.
   if (inputs.decks && Array.isArray(inputs.decks)) {
     const { extractPdfText } = require('../services/pdf-extractor');
-    const { planDeck, notIngestedMarker } = require('../agents/deck-ingest');
+    const { planDeck, notIngestedMarker, deckContentIntegrity } = require('../agents/deck-ingest');
     for (const deck of inputs.decks) {
       const label = deck.label || 'Pitch Deck';
       const plan = planDeck(deck);
@@ -355,17 +410,31 @@ async function processInputsAndRun(assessmentId, inputs, founderId, previousAsse
       if (plan.mode === 'pdf') {
         try {
           const text = await extractPdfText(Buffer.from(deck.base64, 'base64'));
-          insertInput.run(assessmentId, 'deck', label, text, null, deck.fileName || null);
-          console.log(`[Assessment ${assessmentId}] Deck "${label}" ingested: ${text.length} chars from PDF`);
+          // Extraction "succeeding" is not the same as the text being usable — a
+          // design-heavy deck can yield ligature soup. Check before trusting.
+          // deckContentIntegrity returns { status: 'ok'|'empty'|'corrupted'|'link'|'not_ingested', reason? }
+          const integrity = deckContentIntegrity(text);
+          if (integrity.status !== 'ok') {
+            const reason = integrity.reason || `extracted text was ${integrity.status}`;
+            insertInput.run(assessmentId, 'deck', `${label} (NOT INGESTED)`, notIngestedMarker(`extracted text failed the integrity check: ${reason}`), null, deck.fileName || null);
+            ingestionProblems.push({ kind: 'deck', label, reason });
+            console.warn(`[Assessment ${assessmentId}] Deck "${label}" failed integrity: ${reason}`);
+          } else {
+            insertInput.run(assessmentId, 'deck', label, text, null, deck.fileName || null);
+            console.log(`[Assessment ${assessmentId}] Deck "${label}" ingested: ${text.length} chars from PDF`);
+          }
         } catch (err) {
           insertInput.run(assessmentId, 'deck', `${label} (NOT INGESTED)`, notIngestedMarker(`PDF could not be read: ${err.message}`), null, deck.fileName || null);
+          ingestionProblems.push({ kind: 'deck', label, reason: `PDF could not be read: ${err.message}` });
           console.warn(`[Assessment ${assessmentId}] Deck "${label}" PDF extraction failed: ${err.message}`);
         }
       } else if (plan.mode === 'link') {
         insertInput.run(assessmentId, 'deck', `${label} (NOT INGESTED)`, notIngestedMarker(`link (${plan.content}) is behind an access wall and was not retrieved — upload a PDF export`), plan.content, deck.fileName || null);
+        ingestionProblems.push({ kind: 'deck', label, reason: 'link behind an access wall — upload a PDF export' });
         console.warn(`[Assessment ${assessmentId}] Deck link not ingested: ${plan.content}`);
       } else if (plan.mode === 'empty') {
         insertInput.run(assessmentId, 'deck', `${label} (NOT INGESTED)`, notIngestedMarker('no readable text was provided'), null, deck.fileName || null);
+        ingestionProblems.push({ kind: 'deck', label, reason: 'no readable text was provided' });
       } else {
         insertInput.run(assessmentId, 'deck', label, plan.content, null, deck.fileName || null);
       }
@@ -408,6 +477,15 @@ async function processInputsAndRun(assessmentId, inputs, founderId, previousAsse
       if (fetched.error) {
         console.warn(`[Assessment] URL fetch failed for ${urlStr}: ${fetched.error}`);
         insertInput.run(assessmentId, 'url', `${fetched.title || urlStr} (fetch failed)`, `Failed to fetch: ${fetched.error}`, urlStr, null);
+        ingestionProblems.push({ kind: 'url', label: urlStr, reason: fetched.error });
+      } else if (!fetched.text || fetched.text.trim().length < 200) {
+        // The fetcher is a raw GET with a regex tag-strip and no JS rendering, so a
+        // React/Next marketing site returns a near-empty shell and reports success.
+        // An empty "success" is a failure — say so instead of scoring the shell.
+        const reason = `returned only ${(fetched.text || '').trim().length} chars — the page is probably client-rendered and we cannot read it`;
+        insertInput.run(assessmentId, 'url', `${fetched.title || urlStr} (fetch failed)`, `Failed to fetch: ${reason}`, urlStr, null);
+        ingestionProblems.push({ kind: 'url', label: urlStr, reason });
+        console.warn(`[Assessment] URL fetch empty for ${urlStr}: ${reason}`);
       } else {
         insertInput.run(assessmentId, 'url', fetched.title || urlStr, fetched.text, urlStr, null);
       }
@@ -416,6 +494,15 @@ async function processInputsAndRun(assessmentId, inputs, founderId, previousAsse
   // Legacy: single website_content
   if (inputs.website_content) {
     insertInput.run(assessmentId, 'url', 'Company Website', inputs.website_content, null, null);
+  }
+
+  // Record ingestion problems on the assessment itself so the UI can show them.
+  // This is what finally makes the (previously dead) suspect banner fire.
+  if (ingestionProblems.length) {
+    const reason = ingestionProblems.map(p => `${p.label}: ${p.reason}`).join(' · ');
+    db.prepare("UPDATE opportunity_assessments SET deck_status = 'suspect', deck_status_reason = ? WHERE id = ?").run(reason, assessmentId);
+  } else {
+    db.prepare("UPDATE opportunity_assessments SET deck_status = 'ok', deck_status_reason = NULL WHERE id = ?").run(assessmentId);
   }
 
   // Now build context and run agents
@@ -500,6 +587,19 @@ async function runAssessmentAgents(assessmentId, founderId) {
     if (assembled.notes.length) {
       console.warn(`[Assessment ${assessmentId}] context assembly: ${assembled.notes.join('; ')}`);
     }
+    // Persist what got truncated or dropped. This used to be console.warn-only, so a
+    // transcript could be cut in half and the reader would never know. It is now the
+    // source for the "what we didn't look at" section.
+    db.prepare('UPDATE opportunity_assessments SET context_notes = ? WHERE id = ?')
+      .run(assembled.notes.length ? JSON.stringify(assembled.notes) : null, assessmentId);
+
+    // ── Evidence rung — computed from the inputs, never from the model ──
+    // This is the gate that stops Stu scoring a marketing page with the same
+    // authority as a deck plus two transcripts.
+    const evidence = computeEvidenceRung(allInputs);
+    db.prepare('UPDATE opportunity_assessments SET evidence_rung = ?, evidence_output = ? WHERE id = ?')
+      .run(evidence.rung, JSON.stringify(evidence), assessmentId);
+    console.log(`[Assessment ${assessmentId}] evidence rung ${evidence.rung} (${evidence.label}); dropped ${evidence.dropped.length} input(s)`);
 
     const AGENT_PROMPTS = require('../agents/prompts');
 
@@ -523,12 +623,18 @@ async function runAssessmentAgents(assessmentId, founderId) {
       return;
     }
 
-    // Run all 4 agents in parallel (Team, Product, Market, Bear)
+    // Run 5 agents in parallel. Team/Product/Market/Bear are the depth layer — the
+    // analysis Danny reads. `founderRubric` is the conviction layer: it scores the four
+    // movements of the canonical Founder Rubric and is the ONLY input to the conviction
+    // score. It used to be a separate manual button on a separate tab against the
+    // archived 9-trait rubric, which meant the actual evaluation framework never ran
+    // unless you knew to click it.
     const agentPromises = [
       runAgent(client, AGENT_PROMPTS.team, cappedContext, signal),
       runAgent(client, AGENT_PROMPTS.product, cappedContext, signal),
       runAgent(client, AGENT_PROMPTS.market, cappedContext, signal),
       runAgent(client, AGENT_PROMPTS.bear, cappedContext, signal),
+      runAgent(client, AGENT_PROMPTS.founderRubric, cappedContext, signal),
     ];
 
     const results = await Promise.allSettled(agentPromises);
@@ -538,12 +644,30 @@ async function runAssessmentAgents(assessmentId, founderId) {
       return;
     }
 
+    const settle = (r, name) =>
+      r.status === 'fulfilled' ? r.value : { error: r.reason?.message || `${name} agent failed` };
+
     const agentOutputs = {
-      team: results[0].status === 'fulfilled' ? results[0].value : { error: results[0].reason?.message || 'Agent failed' },
-      product: results[1].status === 'fulfilled' ? results[1].value : { error: results[1].reason?.message || 'Agent failed' },
-      market: results[2].status === 'fulfilled' ? results[2].value : { error: results[2].reason?.message || 'Agent failed' },
-      bear: results[3].status === 'fulfilled' ? results[3].value : { error: results[3].reason?.message || 'Agent failed' },
+      team: settle(results[0], 'Team'),
+      product: settle(results[1], 'Product'),
+      market: settle(results[2], 'Market'),
+      bear: settle(results[3], 'Bear'),
+      rubric: settle(results[4], 'Founder Rubric'),
     };
+
+    // ── An agent that died is an ERROR, not a low score ──
+    // The old code did `(teamScore || 0) * 0.45`, so a crashed Team agent contributed
+    // zero, dropped the total ~3.4 points, and flipped the verdict to "Pass" — while
+    // the UI hid the Team card because the value was null. An infrastructure failure
+    // and a negative judgment produced an identical screen. In a diligence tool that
+    // is the worst possible bug, so failures now surface as failures.
+    const failed = Object.entries(agentOutputs).filter(([, v]) => v && v.error);
+    if (failed.length) {
+      console.error(`[Assessment ${assessmentId}] agents failed: ${failed.map(([k, v]) => `${k} (${v.error})`).join('; ')}`);
+    }
+    // The rubric agent IS the conviction. If it died, there is no conviction to report —
+    // and we must not fall back to a number that looks like a judgment.
+    const rubricFailed = !!(agentOutputs.rubric && agentOutputs.rubric.error);
 
     // ── Deterministic score computation ──
     // LLMs can't do arithmetic reliably. Compute all scores in code.
@@ -564,28 +688,66 @@ async function runAssessmentAgents(assessmentId, founderId) {
     // economics_agent_output → market, bear_agent_output → bear
     db.prepare(`UPDATE opportunity_assessments SET
       founder_agent_output = ?, market_agent_output = ?, economics_agent_output = ?,
-      pattern_agent_output = NULL, bear_agent_output = ?, status = 'synthesizing'
+      pattern_agent_output = NULL, bear_agent_output = ?, rubric_output = ?, status = 'synthesizing'
       WHERE id = ?
     `).run(
       JSON.stringify(agentOutputs.team), JSON.stringify(agentOutputs.product),
       JSON.stringify(agentOutputs.market),
-      JSON.stringify(agentOutputs.bear), assessmentId
+      JSON.stringify(agentOutputs.bear), JSON.stringify(agentOutputs.rubric), assessmentId
     );
 
     if (signal.aborted) return;
 
+    // ── Conviction, computed in code ──
+    // The rubric agent supplies judgment on the four movements. Everything numeric
+    // happens here. Note the order: conviction is decided BEFORE synthesis runs, and
+    // is then handed to synthesis as a fact. The old flow let the synthesis agent
+    // propose a score and then overwrote it, which meant the prose was written to
+    // justify a number that changed underneath it.
+    const conviction = computeConviction({
+      movements: rubricFailed ? {} : (agentOutputs.rubric?.movements || {}),
+      rung: evidence.rung,
+      marketRisk: {
+        structurally_dead: agentOutputs.market?.structurally_dead === true,
+        note: agentOutputs.market?.kill_shot_risk || null,
+      },
+      bearAdjustment: agentOutputs.bear?.bear_adjustment ?? 0,
+      flags: (rubricFailed ? {} : agentOutputs.rubric?.flags) || {},
+    });
+    if (rubricFailed) {
+      conviction.determinate = false;
+      conviction.score = null;
+      conviction.band = null;
+      conviction.reason = `The Founder Rubric agent failed (${agentOutputs.rubric.error}). No conviction score — this is a system failure, not a judgment about the company. Re-run.`;
+    }
+
+    db.prepare('UPDATE opportunity_assessments SET conviction_output = ?, conviction_score = ?, conviction_band = ? WHERE id = ?')
+      .run(
+        JSON.stringify(conviction),
+        conviction.determinate ? conviction.score : null,
+        conviction.determinate ? conviction.band.key : 'indeterminate',
+        assessmentId
+      );
+    console.log(`[Assessment ${assessmentId}] conviction: ${conviction.determinate ? `${conviction.score} (${conviction.band.label})` : 'INDETERMINATE — ' + conviction.reason}`);
+
     // Run synthesis
     try {
-      const synthesis = await runSynthesis(client, AGENT_PROMPTS.synthesis, agentOutputs, cappedContext, signal);
+      const synthesis = await runSynthesis(client, AGENT_PROMPTS.synthesis, agentOutputs, cappedContext, signal, conviction);
       if (signal.aborted) return;
 
       // Override synthesis scores with deterministic computation
-      correctSynthesisScores(synthesis, agentOutputs);
+      correctSynthesisScores(synthesis, agentOutputs, conviction);
 
       db.prepare(`UPDATE opportunity_assessments SET
-        synthesis_output = ?, overall_signal = ?, status = 'complete', updated_at = CURRENT_TIMESTAMP
+        synthesis_output = ?, overall_signal = ?, status = ?, updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
-      `).run(JSON.stringify(synthesis), synthesis.overall_signal || 'Monitor', assessmentId);
+      `).run(
+        JSON.stringify(synthesis),
+        synthesis.overall_signal,
+        // An agent that died must not masquerade as a completed assessment.
+        failed.length ? 'partial' : 'complete',
+        assessmentId
+      );
     } catch (err) {
       if (signal.aborted) return;
       console.error('[Assessment] Synthesis error:', err);
@@ -729,75 +891,70 @@ function correctPillarScores(agentOutputs) {
     const computed = computeMarketPillarScore(agentOutputs.market.subcategories);
     if (computed !== null) agentOutputs.market.pillar_score = computed;
   }
-  // Bear: clamp adjustment to [0, -1.5] with traction-based ceiling
+  // Bear: clamp adjustment to [-1.5, 0]. Nothing else.
+  //
+  // Removed: the traction-based bear ceiling. It capped the bear's penalty at -0.5
+  // when team and product both scored high, on the theory that "the bear agent
+  // consistently overweights theoretical risks for companies with real traction."
+  // The problem is what fed those high scores — a MANDATORY SCORING RULE forced
+  // product_velocity and customer_proximity to 8 whenever the model read "paying
+  // customers" on a slide. So an unverified sentence in a deck manufactured the
+  // traction, the traction tripped the ceiling, and the ceiling silenced the one
+  // agent whose entire job is to check the others. If the bulls are wrong together,
+  // the bear has to be able to say so.
+  //
+  // Removed: the pre-product floor (bear <= -0.7 when velocity < 5). It punished
+  // thin evidence as though it were a finding. Thin evidence is now handled honestly
+  // by the evidence rung, which withholds the score instead of deducting from it.
   if (agentOutputs.bear && typeof agentOutputs.bear.bear_adjustment === 'number') {
-    let bearAdj = Math.max(-1.5, Math.min(0, agentOutputs.bear.bear_adjustment));
-
-    // Traction-based bear ceiling: companies with demonstrated execution
-    // get a lighter bear penalty. The LLM bear agent consistently overweights
-    // theoretical risks for companies with real traction.
-    const teamPillar = agentOutputs.team?.pillar_score;
-    const prodVelocity = agentOutputs.product?.subcategories?.product_velocity?.score;
-    const prodProximity = agentOutputs.product?.subcategories?.customer_proximity?.score;
-
-    if (teamPillar >= 7.5 && prodVelocity >= 7 && prodProximity >= 7) {
-      // Strong traction: paying customers + strong team → cap bear at -0.5
-      bearAdj = Math.max(bearAdj, -0.5);
-    } else if (teamPillar >= 7.0 && (prodVelocity >= 7 || prodProximity >= 7)) {
-      // Moderate traction → cap bear at -0.8
-      bearAdj = Math.max(bearAdj, -0.8);
-    }
-
-    // Floor for pre-product/pre-revenue companies: bear should be at least -0.7
-    if (prodVelocity !== null && prodVelocity !== undefined && prodVelocity < 5) {
-      bearAdj = Math.min(bearAdj, -0.7);
-    }
-
-    agentOutputs.bear.bear_adjustment = round1(bearAdj);
+    agentOutputs.bear.bear_adjustment = round1(Math.max(-1.5, Math.min(0, agentOutputs.bear.bear_adjustment)));
   }
 }
 
-function correctSynthesisScores(synthesis, agentOutputs) {
-  const teamScore = agentOutputs.team?.pillar_score;
-  const productScore = agentOutputs.product?.pillar_score;
-  const marketScore = agentOutputs.market?.pillar_score;
-  const bearAdj = agentOutputs.bear?.bear_adjustment ?? 0;
-
-  // Set pillar scores from the (already corrected) agent outputs
+// The conviction score is computed by server/lib/conviction.js from the Founder
+// Rubric's four movements. This function's job is only to stamp that result onto
+// the synthesis object and stop the LLM from contradicting it.
+//
+// What changed and why:
+//   - The old weighted score was Team 45% + Product 25% + Market 30%. The canonical
+//     Founder Rubric weights Earned Insight and Learning Velocity highest and treats
+//     Market as a WEIGHED RISK NOTE, not a third of the number. Stu's weights were
+//     the drift; the rubric is the spec.
+//   - `(teamScore || 0)` is gone. A dead agent used to silently contribute 0 and flip
+//     the verdict to Pass.
+//   - The ±1 synthesis override is gone. The synthesis agent no longer gets a vote on
+//     the number — it explains the number. An LLM that can move its own score by a
+//     point can reach any conclusion it likes and then narrate backwards to it.
+//   - Invest/Monitor/Pass is gone, replaced by the rubric's four bands. The old three
+//     collapsed 7.0-10.0 into one "Invest", erasing the anchor-vs-memo call.
+function correctSynthesisScores(synthesis, agentOutputs, conviction) {
+  // Pillar scores are retained as the DEPTH layer — useful reading, not the verdict.
   synthesis.pillar_scores = {
-    team: teamScore,
-    product: productScore,
-    market: marketScore,
+    team: agentOutputs.team?.pillar_score ?? null,
+    product: agentOutputs.product?.pillar_score ?? null,
+    market: agentOutputs.market?.pillar_score ?? null,
   };
-  synthesis.bear_adjustment = bearAdj;
+  synthesis.bear_adjustment = agentOutputs.bear?.bear_adjustment ?? 0;
 
-  // Compute weighted score
-  const t = (teamScore || 0) * 0.45;
-  const p = (productScore || 0) * 0.25;
-  const m = (marketScore || 0) * 0.30;
-  const raw = t + p + m + bearAdj;
-  const overall = round1(raw);
+  // The verdict comes from conviction and nowhere else.
+  synthesis.conviction = conviction;
+  synthesis.overall_score = conviction.determinate ? conviction.score : null;
+  synthesis.score_calculation = conviction.calculation;
 
-  synthesis.overall_score = overall;
-  synthesis.score_calculation = `(${teamScore} × 0.45) + (${productScore} × 0.25) + (${marketScore} × 0.30) + (${bearAdj}) = ${round1(t)} + ${round1(p)} + ${round1(m)} + ${bearAdj} = ${overall}`;
-
-  // Apply override if synthesis agent requested one (±1 max)
-  let finalScore = overall;
-  if (synthesis.override && typeof synthesis.override === 'object' && typeof synthesis.override.adjustment === 'number') {
-    const adj = Math.max(-1, Math.min(1, synthesis.override.adjustment));
-    finalScore = round1(overall + adj);
-    synthesis.overall_score = finalScore;
-    synthesis.score_calculation += ` → override ${adj > 0 ? '+' : ''}${adj} = ${finalScore} (${synthesis.override.justification || 'no justification'})`;
-  }
-
-  // Determine signal from score thresholds
-  if (finalScore >= 7.0) {
-    synthesis.overall_signal = 'Invest';
-  } else if (finalScore >= 5.0) {
-    synthesis.overall_signal = 'Monitor';
+  if (conviction.determinate) {
+    synthesis.overall_signal = conviction.band.label; // Anchor-grade | Top-quartile | Monitor | Pass with respect
+    synthesis.recommended_next_step = conviction.band.action;
   } else {
-    synthesis.overall_signal = 'Pass';
+    // Not a judgment about the company — a statement about what we know.
+    synthesis.overall_signal = 'Insufficient evidence';
+    synthesis.recommended_next_step = conviction.rung < 3 ? 'Take the call' : 'Re-run';
+    synthesis.insufficient_evidence_reason = conviction.reason;
   }
+
+  // The synthesis agent is asked for prose, not arithmetic. If it invented an
+  // override anyway, drop it rather than let it sit in the JSON looking meaningful.
+  delete synthesis.override;
+  return synthesis;
 }
 
 function robustJsonParse(text) {
@@ -870,10 +1027,28 @@ async function anthropicCreateWithRetry(client, params, { attempts = 3, baseDela
   throw lastErr;
 }
 
+// ── On prompt caching: deliberately NOT used here ──
+// The obvious idea is to cache the 150K-char context, since all five agents read the
+// identical block. I implemented it, then did the arithmetic and took it back out.
+// Two reasons it cannot work in this shape:
+//
+//   1. Caching matches on PREFIX. Each agent has a different system prompt, and the
+//      system block sits ahead of the context. So the five agents never share a cache
+//      entry — each one would only ever hit its own previous run.
+//   2. The agents run in PARALLEL. All five requests start before any cache write has
+//      landed, so all five miss on every first run — and a cache write bills at 1.25x
+//      base input. Caching here does not make a run cheaper; it makes it ~18% dearer.
+//
+// Making it actually pay would mean restructuring so an identical prefix (house rules +
+// context) precedes the agent-specific instructions, AND serializing one agent to prime
+// the cache before fanning out the other four — trading ~60s of wall clock for ~$0.38.
+// Stu has run six assessments in its lifetime, so that is ~$2 of savings for real
+// latency and real complexity. Not worth it. Revisit if volume ever justifies it.
 async function runAgent(client, prompt, context, signal, retries = 1) {
   const response = await anthropicCreateWithRetry(client, {
-    model: 'claude-sonnet-4-6',
+    model: MODEL,
     max_tokens: 4096,
+    temperature: SCORING_TEMPERATURE,
     system: prompt.system,
     messages: [{ role: 'user', content: prompt.user(context) }],
   });
@@ -901,170 +1076,17 @@ function safeParse(raw) {
   catch { return null; }
 }
 
-function buildContextFromInputs(assessmentId, founderId, ownerId) {
-  const allInputs = db.prepare('SELECT * FROM assessment_inputs WHERE assessment_id = ? ORDER BY input_type, id').all(assessmentId);
+// (Removed: buildContextFromInputs + runStewardOperator — the archived 9-trait rubric
+// runner and its private naive-slice context builder. The Founder Rubric now runs
+// inline in the main batch and uses the budget-aware assembleContext.)
 
-  let context = '';
-  const inputsByType = {};
-  for (const inp of allInputs) {
-    if (!inputsByType[inp.input_type]) inputsByType[inp.input_type] = [];
-    inputsByType[inp.input_type].push(inp);
-  }
-
-  if (inputsByType.deck) {
-    for (let i = 0; i < inputsByType.deck.length; i++) {
-      const d = inputsByType.deck[i];
-      context += `\n\n--- PITCH DECK ${i + 1}: ${d.label || d.file_name || 'Untitled'} ---\n${d.content}`;
-    }
-  }
-  if (inputsByType.transcript) {
-    for (let i = 0; i < inputsByType.transcript.length; i++) {
-      const t = inputsByType.transcript[i];
-      context += `\n\n--- CALL TRANSCRIPT ${i + 1}: ${t.label || 'Meeting Notes'} ---\n${t.content}`;
-    }
-  }
-  if (inputsByType.url) {
-    for (let i = 0; i < inputsByType.url.length; i++) {
-      const u = inputsByType.url[i];
-      context += `\n\n--- WEBSITE${u.source_url ? ': ' + u.source_url : ''} ---\n${u.content}`;
-    }
-  }
-  if (inputsByType.notes) {
-    for (let i = 0; i < inputsByType.notes.length; i++) {
-      const n = inputsByType.notes[i];
-      context += `\n\n--- ANALYST NOTES ${i + 1}: ${n.label || ''} ---\n${n.content}`;
-    }
-  }
-
-  let founderContext = '';
-  if (founderId && ownerId) {
-    const founder = db.prepare('SELECT * FROM founders WHERE id = ? AND created_by = ?').get(founderId, ownerId);
-    if (founder) {
-      founderContext = `\nFounder: ${founder.name}\nCompany: ${founder.company || 'Unknown'}\nRole: ${founder.role || 'Founder'}\nLocation: ${founder.location_city || ''} ${founder.location_state || ''}\nStage: ${founder.stage || 'Pre-seed'}\nDomain: ${founder.domain || 'Unknown'}\nLinkedIn: ${founder.linkedin_url || 'N/A'}\nBio: ${founder.bio || 'N/A'}\nPrevious companies: ${founder.previous_companies || 'N/A'}\nNotable background: ${founder.notable_background || 'N/A'}`;
-
-      const calls = db.prepare('SELECT structured_summary, raw_transcript FROM call_logs WHERE founder_id = ? ORDER BY created_at DESC LIMIT 5').all(founderId);
-      if (calls.length > 0) {
-        for (let i = 0; i < calls.length; i++) {
-          const call = calls[i];
-          const text = call.structured_summary || call.raw_transcript;
-          if (text) context += `\n\n--- PREVIOUS CALL ${i + 1} (from CRM) ---\n${text}`;
-        }
-      }
-
-      const notes = db.prepare('SELECT content FROM founder_notes WHERE founder_id = ? ORDER BY created_at DESC LIMIT 10').all(founderId);
-      if (notes.length > 0) {
-        context += `\n\n--- CRM NOTES ---\n${notes.map(n => n.content).join('\n---\n')}`;
-      }
-    }
-  }
-
-  const fullContext = founderContext + context;
-  return fullContext.slice(0, 150000);
-}
-
-async function runStewardOperator(assessment, evaluationId) {
-  const client = anthropicFor(assessment.created_by, 'steward-operator');
-  if (!client) {
-    db.prepare(
-      "UPDATE steward_operator_evaluations SET status = 'error', error = 'No Anthropic client configured', completed_at = CURRENT_TIMESTAMP WHERE id = ?"
-    ).run(evaluationId);
-    return;
-  }
-
-  const runKey = `steward-${evaluationId}`;
-  const signal = runManager.register(runKey);
-
-  try {
-    const cappedContext = buildContextFromInputs(assessment.id, assessment.founder_id, assessment.created_by);
-
-    const agentOutputs = {
-      team: safeParse(assessment.founder_agent_output),
-      product: safeParse(assessment.market_agent_output),
-      market: safeParse(assessment.economics_agent_output),
-      bear: safeParse(assessment.bear_agent_output),
-    };
-    const synthesisOutput = safeParse(assessment.synthesis_output);
-
-    const AGENT_PROMPTS = require('../agents/prompts');
-    const prompt = AGENT_PROMPTS.stewardOperator;
-
-    const callModel = () => client.messages.create({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 4096,
-      system: prompt.system,
-      messages: [{ role: 'user', content: prompt.user(cappedContext, agentOutputs, synthesisOutput) }],
-    });
-
-    let response = await callModel();
-    if (signal.aborted) return;
-
-    let text = response.content[0].text.trim();
-    let parsed = robustJsonParse(text);
-    if (!parsed || parsed.error) {
-      console.warn('[StewardOperator] JSON parse failed, retrying...');
-      response = await callModel();
-      if (signal.aborted) return;
-      text = response.content[0].text.trim();
-      parsed = robustJsonParse(text);
-    }
-
-    if (!parsed || parsed.error) {
-      db.prepare(
-        "UPDATE steward_operator_evaluations SET status = 'error', error = ?, completed_at = CURRENT_TIMESTAMP WHERE id = ?"
-      ).run('Could not parse rubric JSON output', evaluationId);
-      return;
-    }
-
-    // Compute hits_count deterministically; don't trust LLM arithmetic
-    const traits = parsed.traits || {};
-    const traitScores = Object.values(traits)
-      .map(t => (t && typeof t.score === 'number') ? t.score : null)
-      .filter(s => s !== null);
-    const hitsCount = traitScores.filter(s => s >= 7).length;
-    parsed.hits_count = hitsCount;
-
-    // Clamp overall_score to [hits - 0.5, hits + 0.5]
-    let overall = typeof parsed.overall_score === 'number' ? parsed.overall_score : hitsCount;
-    overall = Math.max(hitsCount - 0.5, Math.min(hitsCount + 0.5, overall));
-    overall = round1(overall);
-    parsed.overall_score = overall;
-
-    // Flag rule: overall_score >= 6
-    parsed.flagged = overall >= 6;
-
-    // Threshold computed from hits_count + tiebreakers
-    const t1Passed = !!parsed.tiebreakers?.t1_names_weakness_unprompted?.passed;
-    const t2Passed = !!parsed.tiebreakers?.t2_tailors_ask_with_specificity?.passed;
-    let threshold;
-    if (hitsCount === 9 && t1Passed && t2Passed) threshold = 'Anchor-grade';
-    else if (hitsCount >= 7 && (t1Passed || t2Passed)) threshold = 'Top-quartile';
-    else if (hitsCount >= 7) threshold = 'Top-quartile';
-    else if (hitsCount >= 5) threshold = 'Monitor';
-    else if (hitsCount >= 3) threshold = 'Pass with respect';
-    else threshold = 'Pass';
-    parsed.threshold = threshold;
-
-    db.prepare(`
-      UPDATE steward_operator_evaluations
-      SET output = ?, overall_score = ?, threshold = ?, flagged = ?, status = 'complete', completed_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `).run(JSON.stringify(parsed), overall, threshold, parsed.flagged ? 1 : 0, evaluationId);
-  } catch (err) {
-    console.error('[StewardOperator] Run error:', err);
-    db.prepare(
-      "UPDATE steward_operator_evaluations SET status = 'error', error = ?, completed_at = CURRENT_TIMESTAMP WHERE id = ?"
-    ).run(err?.message || String(err), evaluationId);
-  } finally {
-    runManager.cleanup(runKey);
-  }
-}
-
-async function runSynthesis(client, prompt, agentOutputs, context, signal) {
+async function runSynthesis(client, prompt, agentOutputs, context, signal, conviction) {
   const response = await anthropicCreateWithRetry(client, {
-    model: 'claude-sonnet-4-6',
+    model: MODEL,
     max_tokens: 4096,
+    temperature: SCORING_TEMPERATURE,
     system: prompt.system,
-    messages: [{ role: 'user', content: prompt.user(agentOutputs, context) }],
+    messages: [{ role: 'user', content: prompt.user(agentOutputs, context, conviction) }],
   });
 
   const text = response.content[0].text.trim();
@@ -1103,6 +1125,16 @@ router.get('/:id/taste-divergence', (req, res) => {
   } catch (e) { res.status(500).json({ available: false, error: e.message }); }
 });
 
-// Export router + internal functions for migrations
-router._internal = { runAssessmentAgents, processRerunInputs };
+// Export router + internal functions for migrations and tests.
+// The scoring functions are exported so the conviction wiring can be tested without
+// an LLM call — the arithmetic is the part that must never silently drift.
+router._internal = {
+  runAssessmentAgents,
+  processRerunInputs,
+  correctPillarScores,
+  correctSynthesisScores,
+  assembleContext,
+  robustJsonParse,
+  SCORING_TEMPERATURE,
+};
 module.exports = router;

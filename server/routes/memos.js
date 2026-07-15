@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../db');
-const { anthropicFor } = require('../lib/providerKeys');
+const { anthropicFor, MODEL } = require('../lib/providerKeys');
 
 // GET /api/founders/:founderId/memos — list all memos for a founder
 router.get('/:founderId', (req, res) => {
@@ -100,26 +100,98 @@ Diligence: ${founder.diligence_status || 'Not started'}`;
   if (assessments.length > 0) {
     const latest = assessments[0];
     context += '\n\nLATEST ASSESSMENT OUTPUTS:';
+    // overall_signal is now a rubric band label — "Anchor-grade" | "Top-quartile" |
+    // "Monitor" | "Pass with respect" — or "Insufficient evidence" when the conviction
+    // engine could not score. It is NOT Invest/Monitor/Pass any more.
     context += `\nOverall Signal: ${latest.overall_signal || 'N/A'}`;
 
+    let syn = null;
     if (latest.synthesis_output) {
+      try { syn = JSON.parse(latest.synthesis_output); } catch {}
+    }
+
+    if (syn) {
+      if (syn.executive_summary) context += `\nExecutive Summary: ${syn.executive_summary}`;
+      // The depth layer. Three pillars — team / product / market. The old
+      // signal_scores schema (founder/market/economics/pattern_fit/risk_profile)
+      // no longer exists, which is why memos shipped with no scores at all.
+      if (syn.pillar_scores) {
+        const p = syn.pillar_scores;
+        const fmt = v => (typeof v === 'number' ? `${v}/10` : 'not scored');
+        context += `\nPillar Scores (depth layer, not the verdict): Team ${fmt(p.team)}, Product ${fmt(p.product)}, Market ${fmt(p.market)}`;
+      }
+      if (typeof syn.bear_adjustment === 'number' && syn.bear_adjustment !== 0) {
+        context += `\nBear Adjustment: ${syn.bear_adjustment}`;
+      }
+      if (syn.agent_consensus) context += `\nConsensus: ${syn.agent_consensus.join('; ')}`;
+      if (syn.agent_disagreements) context += `\nDisagreements: ${syn.agent_disagreements.join('; ')}`;
+      if (syn.top_questions) context += `\nOpen Questions: ${syn.top_questions.join('; ')}`;
+    }
+
+    // ── Conviction (the verdict layer) ──────────────────────────────────────
+    // Computed deterministically in lib/conviction.js. Prefer the dedicated column;
+    // fall back to the copy stamped onto synthesis. When it is indeterminate there is
+    // NO score — there is a question list, and the memo must say so rather than imply
+    // a number exists.
+    let conviction = null;
+    if (latest.conviction_output) {
+      try { conviction = JSON.parse(latest.conviction_output); } catch {}
+    }
+    if (!conviction && syn && syn.conviction) conviction = syn.conviction;
+
+    if (conviction) {
+      context += '\n\nCONVICTION (deterministic — computed by code, not by an agent):';
+      context += `\nEvidence Rung: ${conviction.rung_label || 'Unknown'}`;
+      if (conviction.determinate) {
+        context += `\nConviction Score: ${conviction.score}/10`;
+        if (conviction.band) context += `\nBand: ${conviction.band.label} — ${conviction.band.action}`;
+        if (conviction.calculation) context += `\nCalculation: ${conviction.calculation}`;
+        if (conviction.docks && conviction.docks.length) {
+          context += `\nDocks Applied: ${conviction.docks.map(d => `${d.amount} (${d.why})`).join('; ')}`;
+        }
+      } else {
+        context += '\nConviction Score: NONE — INDETERMINATE. Do not state or infer a conviction score in the memo.';
+        if (conviction.reason) context += `\nWhy: ${conviction.reason}`;
+        if (conviction.missing_load_bearing && conviction.missing_load_bearing.length) {
+          context += `\nUnscorable load-bearing movements: ${conviction.missing_load_bearing.join('; ')}`;
+        }
+      }
+      if (conviction.movements) {
+        for (const m of Object.values(conviction.movements)) {
+          const val = m.scorable ? `${m.score}/10` : `not scorable — ${m.reason || 'no evidence'}`;
+          context += `\n- ${m.label} (weight ${m.weight}): ${val}`;
+          if (m.evidence) context += `\n    Evidence: ${m.evidence}`;
+        }
+      }
+    }
+
+    // What we were handed but could not actually read. A gap, not evidence. This lives
+    // in its own column — computeConviction's output does not carry it.
+    if (latest.evidence_output) {
       try {
-        const syn = JSON.parse(latest.synthesis_output);
-        if (syn.executive_summary) context += `\nExecutive Summary: ${syn.executive_summary}`;
-        if (syn.signal_scores) context += `\nScores: Founder ${syn.signal_scores.founder}/10, Market ${syn.signal_scores.market}/10, Economics ${syn.signal_scores.economics}/10, Pattern ${syn.signal_scores.pattern_fit}/10, Risk ${syn.signal_scores.risk_profile}/10`;
-        if (syn.agent_consensus) context += `\nConsensus: ${syn.agent_consensus.join('; ')}`;
-        if (syn.agent_disagreements) context += `\nDisagreements: ${syn.agent_disagreements.join('; ')}`;
-        if (syn.top_questions) context += `\nOpen Questions: ${syn.top_questions.join('; ')}`;
+        const evidence = JSON.parse(latest.evidence_output);
+        if (evidence.meaning) context += `\nWhat this evidence supports: ${evidence.meaning}`;
+        if (evidence.dropped && evidence.dropped.length) {
+          context += `\nInputs we could NOT read (gaps, not evidence): ${evidence.dropped.map(d => `${d.label} (${d.reason})`).join('; ')}`;
+        }
       } catch {}
     }
 
-    // Include individual agent outputs for depth
-    const agentFields = ['founder_agent_output', 'market_agent_output', 'economics_agent_output', 'pattern_agent_output', 'bear_agent_output'];
-    for (const field of agentFields) {
+    // Individual agent outputs for depth. The DB column names are legacy and do NOT
+    // match what they hold — see routes/assessments.js ~line 660 and
+    // client/src/pages/AssessmentDetail.jsx lines 6-11. Mapping them by name is what
+    // caused every memo to label the PRODUCT agent's output as "MARKET".
+    // pattern_agent_output is hard-set to NULL by the runner — dropped.
+    const agentFields = [
+      { field: 'founder_agent_output', label: 'TEAM' },
+      { field: 'market_agent_output', label: 'PRODUCT' },
+      { field: 'economics_agent_output', label: 'MARKET' },
+      { field: 'bear_agent_output', label: 'BEAR' },
+    ];
+    for (const { field, label } of agentFields) {
       if (latest[field]) {
         try {
           const output = JSON.parse(latest[field]);
-          const label = field.replace('_agent_output', '').toUpperCase();
           if (output.narrative) context += `\n\n${label} AGENT NARRATIVE:\n${output.narrative}`;
           if (output.key_questions) context += `\nKey Questions: ${output.key_questions.join('; ')}`;
         } catch {}
@@ -151,7 +223,7 @@ Diligence: ${founder.diligence_status || 'Not started'}`;
   // Generate memo in background
   try {
     const response = await client.messages.create({
-      model: 'claude-sonnet-4-6',
+      model: MODEL,
       max_tokens: 8192,
       system: `You are the IC Memo Writer for Superior Studios, a Chicago-based pre-seed venture fund (~$10M Fund I).
 
@@ -169,10 +241,23 @@ MEMO STRUCTURE:
 9. **Portfolio Fit** — How this fits the Superior Studios thesis and existing portfolio
 10. **Recommendation** — Clear: Commit / Continue Diligence / Pass, with reasoning
 
+CONVICTION — READ THIS BEFORE WRITING:
+- The conviction score is computed deterministically in code from the Founder Rubric. You do NOT
+  compute it, adjust it, average it, or infer one. Report the number you are given, or report none.
+- If the CONVICTION block says INDETERMINATE, the memo must contain NO conviction score and no
+  numeric stand-in for one. There is no verdict yet — there is a question list. Say exactly that,
+  state the evidence rung reached, and make the Recommendation the step that would earn a score
+  (usually: take the call). Do not hedge it into an implied number.
+- Assessment signal bands are: Anchor-grade (first call within a week) / Top-quartile (write a memo) /
+  Monitor (track the next data point) / Pass with respect — or "Insufficient evidence" when
+  indeterminate. These are NOT Invest/Monitor/Pass; do not translate between the two vocabularies.
+- Pillar scores (Team / Product / Market) are the DEPTH layer for reading, not the verdict. Never
+  present a pillar score, or any combination of them, as the conviction score.
+
 STYLE:
 - Be direct. No filler, no "this is an exciting opportunity."
 - Lead with evidence, not opinion.
-- Flag what you DON'T know — data gaps matter.
+- Flag what you DON'T know — data gaps matter. An input we could not read is a gap, not evidence.
 - Use the frameworks Danny's team uses: Eniac dimensions, Gurley unit economics, Marks risk asymmetry, Munger mental models, Helmer 7 Powers.
 - Write for an audience of experienced investors who want signal, not noise.
 

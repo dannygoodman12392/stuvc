@@ -1,4 +1,5 @@
 const pdfParse = require('pdf-parse');
+const { MODEL } = require('../lib/providerKeys');
 
 const EXTRACTION_PROMPT = `You are a data extraction assistant. Extract founder/startup information from the following document text.
 
@@ -47,7 +48,7 @@ async function extractFromPDF(buffer, anthropicApiKey) {
   const client = new Anthropic({ apiKey: anthropicApiKey });
 
   const response = await client.messages.create({
-    model: 'claude-sonnet-4-6',
+    model: MODEL,
     max_tokens: 4096,
     messages: [{
       role: 'user',

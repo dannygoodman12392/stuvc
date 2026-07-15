@@ -3,9 +3,7 @@
  * Closes the loop: find a unicorn builder → reach out in seconds, in a relational voice
  * (not a templated blast). Uses the user's own Anthropic key (metered).
  */
-const { anthropicFor } = require('../lib/providerKeys');
-
-const MODEL = 'claude-sonnet-4-6';
+const { anthropicFor, MODEL } = require('../lib/providerKeys');
 
 class NoKeyError extends Error {
   constructor() { super('Add your Anthropic API key in Settings to draft outreach — it bills your account, not the platform.'); this.code = 'no_key'; this.status = 400; }

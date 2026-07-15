@@ -17,6 +17,7 @@
 
 const db = require('../db');
 const https = require('https');
+const { MODEL } = require('../lib/providerKeys');
 
 // ── API Clients ──
 
@@ -1165,7 +1166,7 @@ function emptyScore(rationale) {
 async function scoreFounder(client, founder, scoringPrompt) {
   try {
     const response = await client.messages.create({
-      model: 'claude-sonnet-4-6',
+      model: MODEL,
       max_tokens: 1536,
       system: scoringPrompt || SCORING_PROMPT,
       messages: [{

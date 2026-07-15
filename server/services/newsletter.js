@@ -10,6 +10,7 @@
  */
 
 const db = require('../db');
+const { MODEL } = require('../lib/providerKeys');
 
 // ── Settings ──
 function readSetting(userId, key) {
@@ -127,7 +128,7 @@ async function extractIssue(client, mail) {
   if (!client) return fallback;
   try {
     const resp = await client.messages.create({
-      model: 'claude-sonnet-4-6',
+      model: MODEL,
       max_tokens: 700,
       system: EXTRACT_SYSTEM,
       messages: [{

@@ -206,13 +206,23 @@ function buildAssessmentBody(assessment, founder) {
 
   blocks.push(divider());
 
-  // Agent outputs as toggles
+  // Agent outputs as toggles.
+  //
+  // The DB column names are legacy and do NOT match what they hold. The runner writes:
+  //   founder_agent_output   → Team
+  //   market_agent_output    → PRODUCT   (not market)
+  //   economics_agent_output → MARKET    (not economics; unit economics lives in memos.js)
+  //   pattern_agent_output   → always NULL, the agent is dead
+  // This list used to derive its label from the column name, so every Notion page Stu
+  // ever synced has labelled the Product agent's output "Market Agent" and the Market
+  // agent's output "Economics Agent". Anyone reading those pages read the wrong analysis
+  // under the wrong heading.
   blocks.push(heading2('Agent Outputs'));
   const agents = [
-    { key: 'founder_agent_output', label: '🧭 Founder Agent' },
-    { key: 'market_agent_output', label: '📊 Market Agent' },
-    { key: 'economics_agent_output', label: '💰 Economics Agent' },
-    { key: 'pattern_agent_output', label: '🔁 Pattern Agent' },
+    { key: 'rubric_output', label: '🎯 Founder Rubric (this is what decided the score)' },
+    { key: 'founder_agent_output', label: '🧭 Team Agent' },
+    { key: 'market_agent_output', label: '🛠 Product Agent' },
+    { key: 'economics_agent_output', label: '📊 Market Agent' },
     { key: 'bear_agent_output', label: '🐻 Bear Agent' },
   ];
   for (const a of agents) {
@@ -231,13 +241,30 @@ function buildAssessmentBody(assessment, founder) {
   return blocks.slice(0, 100);
 }
 
+// The verdict vocabulary is now the Founder Rubric's four bands plus an indeterminate
+// state. The old Invest/Monitor/Pass/Watch maps are kept ONLY so the 14 legacy rows
+// still render — they are never produced by a new run.
 function signalEmoji(signal) {
-  const m = { 'Invest': '✅', 'Monitor': '👀', 'Pass': '🚫', 'Watch': '🔍' };
+  const m = {
+    // current
+    'Anchor-grade': '⭐', 'Top-quartile': '✅', 'Monitor': '👀',
+    'Pass with respect': '🚫', 'Insufficient evidence': '❓',
+    // legacy rows only
+    'Invest': '✅', 'Pass': '🚫', 'Watch': '🔍',
+  };
   return m[signal] || '📝';
 }
 
 function signalColor(signal) {
-  const m = { 'Invest': 'green_background', 'Monitor': 'yellow_background', 'Pass': 'red_background', 'Watch': 'blue_background' };
+  const m = {
+    'Anchor-grade': 'green_background', 'Top-quartile': 'green_background',
+    'Monitor': 'yellow_background', 'Pass with respect': 'red_background',
+    // Deliberately gray, not red. "We have not learned enough to judge this" is not a
+    // rejection, and colouring it like one is the exact error this rebuild removed
+    // from the rest of the app.
+    'Insufficient evidence': 'gray_background',
+    'Invest': 'green_background', 'Pass': 'red_background', 'Watch': 'blue_background',
+  };
   return m[signal] || 'gray_background';
 }
 
@@ -266,8 +293,17 @@ async function pushAssessmentToNotion(assessmentId) {
   const stuUrl = `${STU_BASE_URL}/founders/${assessment.founder_id}?assessment=${assessment.id}`;
   const title = `${assessment.founder_name || 'Unknown'} — v${assessment.version_number || 1} · ${assessment.overall_signal || '?'}`;
 
-  // Map signal to allowed Notion select option
-  const allowedSignals = ['Invest', 'Monitor', 'Pass', 'Watch'];
+  // Map signal to an allowed Notion select option.
+  //
+  // This list was ['Invest','Monitor','Pass','Watch'] — the retired ladder. Every band a
+  // new run produces would have fallen through to 'Other', so the Notion database would
+  // have shown "Other" for every assessment going forward and quietly lost the verdict.
+  // NOTE: these options must also exist on the Notion select property itself; if a push
+  // 400s on an unknown option, add the four bands there.
+  const allowedSignals = [
+    'Anchor-grade', 'Top-quartile', 'Monitor', 'Pass with respect', 'Insufficient evidence',
+    'Invest', 'Pass', 'Watch', // legacy rows
+  ];
   const signalProp = allowedSignals.includes(assessment.overall_signal) ? assessment.overall_signal : 'Other';
 
   const props = {
