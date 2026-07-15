@@ -248,6 +248,23 @@ addColumn('founders', 'sourced_from_id', 'INTEGER');  // back-ref to sourced_fou
 addColumn('founders', 'airtable_founder_record_id', 'TEXT');
 addColumn('founders', 'airtable_deal_record_id', 'TEXT');
 
+// ── The company card's automated half (pipeline/company-enrich.js) ──
+// Danny: "company pages on LinkedIn show how many people work there and have been
+// hired at these companies over time... I'll pay for enrichment."
+// The whole EnrichLayer company blob lands here: profile, funding, and the
+// headcount series. One JSON column rather than 15 scalars because the shape is
+// the provider's, not ours — and a provider that adds a field shouldn't need a
+// migration. Anything Danny EDITS gets a real column; anything a machine fetches
+// lives in here, so his edits can never be clobbered by a re-fetch.
+addColumn('founders', 'company_enrichment', 'TEXT');
+addColumn('founders', 'company_enriched_at', 'DATETIME');
+addColumn('founders', 'company_linkedin_url', 'TEXT');
+
+// ── The card's manual half — the fields Danny fills in himself ──
+// "These should all be fields I can enter and edit too."
+addColumn('founders', 'deck_url', 'TEXT');
+addColumn('founders', 'data_room_url', 'TEXT');
+
 // Airtable sync audit log
 db.exec(`
   CREATE TABLE IF NOT EXISTS airtable_sync_log (
