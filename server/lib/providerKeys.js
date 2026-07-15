@@ -181,7 +181,16 @@ function meteredClient(apiKey, userId, feature = null) {
   if (!apiKey) return null;
   try {
     const Anthropic = require('@anthropic-ai/sdk');
-    return meterClient(new Anthropic({ apiKey }), userId, feature);
+    // timeout: the SDK default is generous but not explicit, and an assessment agent
+    // carries a long system prompt plus up to 150K chars of context. Be explicit.
+    //
+    // maxRetries: 0 is deliberate and load-bearing. The SDK retries twice by default,
+    // and routes/assessments.js has its OWN retry wrapper (3 attempts, exponential
+    // backoff). Compounded, a single struggling agent fired up to SIX requests — times
+    // five agents running in parallel. That is self-inflicted rate-limit pressure, and
+    // a live end-to-end run showed exactly its signature: the rubric agent timing out
+    // under fan-out despite completing in ~60s when run alone. One retry layer, ours.
+    return meterClient(new Anthropic({ apiKey, timeout: 240000, maxRetries: 0 }), userId, feature);
   } catch { return null; }
 }
 
