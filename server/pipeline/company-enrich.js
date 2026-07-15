@@ -71,6 +71,125 @@ function httpGetJson(url, headers = {}) {
 const iso = (d) => d.toISOString().slice(0, 10);
 const monthsAgo = (n) => { const d = new Date(); d.setMonth(d.getMonth() - n); return iso(d); };
 
+// ══════════════════════════════════════════════════════════════════════════
+// THE ROSTER — one call that replaces the whole at_date approach.
+//
+// Danny, on LinkedIn Premium's "400% employee growth" card: "They have employee
+// growth data in LinkedIn. I think you can learn these insights cheaply."
+//
+// He was right, and I'd built it the expensive way. `at_date` buys ONE crude
+// snapshot per credit and can never say who those people are. The employee
+// listing costs 3cr/employee (+1 to enrich) and returns every employee's
+// START DATE — from which the EXACT headcount at any date is arithmetic, free,
+// forever. For a 2-10 person company (Danny's entire book) that's ~12-40 credits
+// for strictly more than at_date could ever give:
+//
+//   · the exact curve, not 4 sampled points
+//   · WHO each person is, and when they joined
+//   · WHERE THEY WORKED BEFORE  <- Danny's explicit ask; at_date cannot answer it
+//   · recent hires, which is LinkedIn's own card
+//
+// Verified live on Permute AI (2026-07-15), 3 employees, one call:
+//   Scott Nelson   CEO,  joined 2025-07, prev: Density Collective, Scout Space
+//   Eric Mills     CTO,  joined 2025-08, prev: Density Collective, BlackInk AI
+//   Parsia Hedayat AI,   joined 2026-03, prev: Integral Ad Science
+//
+// Cost notes from the docs, which shape every default below:
+//   sort_by (non-"none") is +50 base +10/employee — ruinous, and pointless when
+//   we hold every start date and can sort in memory for free. Never send it.
+//   page_size is capped at 10 when enriching, so >10 employees needs paging.
+// ══════════════════════════════════════════════════════════════════════════
+
+/** GET /api/v2/company/employees/ — the roster, with each person's history. */
+async function fetchRoster(linkedinUrl, key, { deps = {}, pageSize = 10, enrich = true } = {}) {
+  const get = deps.getJson || httpGetJson;
+  const p = new URLSearchParams({
+    url: linkedinUrl,
+    use_cache: 'if-present',
+    employment_status: 'current',
+    page_size: String(pageSize),
+  });
+  if (enrich) p.set('enrich_profiles', 'enrich');
+  // NOT sort_by — see the cost note above. We sort from starts_at ourselves.
+  const { status, data } = await get(`${BASE}/api/v2/company/employees/?${p}`, {
+    Authorization: `Bearer ${key}`,
+  });
+  if (status !== 200 || !data) return null;
+  return Array.isArray(data.employees) ? data.employees : [];
+}
+
+const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+/**
+ * Turn the raw roster into people + the exact headcount curve.
+ * `companyName` is used to find each person's tenure AT THIS COMPANY inside their
+ * experiences array — the API returns their whole history, not just this job.
+ */
+function rosterToPeople(employees, companyName) {
+  const target = norm(companyName);
+  const people = [];
+
+  for (const e of employees || []) {
+    const p = e.profile || {};
+    const exps = Array.isArray(p.experiences) ? p.experiences : [];
+
+    // Their job HERE. Match on normalised company name; fall back to the most
+    // recent role with no end date, since the listing already told us they're
+    // current — a name mismatch must not silently drop a real employee.
+    const here =
+      exps.find((x) => target && norm(x.company).includes(target)) ||
+      exps.find((x) => !x.ends_at) ||
+      null;
+
+    const s = here?.starts_at;
+    people.push({
+      name: p.full_name || null,
+      title: here?.title || p.occupation || null,
+      linkedin_url: e.profile_url || p.public_identifier || null,
+      joined: s?.year ? `${s.year}-${String(s.month || 1).padStart(2, '0')}` : null,
+      // Where they were before. Danny: "You can see where the founders previously
+      // worked." Deduped, this-company excluded, most recent first.
+      previously: [
+        ...new Set(
+          exps
+            .filter((x) => !(target && norm(x.company).includes(target)))
+            .map((x) => x.company)
+            .filter(Boolean)
+        ),
+      ].slice(0, 6),
+      education: [...new Set((p.education || []).map((x) => x.school).filter(Boolean))].slice(0, 3),
+    });
+  }
+  return people;
+}
+
+/**
+ * The exact curve, derived from start dates. Zero extra API calls.
+ * Returns one point per month for `months` back, plus the delta.
+ */
+function curveFromPeople(people, { months = 12 } = {}) {
+  const dated = people.filter((p) => p.joined);
+  if (!dated.length) return null;
+
+  const series = [];
+  for (let i = months; i >= 0; i--) {
+    const d = new Date();
+    d.setMonth(d.getMonth() - i);
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    // Headcount at month M = everyone whose start month is <= M. Leavers are out
+    // of scope: we asked for employment_status=current, so this is the curve of
+    // the CURRENT team's arrival, not true historical headcount. Anyone who
+    // joined and left is invisible here — which is why this is labelled
+    // `team_arrival`, not `headcount`. Naming it honestly is the whole job.
+    series.push({ at: key, count: dated.filter((p) => p.joined <= key).length });
+  }
+
+  const now = series[series.length - 1].count;
+  const then = series[0].count;
+  return { series, now, delta: now - then, months };
+}
+
+
 /** GET /api/v2/company — profile + optional funding. */
 async function fetchCompanyProfile(linkedinUrl, key, { funding = true, deps = {} } = {}) {
   const get = deps.getJson || httpGetJson;
@@ -172,12 +291,24 @@ async function enrichCompany(linkedinUrl, { userId = 1, deps = {}, withSeries = 
   const profile = await fetchCompanyProfile(linkedinUrl, key, { deps });
   if (!profile) return null;
 
-  const headcount = withSeries ? await fetchHeadcountSeries(linkedinUrl, key, { deps }) : null;
+  // The roster replaces the at_date sampling entirely: one call yields the exact
+  // curve AND who each person is AND where they worked before. fetchHeadcountAt /
+  // fetchHeadcountSeries are kept for the rare big company where 3cr/employee
+  // beats a handful of snapshots, but they are no longer the default path.
+  let people = null, curve = null;
+  if (withSeries) {
+    const raw = await fetchRoster(linkedinUrl, key, { deps });
+    if (raw && raw.length) {
+      people = rosterToPeople(raw, profile.name || null);
+      curve = curveFromPeople(people);
+    }
+  }
 
-  // ~2 credits for the profile (+funding), ~4 for the series. Recorded so the
-  // spend cap is real rather than decorative.
+  // 2cr profile (+funding). Roster is 3cr/employee +1 enriched = 4 each.
+  // Recorded so the spend cap is real rather than decorative.
   if (recordCost) {
-    try { recordCost(userId, 'enrichlayer', withSeries ? 6 : 2); } catch { /* never fatal */ }
+    const credits = 2 + (people ? people.length * 4 : 0);
+    try { recordCost(userId, 'enrichlayer', credits); } catch { /* never fatal */ }
   }
 
   return {
@@ -196,7 +327,14 @@ async function enrichCompany(linkedinUrl, { userId = 1, deps = {}, withSeries = 
     hq: profile.hq || null,
     linkedin_url: linkedinUrl,
     funding: profile.funding_data || null,
-    headcount,
+    // The team, by name, with tenure and history. This is the thing worth having.
+    people,
+    // Named `team_arrival`, not `headcount`. It's built from CURRENT employees'
+    // start dates, so anyone who joined and left is invisible. Calling it
+    // headcount would be a quiet lie of exactly the kind this codebase keeps
+    // getting burned by.
+    team_arrival: curve,
+    verified_count: people ? people.length : null,
   };
 }
 
@@ -215,6 +353,12 @@ function getCompanyEnrichment(founderId) {
 module.exports = {
   enrichCompany,
   fetchCompanyProfile,
+  // The roster path — the default. One call: curve + people + prior employers.
+  fetchRoster,
+  rosterToPeople,
+  curveFromPeople,
+  // The at_date path — retained for large companies where 3cr/employee is worse
+  // than a few snapshots. Not used by enrichCompany.
   fetchHeadcountAt,
   fetchHeadcountSeries,
   saveCompanyEnrichment,

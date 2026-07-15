@@ -162,3 +162,83 @@ test('both size fields survive — the range and the integer', async () => {
   assert.equal(r.size_on_linkedin, 7);
   assert.equal(r.founded_year, 2024);
 });
+
+// ══════════════════════════════════════════════════════════════════════════
+// The roster path — one call for the curve, the team, and prior employers.
+//
+// Danny, showing LinkedIn Premium's "400% employee growth" card: "They have
+// employee growth data in LinkedIn. I think you can learn these insights
+// cheaply." He was right and I'd built it the expensive way: at_date buys one
+// crude snapshot per credit and can never say WHO those people are.
+//
+// Fixture is the real Permute AI response (2026-07-15).
+// ══════════════════════════════════════════════════════════════════════════
+const { fetchRoster, rosterToPeople, curveFromPeople } = require('../pipeline/company-enrich');
+
+const PERMUTE = [
+  { profile_url: 'https://linkedin.com/in/scottnelson', profile: {
+    full_name: 'Scott Nelson', occupation: 'Co-Founder & CEO at Permute AI',
+    experiences: [
+      { company: 'Permute AI', title: 'Co-Founder & CEO', starts_at: { year: 2025, month: 7 }, ends_at: null },
+      { company: 'Density Collective', title: 'Founder', starts_at: { year: 2021, month: 1 }, ends_at: { year: 2025, month: 6 } },
+      { company: 'Scout Space', title: 'PM', starts_at: { year: 2019, month: 3 }, ends_at: { year: 2021, month: 1 } },
+    ], education: [{ school: 'Northwestern University' }] } },
+  { profile_url: 'https://linkedin.com/in/ericmills', profile: {
+    full_name: 'Eric Mills', occupation: 'Co-founder and CTO at Permute AI',
+    experiences: [
+      { company: 'Permute AI', title: 'Co-founder and CTO', starts_at: { year: 2025, month: 8 }, ends_at: null },
+      { company: 'Density Collective', title: 'Eng', starts_at: { year: 2022, month: 1 }, ends_at: { year: 2025, month: 7 } },
+    ], education: [] } },
+  { profile_url: 'https://linkedin.com/in/parsia', profile: {
+    full_name: 'Parsia Hedayat', occupation: 'Founding AI Researcher',
+    experiences: [
+      { company: 'Permute AI', title: 'Founding AI Researcher', starts_at: { year: 2026, month: 3 }, ends_at: null },
+      { company: 'Integral Ad Science', title: 'ML Eng', starts_at: { year: 2023, month: 5 }, ends_at: { year: 2026, month: 2 } },
+    ], education: [] } },
+];
+
+test('roster: never sends sort_by — it costs +50 base and we can sort for free', async () => {
+  const s = stub(() => ({ status: 200, data: { employees: [] } }));
+  await fetchRoster(URL_, KEY, { deps: { getJson: s.getJson } });
+  const { url, headers } = s.calls[0];
+  assert.ok(url.startsWith('https://enrichlayer.com/api/v2/company/employees/?'), `wrong path: ${url}`);
+  assert.ok(!url.includes('sort_by'), 'sort_by is +50 base +10/employee — never send it');
+  assert.match(url, /enrich_profiles=enrich/);
+  assert.match(url, /employment_status=current/);
+  assert.equal(headers.Authorization, `Bearer ${KEY}`);
+});
+
+test('roster yields who they are, when they joined, and where they were before', () => {
+  const people = rosterToPeople(PERMUTE, 'Permute AI');
+  assert.equal(people.length, 3);
+  const scott = people[0];
+  assert.equal(scott.name, 'Scott Nelson');
+  assert.equal(scott.joined, '2025-07');
+  assert.equal(scott.title, 'Co-Founder & CEO');
+  // Danny's explicit ask. at_date can never answer this.
+  assert.ok(scott.previously.includes('Density Collective'));
+  assert.ok(!scott.previously.includes('Permute AI'), 'this company is not a PRIOR employer');
+});
+
+test('the curve is derived from start dates — zero extra API calls', () => {
+  const c = curveFromPeople(rosterToPeople(PERMUTE, 'Permute AI'));
+  assert.equal(c.now, 3);
+  assert.equal(c.delta, 2);
+  assert.equal(c.series.length, 13, 'one point per month, not 4 sampled guesses');
+  assert.equal(c.series[c.series.length - 1].count, 3);
+});
+
+// A name mismatch must never silently drop a real employee.
+test('an employee whose company string differs still resolves via the open role', () => {
+  const odd = [{ profile_url: 'x', profile: { full_name: 'Jane', experiences: [
+    { company: 'Permute', title: 'Eng', starts_at: { year: 2026, month: 1 }, ends_at: null },
+  ] } }];
+  const p = rosterToPeople(odd, 'Permute AI, Inc.');
+  assert.equal(p[0].joined, '2026-01');
+  assert.equal(p[0].title, 'Eng');
+});
+
+test('nobody with a start date means a null curve, not a zero curve', () => {
+  const p = rosterToPeople([{ profile_url: 'x', profile: { full_name: 'Ghost', experiences: [] } }], 'Acme');
+  assert.equal(curveFromPeople(p), null);
+});
