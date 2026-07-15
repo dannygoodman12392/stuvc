@@ -289,6 +289,9 @@ app.use('/api/payments', payments.router);
 app.use('/api/vault-sync', require('./routes/vaultSync'));
 
 // Protected routes
+// Today is the surface — the screen Danny opens at 9am and works from all day.
+// It also serves /api/today/decisions and /api/today/commitments.
+app.use('/api/today', requireAuth, require('./routes/today'));
 app.use('/api/founders', requireAuth, require('./routes/founders'));
 app.use('/api/notes', requireAuth, require('./routes/notes'));
 app.use('/api/sourcing', requireAuth, require('./routes/sourcing'));
