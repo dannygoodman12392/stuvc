@@ -63,9 +63,17 @@ export default function Pipeline() {
 
   useEffect(() => { localStorage.setItem('stu_pipeline_view', view); }, [view]);
 
+  // ── Stale-while-revalidate. Do NOT setData(null) here. ──
+  // Danny: "Pipeline took awhile to load." Blanking to a skeleton on every track
+  // toggle turns a 20ms cached response into a visible cold load — the UI throws
+  // away a perfectly good board, shows bones, then paints the same rows back.
+  // Keeping the old rows on screen while the new ones fetch is the entire
+  // difference between "instant" and "laggy" at identical network cost.
+  //
+  // The response is cached per-track in a module-level Map (see api.js), so
+  // toggling back to a track you've already seen is 0 requests and 0 flicker.
   useEffect(() => {
     let dead = false;
-    setData(null);
     api.getPipeline({ track }).then((d) => !dead && setData(d)).catch((e) => !dead && setErr(e.message));
     return () => { dead = true; };
   }, [track]);

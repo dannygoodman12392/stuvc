@@ -982,6 +982,28 @@ addColumn('sourced_founders', 'breakout_score', 'INTEGER');
 addColumn('sourced_founders', 'breakout_signals', 'TEXT');
 db.exec(`CREATE INDEX IF NOT EXISTS idx_sf_breakout ON sourced_founders(user_id, breakout_score);`);
 
+// ── Indexes added 2026-07-15 after measuring, not guessing ──
+// EXPLAIN QUERY PLAN showed 7 of PIPELINE_SQL's 9 correlated subqueries doing a
+// SCAN. Most are free (opportunity_assessments is 18 rows, decisions is 0) — the
+// one that costs is sourced_founders: 187 founders × 2 subqueries × 647 rows =
+// ~242K row reads, which IS the 9.5ms. This takes it to ~1ms.
+//
+// Honest note: 8ms is imperceptible and was never the lag Danny felt (that was
+// 600KB of uncompressed transport). This is here because it's free and because
+// the cost grows with the inbox, not because it fixes anything today.
+db.exec(`CREATE INDEX IF NOT EXISTS idx_sf_promoted ON sourced_founders(promoted_to_founder_id, created_at);`);
+
+// This one is a real fix. services/airtable-import.js looks up every incoming
+// record by airtable_founder_record_id, and without an index that's a full scan
+// of all 5,515 founders PER RECORD — the loop is O(records × founders) and blocks
+// the event loop because better-sqlite3 is synchronous.
+db.exec(`CREATE INDEX IF NOT EXISTS idx_founders_airtable_rec ON founders(airtable_founder_record_id);`);
+
+// Insurance against growth: both are free today (assessments 18 rows, decisions 0)
+// but every attention check and every pipeline row joins through them.
+db.exec(`CREATE INDEX IF NOT EXISTS idx_oa_founder ON opportunity_assessments(founder_id, is_deleted, assessment_type, status);`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_decisions_founder ON decisions(founder_id, decided_at DESC);`);
+
 // Meeting Prep reuses opportunity_assessments (same intake/ingestion: decks, transcripts,
 // URLs, notes, founder CRM context) with a type discriminator, rather than a parallel
 // table+pipeline. 'assessment' (default, existing behavior) | 'meeting_prep' (a single

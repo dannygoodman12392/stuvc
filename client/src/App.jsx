@@ -1,40 +1,55 @@
+import { lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { ToastProvider } from './components/Toast';
 import Layout from './components/Layout';
-import Landing from './pages/Landing';
+
+// ══════════════════════════════════════════════════════════════════════════
+// EAGER — the three screens Danny actually opens, plus auth.
+//
+// Everything else is lazy. This file used to statically import all 24 pages, so
+// AssessmentDetail (73KB), Settings (46KB), FounderDetail (45KB), Releases
+// (33KB), Assess (32KB) and the entire talent/* tree — ~250KB of source for
+// pages he isn't looking at — had to be parsed before Home could paint.
+//
+// Paired with gzip on the server (593KB -> 160KB), first load goes from ~790KB
+// to roughly 90KB. That, not the SQL, is "it's very laggy."
+// ══════════════════════════════════════════════════════════════════════════
 import Login from './pages/Login';
-import Signup from './pages/Signup';
-import Onboarding from './pages/Onboarding';
 import Home from './pages/Home';
 import Sourcing from './pages/Sourcing';
 import Pipeline from './pages/Pipeline';
-import FounderDetail from './pages/FounderDetail';
-import AddFounder from './pages/AddFounder';
-import Assess from './pages/Assess';
-import AssessmentDetail from './pages/AssessmentDetail';
-import AskStu from './pages/AskStu';
+
+// ── LAZY — everything below loads on first visit to its route ──
+const Landing = lazy(() => import('./pages/Landing'));
+const Signup = lazy(() => import('./pages/Signup'));
+const Onboarding = lazy(() => import('./pages/Onboarding'));
+const FounderDetail = lazy(() => import('./pages/FounderDetail'));
+const AddFounder = lazy(() => import('./pages/AddFounder'));
+const Assess = lazy(() => import('./pages/Assess'));
+const AssessmentDetail = lazy(() => import('./pages/AssessmentDetail'));
+const AskStu = lazy(() => import('./pages/AskStu'));
 // Discover is gone — /discover redirects to /sourcing. It was a search box you had
 // to operate whose engine never once ran, and Harmonic's own lesson is that the
 // alert is the product and the search bar is its config UI. The file stays on disk
 // until Danny confirms nothing in it is worth salvaging.
-import Placeholder from './pages/Placeholder';
-import Settings from './pages/Settings';
-import Brief from './pages/Brief';
-import Releases from './pages/Releases';
-import Health from './pages/Health';
-import Admin from './pages/Admin';
-import TalentLayout from './components/TalentLayout';
-import TalentHome from './pages/talent/TalentHome';
-import TalentCriteria from './pages/talent/TalentCriteria';
-import TalentPortfolio from './pages/talent/TalentPortfolio';
-import TalentPortfolioDetail from './pages/talent/TalentPortfolioDetail';
-import TalentRoles from './pages/talent/TalentRoles';
-import TalentRoleDetail from './pages/talent/TalentRoleDetail';
-import TalentCandidates from './pages/talent/TalentCandidates';
-import TalentCandidateDetail from './pages/talent/TalentCandidateDetail';
-import TalentMatches from './pages/talent/TalentMatches';
-import TalentTrash from './pages/talent/TalentTrash';
+const Placeholder = lazy(() => import('./pages/Placeholder'));
+const Settings = lazy(() => import('./pages/Settings'));
+const Brief = lazy(() => import('./pages/Brief'));
+const Releases = lazy(() => import('./pages/Releases'));
+const Health = lazy(() => import('./pages/Health'));
+const Admin = lazy(() => import('./pages/Admin'));
+const TalentLayout = lazy(() => import('./components/TalentLayout'));
+const TalentHome = lazy(() => import('./pages/talent/TalentHome'));
+const TalentCriteria = lazy(() => import('./pages/talent/TalentCriteria'));
+const TalentPortfolio = lazy(() => import('./pages/talent/TalentPortfolio'));
+const TalentPortfolioDetail = lazy(() => import('./pages/talent/TalentPortfolioDetail'));
+const TalentRoles = lazy(() => import('./pages/talent/TalentRoles'));
+const TalentRoleDetail = lazy(() => import('./pages/talent/TalentRoleDetail'));
+const TalentCandidates = lazy(() => import('./pages/talent/TalentCandidates'));
+const TalentCandidateDetail = lazy(() => import('./pages/talent/TalentCandidateDetail'));
+const TalentMatches = lazy(() => import('./pages/talent/TalentMatches'));
+const TalentTrash = lazy(() => import('./pages/talent/TalentTrash'));
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth();
@@ -66,6 +81,12 @@ function AppRoutes() {
   }
 
   return (
+    // fallback={null} on purpose. A lazy chunk on a warm connection resolves in
+    // tens of ms, and a spinner that flashes for 40ms reads as SLOWER than
+    // nothing — it draws the eye to a wait that hadn't registered. Superhuman's
+    // rule: precompute, never spin. Each page already renders its own skeleton
+    // while its data loads, which is the honest place for a loading state.
+    <Suspense fallback={null}>
     <Routes>
       <Route path="/login" element={user ? <Navigate to="/" replace /> : <Login />} />
       <Route path="/signup" element={user ? <Navigate to="/" replace /> : <Signup />} />
@@ -126,6 +147,7 @@ function AppRoutes() {
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
+    </Suspense>
   );
 }
 
