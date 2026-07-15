@@ -174,6 +174,18 @@ export const api = {
   // Home dashboard
   getHome: () => request('/home'),
 
+  // ── Today — the surface ──
+  getToday: () => request('/today'),
+  addTodayItem: (body) => request('/today/items', { method: 'POST', body: JSON.stringify(body) }),
+  updateTodayItem: (id, body) => request(`/today/items/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
+  deleteTodayItem: (id) => request(`/today/items/${id}`, { method: 'DELETE' }),
+  decide: (body) => request('/today/decisions', { method: 'POST', body: JSON.stringify(body) }),
+  getCalibration: () => request('/today/decisions/calibration'),
+  resolveDecision: (id, outcome) => request(`/today/decisions/${id}/resolve`, { method: 'PATCH', body: JSON.stringify({ outcome }) }),
+  getCommitments: (days) => request(`/today/commitments${days ? `?days=${days}` : ''}`),
+  getFounderDelta: (founderId) => request(`/today/commitments/founder/${founderId}`),
+  closeCommitment: (id, status) => request(`/today/commitments/${id}`, { method: 'PATCH', body: JSON.stringify({ status }) }),
+
   // Healthcheck board
   getHealthFull: () => request('/health/full'),
   checkNotionDrift: (repair) => request('/health/drift' + (repair ? '?repair=1' : '')),

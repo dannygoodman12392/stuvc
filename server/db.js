@@ -439,6 +439,92 @@ addColumn('opportunity_assessments', 'rubric_output', 'TEXT');          // Found
 // never learned his transcript had been cut. This is the "what we didn't look at" source.
 addColumn('opportunity_assessments', 'context_notes', 'TEXT');
 
+// ── Commitments (see server/lib/commitments.js) ──
+// "The delta between what they said and what they did is my single best signal —
+//  it's the one thing they can't perform." — Danny's first-call script, Q10.
+//
+// It has never been recorded once. This table is why Stu is a surface and not just
+// a viewer over the vault: the nightly workup task writes an excellent DOCUMENT, but
+// a commitment is STATE. It has a clock. It comes due. A markdown file can say a
+// promise was made; only this can tell you it's three days late.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS commitments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    founder_id INTEGER REFERENCES founders(id),
+    assessment_id INTEGER REFERENCES opportunity_assessments(id),
+    owed_by TEXT NOT NULL,              -- 'them' | 'me'
+    commitment TEXT NOT NULL,           -- the promise, in one line
+    quote TEXT NOT NULL,                -- the VERBATIM line that proves it. required.
+    stated_at TEXT NOT NULL,            -- the date they said it (not the date logged)
+    due_at TEXT,                        -- when it comes due, if they named a window
+    closed_at TEXT,                     -- when it actually happened
+    status TEXT NOT NULL DEFAULT 'open',-- open | kept | broken | released
+    source_ref TEXT,                    -- granola meeting id / transcript pointer
+    dedupe_key TEXT UNIQUE,             -- the nightly task re-reads the week; this stops 7x dupes
+    created_by INTEGER REFERENCES users(id),
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE INDEX IF NOT EXISTS idx_commitments_founder ON commitments(founder_id);
+  CREATE INDEX IF NOT EXISTS idx_commitments_due ON commitments(status, due_at);
+`);
+
+// ── Today (see server/routes/today.js) ──
+// Danny's own to-do list, which agents may contribute to but never own.
+//
+// The classic bug in this pattern: an agent re-run resurrects the row you deleted.
+// So agent rows are NEVER deleted — they tombstone. `dedupe_key` makes the upsert
+// idempotent, and a row with `dismissed_at` set must never come back. Danny's own
+// rows are his: he can delete those outright.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS today_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    origin TEXT NOT NULL DEFAULT 'user',  -- 'user' | 'agent'
+    lane TEXT NOT NULL,                   -- undecided | i_owe | they_owe | mine
+    title TEXT NOT NULL,
+    detail TEXT,
+    quote TEXT,                           -- the line that produced it, when an agent made it
+    founder_id INTEGER REFERENCES founders(id),
+    commitment_id INTEGER REFERENCES commitments(id),
+    due_at TEXT,
+    dedupe_key TEXT UNIQUE,               -- agent rows only; NULL for user rows
+    completed_at DATETIME,
+    dismissed_at DATETIME,                -- tombstone. an agent must not resurrect this.
+    snoozed_until TEXT,
+    sort_order REAL,
+    created_by INTEGER REFERENCES users(id),
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE INDEX IF NOT EXISTS idx_today_open ON today_items(created_by, completed_at, dismissed_at);
+`);
+
+// ── Decisions (see server/routes/today.js) ──
+// The headline number is DECIDED, never pipeline count — Danny: "I want to inflate my
+// pipeline numbers." A metric he's told me he games is a metric I won't build.
+//
+// And the increment is not the decision. It's the decision PLUS a dated falsifiable
+// prediction. His most common kill is "cool but indefensible" — a ten-second reflex —
+// so a bare pass=+1 would pay him to fire it faster, and Portfolio Pattern Analysis
+// says his undocumented passes on STRONG founders are his most fixable blind spot.
+// A pass without a prediction is not a decision; it stays undecided and visible.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS decisions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    founder_id INTEGER REFERENCES founders(id),
+    assessment_id INTEGER REFERENCES opportunity_assessments(id),
+    band TEXT NOT NULL,                   -- anchor | memo | monitor | pass  (Danny's call, not Stu's)
+    rationale TEXT,                       -- one line. why.
+    prediction TEXT NOT NULL,             -- dated, checkable, falsifiable. required.
+    resolve_by TEXT NOT NULL,             -- when we find out
+    resolved_at TEXT,
+    outcome TEXT,                         -- right | wrong | unresolved
+    stu_band TEXT,                        -- what the engine said, for the calibration set
+    stu_score REAL,
+    decided_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    created_by INTEGER REFERENCES users(id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_decisions_resolve ON decisions(resolved_at, resolve_by);
+`);
+
 // Job run log — every scheduled/triggered job records its outcome here so failures are
 // durable and surfaced (not swallowed in console). Powers the healthcheck board.
 db.exec(`

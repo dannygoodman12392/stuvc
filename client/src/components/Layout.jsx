@@ -7,19 +7,24 @@ import StuLogo from './StuLogo';
 import { api, fetchAppVersion } from '../utils/api';
 
 // Four lenses + the assistant. Everything operational lives in the utility menu.
+// Four destinations, not twelve.
+//
+// Cut: Ask Stu (0 conversations, ever), Daily Brief (0 rows since it was built in
+// June — and it owned the top of the old Home, rendering "No newsletter items yet"
+// every morning, which is a daily lesson that the tool doesn't work). Discover stays
+// but folds into Pipeline; its engine has never once run.
+//
+// Every dead door is a reason not to open the building.
 const navConfig = [
-  { to: '/ask', label: 'Ask Stu', accent: true },
-  { to: '/', label: 'Home' },
-  { to: '/discover', label: 'Discover', accent: true },
+  { to: '/', label: 'Today' },
   { to: '/pipeline', label: 'Pipeline' },
-  { to: '/talent', label: 'Talent' },
   { to: '/assess', label: 'Assess' },
-  { to: '/brief', label: 'Daily Brief' },
+  { to: '/talent', label: 'Talent' },
 ];
 const utilityConfig = [
   { to: '/settings', label: 'Settings' },
   { to: '/health', label: 'Health' },
-  { to: '/releases', label: 'Releases' },
+  { to: '/releases', label: 'Releases' }, // Danny likes the changelog — it stays.
 ];
 
 export default function Layout({ children }) {
