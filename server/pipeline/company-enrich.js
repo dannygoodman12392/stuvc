@@ -126,12 +126,29 @@ async function fetchHeadcountSeries(linkedinUrl, key, { deps = {}, points = [0, 
     growth = Math.round((delta / oldest.count) * 100);
   }
 
+  // ── Suppress the percentage at pre-seed scale. ──
+  // The first live run proved this: Permute went 1 -> 2 -> 3 -> 3 over 12 months
+  // and the honest arithmetic is "+200% growth". True, and useless — they hired
+  // two people. Danny's whole book is 2-10 person companies, so a percentage off
+  // a base this small will ALWAYS be noise, and a number that reads as precise
+  // while meaning nothing is worse than no number: it invites a comparison
+  // between a 1->3 and a 40->120 that the arithmetic supports and reality does
+  // not.
+  //
+  // So below a base of 5, the percentage is withheld and the DELTA is the
+  // headline. "+2 people" is the whole truth about a seed-stage hire.
+  const PCT_MIN_BASE = 5;
+  const pctIsMeaningful = oldest.count >= PCT_MIN_BASE;
+
   return {
     series: series.sort((a, b) => b.months_ago - a.months_ago),
     now: now.count,
     verified: now.verified,
+    // The headline at this stage. Always report the count of humans.
     delta_12mo: delta,
-    growth_12mo_pct: growth,
+    // Null when the base is too small to carry a ratio. Not zero — unknowable.
+    growth_12mo_pct: pctIsMeaningful ? growth : null,
+    pct_suppressed: delta != null && !pctIsMeaningful ? `base of ${oldest.count} is too small for a percentage` : null,
     hiring: delta == null ? null : delta > 0 ? 'growing' : delta < 0 ? 'shrinking' : 'flat',
   };
 }
@@ -141,7 +158,15 @@ async function fetchHeadcountSeries(linkedinUrl, key, { deps = {}, points = [0, 
  * Never throws — an enrichment failure must not take down a page load.
  */
 async function enrichCompany(linkedinUrl, { userId = 1, deps = {}, withSeries = true } = {}) {
-  const key = deps.key || (resolveKey ? resolveKey(userId, 'enrichlayer') : null);
+  // `'key' in deps` — NOT `deps.key || resolveKey(...)`.
+  //
+  // The || form cannot express "no key": passing key:null falls through to the
+  // database and finds the real one, so a caller trying to run dormant makes a
+  // live billable call instead. The dormancy test passed for a year only because
+  // no key was configured; the moment Danny's landed on 2026-07-15 it went red
+  // and exposed this. A test that only passes when a feature is switched off is
+  // not testing the feature.
+  const key = 'key' in deps ? deps.key : resolveKey ? resolveKey(userId, 'enrichlayer') : null;
   if (!key || !linkedinUrl) return null;
 
   const profile = await fetchCompanyProfile(linkedinUrl, key, { deps });

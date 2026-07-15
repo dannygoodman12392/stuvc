@@ -66,20 +66,48 @@ test('verified count wins over estimated, and says which it used', async () => {
 
 // ── The growth curve ──
 test('a growth series computes a real slope', async () => {
-  // 12mo ago: 4 people. now: 10. -> +6, +150%, growing.
-  const byDate = { 0: 10, 3: 8, 6: 6, 12: 4 };
+  // 12mo ago: 20 people. now: 50. -> +30, +150%, growing.
+  const counts = [50, 40, 30, 20]; // now, -3, -6, -12
   let i = 0;
-  const order = [0, 3, 6, 12];
-  const s = stub(() => ({ status: 200, data: { verified_employee_count: byDate[order[i++]] } }));
+  const s = stub(() => ({ status: 200, data: { verified_employee_count: counts[i++] } }));
 
   const r = await fetchHeadcountSeries(URL_, KEY, { deps: { getJson: s.getJson } });
-  assert.equal(r.now, 10);
-  assert.equal(r.delta_12mo, 6);
+  assert.equal(r.now, 50);
+  assert.equal(r.delta_12mo, 30);
   assert.equal(r.growth_12mo_pct, 150);
   assert.equal(r.hiring, 'growing');
   assert.equal(r.series.length, 4);
   // Oldest first — a curve reads left to right.
   assert.equal(r.series[0].months_ago, 12);
+});
+
+// ── The percentage is suppressed at pre-seed scale ──
+// From the first live run: Permute AI went 1 -> 2 -> 3 -> 3 over 12 months, and
+// the honest arithmetic is "+200% growth". True, and useless — they hired two
+// people. Danny's entire book is 2-10 person companies, so a ratio off a base
+// this small is always noise, and a number that reads precise while meaning
+// nothing invites a comparison between a 1->3 and a 40->120 that the arithmetic
+// supports and reality does not.
+test('a tiny base suppresses the percentage and leads with the delta', async () => {
+  const counts = [3, 3, 2, 1]; // the real Permute curve
+  let i = 0;
+  const s = stub(() => ({ status: 200, data: { verified_employee_count: counts[i++] } }));
+
+  const r = await fetchHeadcountSeries(URL_, KEY, { deps: { getJson: s.getJson } });
+  assert.equal(r.now, 3);
+  assert.equal(r.delta_12mo, 2, 'the delta is the whole truth: they hired 2 people');
+  assert.equal(r.growth_12mo_pct, null, '+200% off a base of 1 is not a growth rate');
+  assert.match(r.pct_suppressed, /too small/);
+  assert.equal(r.hiring, 'growing', 'direction is still knowable');
+});
+
+test('at real scale the percentage survives', async () => {
+  const counts = [120, 90, 60, 40]; // base of 40 — a ratio means something here
+  let i = 0;
+  const s = stub(() => ({ status: 200, data: { verified_employee_count: counts[i++] } }));
+  const r = await fetchHeadcountSeries(URL_, KEY, { deps: { getJson: s.getJson } });
+  assert.equal(r.growth_12mo_pct, 200);
+  assert.equal(r.pct_suppressed, null);
 });
 
 test('shrinking is reported as shrinking, not as a negative growth number to squint at', async () => {
