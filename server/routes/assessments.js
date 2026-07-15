@@ -28,6 +28,20 @@ const { computeEvidenceRung, computeConviction, bandFor } = require('../lib/conv
 // keep its default.
 const SCORING_TEMPERATURE = 0;
 
+// ── Why 8192 and not 4096 ──
+// Every agent ran at max_tokens 4096. The Bear's schema (primary_risks,
+// twelve_month_kill, bundling_risk, deck_omissions, failure_scenarios,
+// assumptions_required, bear_adjustment, narrative) does not fit in it on a rich
+// input: measured against real data it returns stop_reason "max_tokens" at exactly
+// 4096, so robustJsonParse grabs `{` to the last `}` mid-structure and the agent
+// "fails". At 8192 the same call stops at end_turn on 4,236 tokens and parses.
+//
+// This bug predates the conviction rebuild. It was invisible because temperature 1.0
+// made it intermittent — the Bear sometimes fit and sometimes didn't, which reads as
+// flakiness. Pinning temperature to 0 made it fail every time, which is how it became
+// findable. Output tokens are billed as used, so the headroom is free unless taken.
+const AGENT_MAX_TOKENS = 8192;
+
 // ── GET /api/assessments — list all (only latest version per group) ──
 router.get('/', (req, res) => {
   // For grouped assessments, only return the latest version
@@ -623,36 +637,55 @@ async function runAssessmentAgents(assessmentId, founderId) {
       return;
     }
 
-    // Run 5 agents in parallel. Team/Product/Market/Bear are the depth layer — the
-    // analysis Danny reads. `founderRubric` is the conviction layer: it scores the four
-    // movements of the canonical Founder Rubric and is the ONLY input to the conviction
-    // score. It used to be a separate manual button on a separate tab against the
-    // archived 9-trait rubric, which meant the actual evaluation framework never ran
-    // unless you knew to click it.
-    const agentPromises = [
+    // ── The rubric runs FIRST, alone. Then the depth layer fans out. ──
+    //
+    // `founderRubric` scores the four movements of the canonical Founder Rubric and is
+    // the ONLY input to the conviction score. (It used to be a manual button on a
+    // separate tab running the archived 9-trait rubric, so the fund's actual evaluation
+    // framework never ran unless you knew to click it.)
+    //
+    // It is not in the parallel batch, for a reason a live end-to-end run taught me:
+    // firing all five at once made the rubric — the one agent whose output IS the
+    // verdict — time out competing with four agents whose output is only commentary.
+    // It completes in ~60s when it isn't fighting them for the rate limit. Giving the
+    // critical path a clean shot costs ~60s of wall clock and buys the thing actually
+    // working. If the rubric dies, there is no verdict to produce, so we fail fast
+    // rather than spend four more calls on depth nobody will read.
+    const settle = (r, name) =>
+      r.status === 'fulfilled' ? r.value : { error: r.reason?.message || `${name} agent failed` };
+
+    const [rubricResult] = await Promise.allSettled([
+      runAgent(client, AGENT_PROMPTS.founderRubric, cappedContext, signal),
+    ]);
+    if (signal.aborted) {
+      console.log(`[Assessment] Run ${assessmentId} was cancelled`);
+      return;
+    }
+    const rubricOut = settle(rubricResult, 'Founder Rubric');
+    if (rubricOut.error) {
+      console.error(`[Assessment ${assessmentId}] rubric agent failed (${rubricOut.error}) — skipping the depth layer, there is no verdict to explain`);
+    }
+
+    // Depth layer: the analysis a reader wants once the verdict has their attention.
+    // These inform; they do not decide.
+    const results = await Promise.allSettled([
       runAgent(client, AGENT_PROMPTS.team, cappedContext, signal),
       runAgent(client, AGENT_PROMPTS.product, cappedContext, signal),
       runAgent(client, AGENT_PROMPTS.market, cappedContext, signal),
       runAgent(client, AGENT_PROMPTS.bear, cappedContext, signal),
-      runAgent(client, AGENT_PROMPTS.founderRubric, cappedContext, signal),
-    ];
-
-    const results = await Promise.allSettled(agentPromises);
+    ]);
 
     if (signal.aborted) {
       console.log(`[Assessment] Run ${assessmentId} was cancelled`);
       return;
     }
 
-    const settle = (r, name) =>
-      r.status === 'fulfilled' ? r.value : { error: r.reason?.message || `${name} agent failed` };
-
     const agentOutputs = {
       team: settle(results[0], 'Team'),
       product: settle(results[1], 'Product'),
       market: settle(results[2], 'Market'),
       bear: settle(results[3], 'Bear'),
-      rubric: settle(results[4], 'Founder Rubric'),
+      rubric: rubricOut,
     };
 
     // ── An agent that died is an ERROR, not a low score ──
@@ -1047,7 +1080,7 @@ async function anthropicCreateWithRetry(client, params, { attempts = 3, baseDela
 async function runAgent(client, prompt, context, signal, retries = 1) {
   const response = await anthropicCreateWithRetry(client, {
     model: MODEL,
-    max_tokens: 4096,
+    max_tokens: AGENT_MAX_TOKENS,
     temperature: SCORING_TEMPERATURE,
     system: prompt.system,
     messages: [{ role: 'user', content: prompt.user(context) }],
@@ -1083,7 +1116,7 @@ function safeParse(raw) {
 async function runSynthesis(client, prompt, agentOutputs, context, signal, conviction) {
   const response = await anthropicCreateWithRetry(client, {
     model: MODEL,
-    max_tokens: 4096,
+    max_tokens: AGENT_MAX_TOKENS,
     temperature: SCORING_TEMPERATURE,
     system: prompt.system,
     messages: [{ role: 'user', content: prompt.user(agentOutputs, context, conviction) }],
