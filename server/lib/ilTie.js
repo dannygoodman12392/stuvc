@@ -40,20 +40,62 @@
 // ── Illinois places ──
 // Cities/neighborhoods that are unambiguously in Illinois. Ordered longest-first
 // at match time so "oak park" wins over "park".
+// Places whose NAME is unambiguous — the string can only mean the Illinois place.
 const IL_PLACES = [
-  'chicago', 'chicagoland', 'evanston', 'naperville', 'aurora', 'joliet', 'rockford',
-  'schaumburg', 'palatine', 'skokie', 'oak park', 'berwyn', 'cicero', 'des plaines',
+  'chicago', 'chicagoland', 'evanston', 'naperville', 'joliet', 'rockford',
+  'schaumburg', 'skokie', 'oak park', 'des plaines',
   'arlington heights', 'mount prospect', 'buffalo grove', 'northbrook', 'glenview',
   'highland park', 'lake forest', 'winnetka', 'wilmette', 'deerfield', 'hinsdale',
   'oak brook', 'downers grove', 'elmhurst', 'wheaton', 'lombard', 'lisle',
   'bolingbrook', 'orland park', 'tinley park', 'oak lawn', 'evergreen park',
-  'urbana', 'champaign', 'peoria', 'springfield', 'bloomington', 'normal',
-  'carbondale', 'dekalb', 'decatur', 'rock island', 'moline', 'quincy',
+  'urbana', 'carbondale', 'dekalb', 'rock island', 'moline',
   // Chicago neighborhoods — a founder writing these is telling you where they live.
   'wicker park', 'lincoln park', 'river north', 'west loop', 'south loop',
   'the loop', 'pilsen', 'logan square', 'hyde park', 'bucktown', 'ravenswood',
   'lakeview', 'old town', 'gold coast', 'fulton market', 'bridgeport', 'uptown',
 ];
+
+// ══════════════════════════════════════════════════════════════════════
+// Places whose name is ALSO an ordinary English word, a person's name, or a city
+// in another state. These NEVER establish a tie on the bare name — they require
+// an explicit Illinois qualifier ("Normal, IL", "Aurora, Illinois").
+//
+// This list is not hypothetical. On 2026-07-15, running the a16z Speedrun
+// connector for the first time, this gate verified:
+//
+//   Benjamin Lee — Vega — New York — bio "cto @ vega / BEING SO NORMAL"
+//     -> { verified: true, type: 'worked', place: 'Normal' }
+//
+// because Normal, Illinois is a real city and \bnormal\b matched inside "BEING SO
+// NORMAL". That is the exact failure this whole file exists to prevent, produced
+// by the file itself. A word-boundary match is not enough when the word is a word.
+//
+// Springfield is here for a different reason: it exists in ~34 states, and the
+// Illinois one is the least likely to be meant by an unqualified mention.
+// ══════════════════════════════════════════════════════════════════════
+const IL_PLACES_AMBIGUOUS = [
+  'normal',       // "being so normal"
+  'aurora',       // a person's name, aurora borealis, and cities in CO/OH/ON
+  'cicero',       // the Roman
+  'palatine',     // the Roman hill / the adjective
+  'quincy',       // a name; also Quincy, MA
+  'champaign',    // reads as champagne; harmless but weak alone
+  'berwyn',       // also Berwyn, PA
+  'peoria',       // also Peoria, AZ
+  'decatur',      // also Decatur, GA — a big one
+  'bloomington',  // also Bloomington, IN and MN
+  'springfield',  // ~34 states
+];
+
+// An ambiguous place counts only when Illinois is named right next to it.
+function ambiguousPlaceTie(text) {
+  for (const place of IL_PLACES_AMBIGUOUS) {
+    const qualified = new RegExp(`\\b${esc(place)}\\s*,?\\s*(il|illinois)\\b`, 'i');
+    const m = text.match(qualified);
+    if (m) return { place, matched: m[0] };
+  }
+  return null;
+}
 
 // ── Illinois schools ──
 // EVERY entry here must be unambiguously an Illinois institution. The bar is:
@@ -291,6 +333,17 @@ function verifyIlTieOn(text, raw, stripped, trapRemoved) {
         matched: m[0], evidence: evidenceAround(raw, m[0]),
       };
     }
+  }
+
+  // ── (3b) An ambiguous place, but explicitly qualified as Illinois ──
+  // "Normal, IL" is a tie. "BEING SO NORMAL" is not. Checked after the
+  // unambiguous paths so a real Chicago address always wins the type.
+  const amb = ambiguousPlaceTie(text);
+  if (amb) {
+    return {
+      verified: true, type: 'current', place: titleCase(amb.place),
+      matched: amb.matched, evidence: evidenceAround(raw, amb.matched),
+    };
   }
 
   // ── (4) HOMETOWN — from / grew up in Illinois ──

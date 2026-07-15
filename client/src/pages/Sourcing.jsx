@@ -47,6 +47,8 @@ function signalOf(r) {
   return dup ? raw.slice(dup[1].length).trim() : raw;
 }
 
+const parseArr = (s) => { try { const v = JSON.parse(s || '[]'); return Array.isArray(v) ? v : []; } catch { return []; } };
+
 export default function Sourcing() {
   const nav = useNavigate();
   const [data, setData] = useState(null);
@@ -56,6 +58,12 @@ export default function Sourcing() {
   const [cursor, setCursor] = useState(0);
   const [err, setErr] = useState(null);
   const [justTracked, setJustTracked] = useState(null);
+  // The study half of the job. Danny on the original inbox: "I liked it as an
+  // inbox where I could vote Pass/Add to Pipeline or jump off to see their
+  // LinkedIn. I could see a bit about the founder. That paradigm worked well."
+  // I'd stripped it to a flat table with no way to look closer, which turned a
+  // reading surface into a guessing one.
+  const [openId, setOpenId] = useState(null);
 
   useEffect(() => {
     let dead = false;
@@ -108,16 +116,20 @@ export default function Sourcing() {
     function onKey(e) {
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
       const row = rows[cursor];
-      if (e.key === 'j') setCursor((c) => Math.min(c + 1, rows.length - 1));
-      else if (e.key === 'k') setCursor((c) => Math.max(c - 1, 0));
+      if (e.key === 'j') { setCursor((c) => Math.min(c + 1, rows.length - 1)); if (openId) setOpenId(rows[Math.min(cursor + 1, rows.length - 1)]?.id); }
+      else if (e.key === 'k') { setCursor((c) => Math.max(c - 1, 0)); if (openId) setOpenId(rows[Math.max(cursor - 1, 0)]?.id); }
       else if (e.key === 't' && row) triage(row, 'approve');
       else if (e.key === 'x' && row) triage(row, 'dismiss');
+      else if (e.key === 'Enter' && row) setOpenId(openId === row.id ? null : row.id);
+      else if (e.key === 'Escape') setOpenId(null);
       else return;
       e.preventDefault();
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [rows, cursor]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [rows, cursor, openId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const open = rows.find((r) => r.id === openId) || null;
 
   if (err) return <div className="p-4 text-small text-danger">{err}</div>;
 
@@ -210,7 +222,10 @@ export default function Sourcing() {
             <div
               key={r.id}
               onMouseEnter={() => setCursor(i)}
-              className={`row px-3 group ${i === cursor ? 'row-selected' : ''} ${busy === r.id ? 'opacity-40' : ''}`}
+              onClick={() => setOpenId(r.id)}
+              className={`row px-3 group cursor-pointer ${i === cursor || r.id === openId ? 'row-selected' : ''} ${
+                busy === r.id ? 'opacity-40' : ''
+              }`}
             >
               <span className="flex-[2] min-w-0 flex items-baseline gap-2">
                 <span className="row-primary flex-none max-w-[150px]">{r.name}</span>
@@ -244,41 +259,215 @@ export default function Sourcing() {
 
               <span className="w-24 text-ink-3 text-mini truncate">{r.source}</span>
 
-              <span className="w-36 flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition">
-                <button
-                  onClick={() => triage(r, 'approve')}
-                  className="px-2 h-5 rounded text-mini font-medium bg-ink text-white hover:bg-ink-2 transition"
-                  title="Create the company card and put it on the pipeline (t)"
-                >
-                  Track
-                </button>
-                <button
-                  onClick={() => triage(r, 'dismiss')}
-                  className="px-2 h-5 rounded text-mini text-ink-3 hover:bg-ground-4 hover:text-ink transition"
-                  title="Not now (x)"
-                >
-                  Skip
-                </button>
-                <button
-                  onClick={() => triage(r, 'hide')}
-                  className="px-2 h-5 rounded text-mini text-ink-4 hover:bg-ground-4 hover:text-ink-2 transition"
-                  title="Never surface this person again"
-                >
-                  Never
-                </button>
+              <span className="w-36 flex items-center justify-end gap-1">
+                {/* LinkedIn is always visible, never hover-gated. Danny: "jump off
+                    to see their LinkedIn" — it's the single most-used action on a
+                    stranger, and hiding it behind hover taxes every row. */}
+                {r.linkedin_url && (
+                  <a
+                    href={r.linkedin_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={(e) => e.stopPropagation()}
+                    className="px-1.5 h-5 rounded text-mini font-medium text-ink-3 border border-line-2 hover:border-accent hover:text-accent transition flex items-center"
+                    title="Open LinkedIn"
+                  >
+                    in ↗
+                  </a>
+                )}
+                <span className="flex items-center gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition">
+                  <button
+                    onClick={(e) => { e.stopPropagation(); triage(r, 'approve'); }}
+                    className="px-2 h-5 rounded text-mini font-medium bg-ink text-white hover:bg-ink-2 transition"
+                    title="Create the company card and put it on the pipeline (t)"
+                  >
+                    Add
+                  </button>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); triage(r, 'dismiss'); }}
+                    className="px-2 h-5 rounded text-mini text-ink-3 border border-line-2 hover:bg-ground-4 hover:text-ink transition"
+                    title="Pass for now (x)"
+                  >
+                    Pass
+                  </button>
+                </span>
               </span>
             </div>
           ))
         )}
       </div>
 
+      {open && (
+        <Detail
+          row={open}
+          onClose={() => setOpenId(null)}
+          onTriage={(action) => { triage(open, action); setOpenId(null); }}
+        />
+      )}
+
       <div className="flex items-center gap-3 px-3 h-6 border-t border-line-2 bg-ground text-micro text-ink-4 flex-shrink-0">
         <span><kbd className="text-ink-3">j</kbd>/<kbd className="text-ink-3">k</kbd> read</span>
-        <span><kbd className="text-ink-3">t</kbd> track</span>
-        <span><kbd className="text-ink-3">x</kbd> skip</span>
+        <span><kbd className="text-ink-3">↵</kbd> study</span>
+        <span><kbd className="text-ink-3">t</kbd> add</span>
+        <span><kbd className="text-ink-3">x</kbd> pass</span>
         <div className="flex-1" />
         <span>{rows.length} waiting</span>
       </div>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// The study panel. Danny: "I could see a bit about the founder. That paradigm
+// worked well."
+//
+// Everything here is EVIDENCE, not inference. The verbatim quotes from their
+// profile are the point — the tie gate and the caliber scorer both make claims,
+// and this is where he checks them against the actual words. Machine-written
+// prose (the enrichment summary) sits at ink-3 and is labelled as such; quoted
+// profile text is the founder's own and reads darker.
+// ══════════════════════════════════════════════════════════════════════════
+function Detail({ row, onClose, onTriage }) {
+  let ev = {};
+  try { ev = JSON.parse(row.evidence_map || '{}') || {}; } catch { /* not fatal */ }
+  const quotes = [
+    ['Illinois tie', ev.tie_evidence],
+    ['Caliber', ev.caliber_evidence],
+    ['Stage', ev.stage_evidence],
+  ].filter(([, q]) => q && String(q).trim());
+
+  const links = [
+    ['LinkedIn', row.linkedin_url],
+    ['GitHub', row.github_url],
+    ['Website', row.website_url],
+  ].filter(([, u]) => u);
+
+  return (
+    <>
+      <div className="fixed inset-0 bg-ink/5 z-30" onClick={onClose} />
+      <aside className="fixed right-0 top-0 bottom-0 w-[420px] bg-ground border-l border-line-2 z-40 flex flex-col">
+        <div className="flex items-center gap-2 h-8 px-3 border-b border-line-2 flex-shrink-0">
+          <span className="text-small font-semibold text-ink truncate">{row.name}</span>
+          {row.company && <span className="text-mini text-ink-3 truncate">{row.company}</span>}
+          <div className="flex-1" />
+          <button onClick={onClose} className="text-mini text-ink-4 hover:text-ink">Esc</button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-3 py-3 space-y-4">
+          {links.length > 0 && (
+            <div className="flex items-center gap-2">
+              {links.map(([label, url]) => (
+                <a
+                  key={label}
+                  href={url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-small font-medium text-accent hover:text-accent-hover"
+                >
+                  {label} ↗
+                </a>
+              ))}
+            </div>
+          )}
+
+          <Section label="Illinois tie">
+            {row.location_type ? (
+              <>
+                <div className="text-small text-ink">
+                  {row.location_type === 'cofounder' ? 'Via a co-founder' : row.location_type}
+                </div>
+                {/* The evidence IS the tie. 55 of 85 rows once carried a fabricated
+                    one, and it survived four months because nobody could read it. */}
+                <p className="text-mini text-ink-3 mt-1 leading-relaxed">{row.chicago_connection}</p>
+              </>
+            ) : (
+              <p className="text-mini text-ink-3">
+                No verified Illinois tie — this row is on the national Frontier Watch.
+              </p>
+            )}
+          </Section>
+
+          {signalOf(row) && (
+            <Section label="What their profile says">
+              <p className="text-small text-ink leading-relaxed">{signalOf(row)}</p>
+            </Section>
+          )}
+
+          {quotes.length > 0 && (
+            <Section label="Verbatim, from their profile">
+              <div className="space-y-2">
+                {quotes.map(([k, q]) => (
+                  <div key={k} className="border-l-2 border-line-2 pl-2">
+                    <div className="text-micro uppercase text-ink-4">{k}</div>
+                    <p className="text-mini text-ink-2 leading-relaxed">“{String(q).slice(0, 280)}”</p>
+                  </div>
+                ))}
+              </div>
+            </Section>
+          )}
+
+          {parseArr(row.caliber_signals).length > 0 && (
+            <Section label={`Why caliber ${row.caliber_tier || ''}`.trim()}>
+              <div className="flex flex-wrap gap-1">
+                {parseArr(row.caliber_signals).map((s, i) => (
+                  <span key={i} className="text-mini text-ink-2 bg-ground-3 rounded-sm px-1.5 py-0.5">{s}</span>
+                ))}
+              </div>
+            </Section>
+          )}
+
+          {parseArr(row.builder_signals).length > 0 && (
+            <Section label="Builder signals">
+              <div className="flex flex-wrap gap-1">
+                {parseArr(row.builder_signals).map((s, i) => (
+                  <span key={i} className="text-mini text-ink-2 bg-ground-3 rounded-sm px-1.5 py-0.5">{s}</span>
+                ))}
+              </div>
+            </Section>
+          )}
+
+          {row.confidence_rationale && (
+            // Machine-written. Recedes to ink-3 with no badge — Granola's rule.
+            <Section label="Stu's note">
+              <p className="text-mini text-ink-3 leading-relaxed">{row.confidence_rationale}</p>
+            </Section>
+          )}
+
+          <Section label="Found via">
+            <p className="text-mini text-ink-3">
+              {row.source}
+              {row.created_at && ` · ${String(row.created_at).slice(0, 10)}`}
+            </p>
+          </Section>
+        </div>
+
+        {/* The vote. One primary action, and Pass is not destructive — it's a
+            respectable answer, so it never renders red. */}
+        <div className="flex items-center gap-2 px-3 h-10 border-t border-line-2 flex-shrink-0">
+          <button onClick={() => onTriage('approve')} className="btn-primary flex-1 justify-center">
+            Add to pipeline
+          </button>
+          <button onClick={() => onTriage('dismiss')} className="btn-secondary flex-1 justify-center">
+            Pass
+          </button>
+          <button
+            onClick={() => onTriage('hide')}
+            className="btn-ghost"
+            title="Never surface this person again"
+          >
+            Never
+          </button>
+        </div>
+      </aside>
+    </>
+  );
+}
+
+function Section({ label, children }) {
+  return (
+    <div>
+      <div className="text-micro font-semibold uppercase text-ink-4 mb-1">{label}</div>
+      {children}
     </div>
   );
 }
