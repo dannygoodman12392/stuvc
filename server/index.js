@@ -96,9 +96,25 @@ seedIfEmpty();
       db.prepare("INSERT INTO migration_flags (key) VALUES ('airtable_backfill_ids_v1')").run();
       console.log('[Migration] Airtable ID backfill complete.');
     }
-    // Incremental Airtable → Stu sync (runs every startup, imports new founders)
-    const { syncFromAirtable } = require('./services/airtable-import');
-    syncFromAirtable().catch(err => console.error('[AirtableImport] Startup sync error:', err.message));
+    // ── Incremental Airtable → Stu sync ──
+    // This used to run on EVERY startup, unflagged, while every migration around
+    // it is flag-guarded. It's fired without await so it doesn't delay listen(),
+    // but better-sqlite3 is SYNCHRONOUS — so its loop blocks the event loop solid
+    // for ~106ms right when Danny's first post-login requests are queuing. That's
+    // a measurable slice of "logged in and it's laggy."
+    //
+    // Worse, it's O(records × founders): all three dedupe queries full-scan the
+    // 5,515-row founders table once per Airtable record. It's ~106ms at 163
+    // records and grows with the base.
+    //
+    // It doesn't belong at boot at all. Airtable is the team's CRM — it changes a
+    // few times a day, not on Stu restarts. Moved to the 6am cron, with a manual
+    // POST /api/pipeline/sync-airtable for when Danny wants it now.
+    // See also: idx_founders_airtable_rec, which kills the first full scan.
+    if (process.env.AIRTABLE_SYNC_ON_BOOT === 'true') {
+      const { syncFromAirtable } = require('./services/airtable-import');
+      syncFromAirtable().catch(err => console.error('[AirtableImport] Startup sync error:', err.message));
+    }
 
     // One-time rubric v3 rescore — fixes v2 (which rescored ALL versions instead of latest per group)
     const rescoreV3Flag = db.prepare("SELECT * FROM migration_flags WHERE key = 'rescore_rubric_v3'").get();
@@ -275,6 +291,29 @@ app.post('/api/payments/webhook', express.raw({ type: 'application/json' }), pay
 // below no-ops for them). Everything else (incl. /mcp, /api/ai/chat) is capped at 2MB,
 // closing a 50MB memory/cost-amplification DoS surface on the LLM endpoints.
 app.use(['/api/assessments', '/api/import'], express.json({ limit: '50mb' }));
+// ══════════════════════════════════════════════════════════════════════════
+// Danny, 2026-07-15: "Logged into Stu and it's very laggy. Takes time to load
+// info in." He was right, and it was never the database.
+//
+// Measured on the real DB: /api/pipeline is 9.5ms, /api/pipeline/inbox is
+// 0.18ms, the whole attention engine is 0.23ms. The entire data layer for a page
+// load is ~10ms. Meanwhile every byte was shipping UNCOMPRESSED:
+//
+//   bundle JS   593KB -> 160KB   (3.7x)
+//   CSS          57KB ->   9KB   (6.3x)
+//   /api/pipeline 136KB -> ~20KB (6x, on every single Pipeline visit)
+//
+// ~790KB of first load that should be ~190KB. Over Railway's latency that IS the
+// lag — one middleware, mounted before the JSON parser and the static handler so
+// it covers both API responses and the bundle.
+//
+// The lesson worth keeping: an engineer's instinct here is to optimize the SQL,
+// and PIPELINE_SQL's 9 correlated subqueries look exactly like the culprit. They
+// cost 9.5ms. Measure before you tune, or you spend a day making 9.5ms into 1ms
+// while 600KB goes over the wire uncompressed.
+// ══════════════════════════════════════════════════════════════════════════
+app.use(require('compression')());
+
 app.use(express.json({ limit: '2mb' }));
 
 // Rate limiting
@@ -377,6 +416,23 @@ app.listen(PORT, () => {
   // brief is ready each morning for anyone who has connected their Gmail label.
   {
     const cron = require('node-cron');
+    // Airtable → Stu, once a day at 5:45am CT — before Danny opens the app, and
+    // off the boot path where it was blocking his first requests for ~106ms.
+    // Airtable is the team's CRM and the closest thing to source-of-truth on the
+    // deal pipeline; it changes a few times a day, not on every Stu restart.
+    cron.schedule('45 5 * * *', async () => {
+      const { recordJobRun } = require('./services/health');
+      try {
+        const { syncFromAirtable } = require('./services/airtable-import');
+        const r = await syncFromAirtable();
+        recordJobRun('airtable_sync', 'ok', JSON.stringify(r || {}).slice(0, 200), 1);
+      } catch (e) {
+        console.error('[Cron][AirtableSync]', e.message);
+        recordJobRun('airtable_sync', 'error', e.message, 1);
+      }
+    }, { timezone: 'America/Chicago' });
+    console.log('Daily Airtable sync scheduled (5:45 AM CT)');
+
     cron.schedule('0 6 * * *', async () => {
       console.log('[Cron] Starting daily newsletter brief...');
       try {

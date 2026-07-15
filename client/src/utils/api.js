@@ -38,6 +38,81 @@ export function setUser(user) {
   }
 }
 
+// ══════════════════════════════════════════════════════════════════════════
+// Stale-while-revalidate, in ~30 lines instead of a dependency.
+//
+// Danny: "it's very laggy. Takes time to load info in." Every page owned a raw
+// useState(null) + useEffect + fetch, so Home -> Pipeline -> Home was 8 requests
+// where 4 would do, and every one of them repainted through a skeleton. Nothing
+// was ever retained between route changes.
+//
+// The rule: a GET that's been seen recently returns its cached value SYNCHRONOUSLY
+// on the next call and revalidates in the background. Navigation feels instant
+// because the data is already there — which is what Linear and Superhuman are
+// actually doing when they feel fast. It isn't a faster network, it's not
+// throwing the answer away.
+//
+// Deliberately not react-query: this needs a Map and a timestamp, and the whole
+// app is 4 screens. A cache invalidated by hand at 4 call sites is easier to
+// reason about than a library nobody here has configured.
+// ══════════════════════════════════════════════════════════════════════════
+const CACHE = new Map(); // path -> { at, data, inflight }
+const FRESH_MS = 30_000; // under 30s, don't even revalidate — he's just toggling
+
+/** Drop cached GETs whose path contains `fragment`. Call after any write. */
+export function invalidate(fragment = '') {
+  for (const k of [...CACHE.keys()]) if (!fragment || k.includes(fragment)) CACHE.delete(k);
+}
+
+/**
+ * Run a write, then invalidate. The single most likely way a hand-rolled cache
+ * goes wrong is a mutation that forgets to clear it, so every write goes through
+ * here rather than relying on anyone remembering at the call site.
+ * Invalidates on success only — a failed write changed nothing.
+ */
+function after(promise, ...fragments) {
+  return promise.then((r) => {
+    for (const f of fragments.length ? fragments : ['']) invalidate(f);
+    return r;
+  });
+}
+
+/**
+ * A cached GET. Returns cached data immediately when warm, and revalidates behind
+ * it. `onUpdate` fires only if the revalidated payload actually differs, so a
+ * background refresh never causes a pointless repaint.
+ */
+async function cachedGet(path, { onUpdate } = {}) {
+  const hit = CACHE.get(path);
+  const age = hit ? Date.now() - hit.at : Infinity;
+
+  if (hit && age < FRESH_MS) return hit.data;
+
+  if (hit) {
+    // Warm but stale: hand back what we have, refresh underneath.
+    if (!hit.inflight) {
+      hit.inflight = request(path)
+        .then((fresh) => {
+          const changed = JSON.stringify(fresh) !== JSON.stringify(hit.data);
+          CACHE.set(path, { at: Date.now(), data: fresh });
+          if (changed && onUpdate) onUpdate(fresh);
+          return fresh;
+        })
+        .catch(() => hit.data) // a failed revalidate must never blank a good screen
+        .finally(() => { const c = CACHE.get(path); if (c) delete c.inflight; });
+    }
+    return hit.data;
+  }
+
+  // Cold: one request, and dedupe concurrent callers onto it.
+  const inflight = request(path).then((data) => {
+    CACHE.set(path, { at: Date.now(), data });
+    return data;
+  });
+  CACHE.set(path, { at: 0, data: undefined, inflight });
+  return inflight;
+}
+
 async function request(path, options = {}) {
   const token = getToken();
   const headers = { 'Content-Type': 'application/json', ...options.headers };
@@ -87,7 +162,8 @@ export const api = {
   getFounderStats: () => request('/founders/stats'),
   getFounder: (id) => request(`/founders/${id}`),
   createFounder: (data) => request('/founders', { method: 'POST', body: JSON.stringify(data) }),
-  updateFounder: (id, data) => request(`/founders/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  // Editing a founder changes the board (name, stage, deal_status) and the card.
+  updateFounder: (id, data) => after(request(`/founders/${id}`, { method: 'PUT', body: JSON.stringify(data) }), '/pipeline'),
   deleteFounder: (id) => request(`/founders/${id}`, { method: 'DELETE' }),
 
   // Notes
@@ -101,9 +177,12 @@ export const api = {
   getSourcingStarred: () => request('/sourcing/starred'),
   getSourcingStats: () => request('/sourcing/stats'),
   getSourcingRuns: () => request('/sourcing/runs'),
-  approveSourced: (id) => request(`/sourcing/approve/${id}`, { method: 'POST' }),
-  dismissSourced: (id) => request(`/sourcing/dismiss/${id}`, { method: 'POST' }),
-  hideForeverSourced: (id) => request(`/sourcing/hide-forever/${id}`, { method: 'POST' }),
+  // Triage mutates BOTH the inbox and the board — approving creates the company
+  // card. A stale cache here would show a founder you just added as still
+  // waiting, or worse, not on the pipeline. Invalidate both, always.
+  approveSourced: (id) => after(request(`/sourcing/approve/${id}`, { method: 'POST' }), '/pipeline'),
+  dismissSourced: (id) => after(request(`/sourcing/dismiss/${id}`, { method: 'POST' }), '/pipeline/inbox'),
+  hideForeverSourced: (id) => after(request(`/sourcing/hide-forever/${id}`, { method: 'POST' }), '/pipeline/inbox'),
   starSourced: (id) => request(`/sourcing/star/${id}`, { method: 'POST' }),
   unstarSourced: (id) => request(`/sourcing/unstar/${id}`, { method: 'POST' }),
   triggerSourcing: () => request('/sourcing/run', { method: 'POST' }),
@@ -176,21 +255,23 @@ export const api = {
 
   // ── Today — the surface ──
   // Pipeline — the front door. One connected read over the founders spine.
-  getPipeline: (params) => request('/pipeline?' + new URLSearchParams(params || {})),
-  getPipelineCompany: (id) => request(`/pipeline/${id}`),
+  // Cached: toggling track or bouncing Home <-> Pipeline must not repaint through
+  // a skeleton to arrive at rows we already had. 136KB a visit, now 0 when warm.
+  getPipeline: (params, opts) => cachedGet('/pipeline?' + new URLSearchParams(params || {}), opts),
+  getPipelineCompany: (id, opts) => cachedGet(`/pipeline/${id}`, opts),
   // The inbox — the seam between the sourcing engine and the tracker. Approving
   // promotes in one transaction and keeps the source chain intact.
-  getPipelineInbox: (params) => request('/pipeline/inbox?' + new URLSearchParams(params || {})),
+  getPipelineInbox: (params, opts) => cachedGet('/pipeline/inbox?' + new URLSearchParams(params || {}), opts),
   // Funnel STATE for the Home dashboard — never a pipeline-size scoreboard.
-  getPipelineStats: () => request('/pipeline/stats'),
+  getPipelineStats: (opts) => cachedGet('/pipeline/stats', opts),
 
   // The attention engine — cross-stage integrity checks, computed from pipeline state.
-  getAttention: () => request('/today/attention'),
+  getAttention: (opts) => cachedGet('/today/attention', opts),
 
-  getToday: () => request('/today'),
-  addTodayItem: (body) => request('/today/items', { method: 'POST', body: JSON.stringify(body) }),
-  updateTodayItem: (id, body) => request(`/today/items/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
-  deleteTodayItem: (id) => request(`/today/items/${id}`, { method: 'DELETE' }),
+  getToday: (opts) => cachedGet('/today', opts),
+  addTodayItem: (body) => after(request('/today/items', { method: 'POST', body: JSON.stringify(body) }), '/today'),
+  updateTodayItem: (id, body) => after(request(`/today/items/${id}`, { method: 'PATCH', body: JSON.stringify(body) }), '/today'),
+  deleteTodayItem: (id) => after(request(`/today/items/${id}`, { method: 'DELETE' }), '/today'),
   decide: (body) => request('/today/decisions', { method: 'POST', body: JSON.stringify(body) }),
   getCalibration: () => request('/today/decisions/calibration'),
   resolveDecision: (id, outcome) => request(`/today/decisions/${id}/resolve`, { method: 'PATCH', body: JSON.stringify({ outcome }) }),
