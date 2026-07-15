@@ -6,14 +6,18 @@ import Landing from './pages/Landing';
 import Login from './pages/Login';
 import Signup from './pages/Signup';
 import Onboarding from './pages/Onboarding';
-import Today from './pages/Today';
+import Home from './pages/Home';
+import Sourcing from './pages/Sourcing';
 import Pipeline from './pages/Pipeline';
 import FounderDetail from './pages/FounderDetail';
 import AddFounder from './pages/AddFounder';
 import Assess from './pages/Assess';
 import AssessmentDetail from './pages/AssessmentDetail';
 import AskStu from './pages/AskStu';
-import Discover from './pages/Discover';
+// Discover is gone — /discover redirects to /sourcing. It was a search box you had
+// to operate whose engine never once ran, and Harmonic's own lesson is that the
+// alert is the product and the search bar is its config UI. The file stays on disk
+// until Danny confirms nothing in it is worth salvaging.
 import Placeholder from './pages/Placeholder';
 import Settings from './pages/Settings';
 import Brief from './pages/Brief';
@@ -81,17 +85,22 @@ function AppRoutes() {
         <Onboarding />
       } />
       <Route path="/ask" element={<ProtectedRoute><AskStu /></ProtectedRoute>} />
-      {/* PIPELINE IS THE FRONT DOOR.
-          Home was four task buttons — a menu, which you only open when you already
-          know what you want, which is why it never got opened. Today replaced it and
-          was the wrong answer to the right question: Danny never asked for it, and
-          asked five times for "my personal Affinity/Harmonic — sourcing, tracking,
-          assessing." That is one sentence about one object, and Pipeline is the
-          screen that holds it. Today's lanes are filters on this board now; the
-          attention engine underneath it lives at the top of Pipeline. */}
-      <Route path="/" element={user ? <ProtectedRoute><Pipeline /></ProtectedRoute> : <Landing />} />
-      <Route path="/pipeline" element={<Navigate to="/" replace />} />
-      <Route path="/discover" element={<ProtectedRoute><Discover /></ProtectedRoute>} />
+      {/* THREE SURFACES OVER ONE SUBSTRATE.
+          Danny, after seeing sourcing and the board stacked on one screen: "we're
+          conflating two actions here: 1) I need an inbox to study and triage new
+          founders and 2) the ability to manage a pipeline (like a kanban)... right
+          now, this screen is a jumble."
+          The one-record insight is about the DATA, not the screens — Affinity and
+          Attio have one substrate and separate surfaces. So:
+            /          Home     — Today's Tasks + where the funnel stands
+            /sourcing  Sourcing — the inbox: study a stranger, triage, move on
+            /pipeline  Pipeline — the kanban: move companies you know through stages
+          Track in Sourcing promotes the SAME record onto the board, in one
+          transaction, keeping the source chain — that's the connective tissue. */}
+      <Route path="/" element={user ? <ProtectedRoute><Home /></ProtectedRoute> : <Landing />} />
+      <Route path="/sourcing" element={<ProtectedRoute><Sourcing /></ProtectedRoute>} />
+      <Route path="/pipeline" element={<ProtectedRoute><Pipeline /></ProtectedRoute>} />
+      <Route path="/discover" element={<Navigate to="/sourcing" replace />} />
       <Route path="/founders/new" element={<ProtectedRoute><AddFounder /></ProtectedRoute>} />
       <Route path="/founders/:id" element={<ProtectedRoute><FounderDetail /></ProtectedRoute>} />
       <Route path="/assess" element={<ProtectedRoute><Assess /></ProtectedRoute>} />
