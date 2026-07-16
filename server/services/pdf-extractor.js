@@ -34,7 +34,11 @@ Rules:
 Document text:
 `;
 
-async function extractFromPDF(buffer, anthropicApiKey) {
+// `anthropicApiKey` is retained but UNUSED — anthropicFor() resolves the key
+// itself from user_settings. Keeping the parameter avoids touching the call site
+// signature; `userId` is what actually matters now, because it's what the meter
+// and the spend cap key off.
+async function extractFromPDF(buffer, anthropicApiKey, userId = 1) {
   // Parse PDF to text
   const pdfData = await pdfParse(buffer);
   const text = pdfData.text;
@@ -43,13 +47,33 @@ async function extractFromPDF(buffer, anthropicApiKey) {
     throw new Error('Could not extract text from PDF. The file may be image-based or empty.');
   }
 
-  // Use Claude to extract structured data
-  const Anthropic = require('@anthropic-ai/sdk');
-  const client = new Anthropic({ apiKey: anthropicApiKey });
+  // ══════════════════════════════════════════════════════════════════════
+  // This constructed a RAW Anthropic client — unmetered, uncapped, and with the
+  // SDK's default maxRetries: 2.
+  //
+  // Three consequences, all real:
+  //   · Every deck upload sends ~12.5K tokens (50K chars) that appear NOWHERE in
+  //     usage_events. Spend you cannot see is spend you cannot manage — the cost
+  //     audit literally could not price this path.
+  //   · assertWithinBudget never ran here, so it spends past any cap.
+  //   · maxRetries: 2 reintroduces the retry compounding that providerKeys.js:193
+  //     sets to 0 everywhere else, precisely because SDK retries x wrapper retries
+  //     once fired six requests per struggling agent.
+  //
+  // anthropicFor() fixes all three at once: metered, capped, maxRetries 0.
+  // It resolves the key itself, so the caller's key is no longer needed — but the
+  // signature keeps accepting it rather than breaking two call sites.
+  const { anthropicFor } = require('../lib/providerKeys');
+  const client = anthropicFor(userId, 'pdf-extract');
+  if (!client) throw new Error('No Anthropic key configured — add one in Settings.');
 
   const response = await client.messages.create({
     model: MODEL,
     max_tokens: 4096,
+    // Pinned. This is a structured extraction from a fixed document: the same deck
+    // must yield the same fields. Unpinned it re-samples, so re-uploading a deck
+    // pays again for a different answer to an identical question.
+    temperature: 0,
     messages: [{
       role: 'user',
       content: EXTRACTION_PROMPT + text.slice(0, 50000) // Cap at ~50k chars

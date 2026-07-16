@@ -46,6 +46,11 @@ catch { resolveKey = () => null; recordCost = () => {}; }
 
 const BASE = 'https://enrichlayer.com';
 
+// EnrichLayer bills in credits. usage_events stores DOLLARS. Converting at the
+// boundary rather than at the call site is the whole reason the previous version
+// would have logged a 50-person roster as $202 instead of $2.02.
+const CREDIT_USD = 0.01;
+
 function httpGetJson(url, headers = {}) {
   return new Promise((resolve) => {
     try {
@@ -304,11 +309,29 @@ async function enrichCompany(linkedinUrl, { userId = 1, deps = {}, withSeries = 
     }
   }
 
-  // 2cr profile (+funding). Roster is 3cr/employee +1 enriched = 4 each.
-  // Recorded so the spend cap is real rather than decorative.
+  // ── Cost, recorded properly. My previous version recorded NOTHING. ──
+  //
+  // It called `recordCost(userId, 'enrichlayer', credits)` — positional args
+  // against a signature that destructures an object:
+  //     recordCost(userId, { provider, feature, estCostUsd, count })
+  // So `provider` destructured off the string 'enrichlayer' → undefined → the
+  // INSERT hit `NOT NULL constraint failed: usage_events.provider` → swallowed by
+  // BOTH my try/catch and recordCost's own. Zero rows, silently, forever. The
+  // comment above it read "Recorded so the spend cap is real rather than
+  // decorative" and it was neither.
+  //
+  // And the second bug behind the first: `credits` would have landed in
+  // estCostUsd, so a 50-person roster would have recorded $202 instead of $2.02.
+  // EnrichLayer bills in credits (~$0.01 each); usage_events stores DOLLARS.
   if (recordCost) {
     const credits = 2 + (people ? people.length * 4 : 0);
-    try { recordCost(userId, 'enrichlayer', credits); } catch { /* never fatal */ }
+    try {
+      recordCost(userId, {
+        provider: 'enrichlayer',
+        feature: 'company-enrich',
+        estCostUsd: credits * CREDIT_USD,
+      });
+    } catch { /* metering must never break a request */ }
   }
 
   return {
