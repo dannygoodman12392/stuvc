@@ -505,13 +505,31 @@ app.listen(PORT, () => {
     // automation with no durable record is indistinguishable from one that never
     // runs — and he correctly concluded it never ran.
     // ══════════════════════════════════════════════════════════════════
-    cron.schedule('30 11 * * *', async () => {
-      console.log('[Cron] Running early-signal sources...');
+    // ══════════════════════════════════════════════════════════════════
+    // MONTHLY, not nightly. 1st of the month, 11:30am CT.
+    //
+    // Every connector here reads a COHORT LIST, and cohort lists change a few
+    // times a year: YC ships two batches, a16z Speedrun runs SR00x cohorts, Thiel
+    // / Z Fellows / Neo / Residency / Emergent announce in waves. Polling them
+    // nightly asked a question whose answer changes twice a year, 365 times a
+    // year — and then paid an LLM to re-read the same 144 YC founders each time.
+    //
+    // The dedup fix (sources/index.js) already made those re-reads free. This
+    // makes them rare, which also cuts the Exa line (~$11.40/mo) by ~30x. The two
+    // together take this cron from ~$36/mo to roughly $1.
+    //
+    // Nothing is lost: a founder who appears in the YC directory on the 3rd is
+    // still there on the 1st of next month. These sources are a floor, not an
+    // edge — the whole point of Danny's Frontier Watch framing. If something ever
+    // needs to be caught the day it lands, it does not belong on this cron.
+    // ══════════════════════════════════════════════════════════════════
+    cron.schedule('30 11 1 * *', async () => {
+      console.log('[Cron] Running early-signal sources (monthly)...');
       const { recordJobRun } = require('./services/health');
       try {
         const { ingestAll } = require('./pipeline/sources');
         const r = await ingestAll({ userId: 1 });
-        console.log('[Cron][Sources]', JSON.stringify(r.map(x => ({ s: x.source, kept: x.geoKept, saved: x.persisted, err: x.error }))));
+        console.log('[Cron][Sources]', JSON.stringify(r.map(x => ({ s: x.source, kept: x.geoKept, saved: x.persisted, skipped: x.skippedAsDupe, err: x.error }))));
 
         const saved = r.reduce((n, x) => n + (x?.persisted || 0), 0);
         const fetched = r.reduce((n, x) => n + (x?.fetched || 0), 0);
@@ -521,23 +539,63 @@ app.listen(PORT, () => {
         // yield 0 Illinois ties is a finding about the source, not a failure —
         // and it should be readable here instead of rediscovered every few months.
         const breakdown = r.map((x) => `${x.source}: ${x.fetched}→${x.geoKept} IL`).join(' · ');
+        // skippedAsDupe is in the line because a HEALTHY saturated run now looks
+        // like "fetched 144, skipped 144, saved 0, $0" — and without that number
+        // it is indistinguishable from a broken connector. That ambiguity is the
+        // exact reason Danny concluded sourcing didn't work when it did.
+        const skipped = r.reduce((n, x) => n + (x?.skippedAsDupe || 0), 0);
         recordJobRun(
           'early_signal_sources',
           errs.length ? 'partial' : 'ok',
-          `+${saved} saved of ${fetched} fetched — ${breakdown}${errs.length ? ` — ${errs.length} errors` : ''}`,
+          `+${saved} saved of ${fetched} fetched, ${skipped} already known (not re-enriched) — ${breakdown}` +
+            `${errs.length ? ` — ${errs.length} errors` : ''}`,
           1
         );
 
-        const { runLinkedInEnrichment } = require('./pipeline/linkedin-enrich');
-        const e = await runLinkedInEnrichment({ userId: 1, limit: 40 });
-        console.log('[Cron][LinkedIn]', JSON.stringify(e));
       } catch (e) {
         console.error('[Cron][Sources] failed:', e.message);
         // A failure has to be as visible as a success, or silence stays ambiguous.
         recordJobRun('early_signal_sources', 'error', e.message, 1);
       }
     }, { timezone: 'America/Chicago' });
-    console.log('Daily early-signal sources scheduled (11:30 AM CT)');
+    console.log('Early-signal sources scheduled (MONTHLY — 1st, 11:30 AM CT)');
+
+    // ══════════════════════════════════════════════════════════════════
+    // LinkedIn enrichment stays DAILY, and deliberately did not go monthly with
+    // the sources it used to ride along with.
+    //
+    // It isn't polling anything — it's draining a finite backlog: 612 sourced
+    // founders with a LinkedIn URL and no profile read, at limit 40/run. Monthly
+    // would take FIFTEEN MONTHS. Daily drains it in ~15 days for ~$6 total, and
+    // then costs ~$0/day forever, because `linkedin_enriched_at IS NULL` means a
+    // drained queue does no work.
+    //
+    // It's also the highest-value spend in the product. Every scorer here is
+    // currently regexing 195-character bios, which is why 268 of 624 rows carry
+    // the identical breakout score. Real employment history is the input that
+    // makes the ranking mean anything — Danny said "I'll pay for enrichment" and
+    // this is the thing he was paying for.
+    // ══════════════════════════════════════════════════════════════════
+    cron.schedule('0 12 * * *', async () => {
+      const { recordJobRun } = require('./services/health');
+      try {
+        const { runLinkedInEnrichment } = require('./pipeline/linkedin-enrich');
+        const e = await runLinkedInEnrichment({ userId: 1, limit: 40 });
+        console.log('[Cron][LinkedIn]', JSON.stringify(e));
+        recordJobRun(
+          'linkedin_enrich',
+          'ok',
+          e.skipped
+            ? String(e.skipped)
+            : `${e.enriched} enriched, ${e.promoted} promoted to the IL board, ${e.flagged} flagged as noise`,
+          1
+        );
+      } catch (e) {
+        console.error('[Cron][LinkedIn] failed:', e.message);
+        recordJobRun('linkedin_enrich', 'error', e.message, 1);
+      }
+    }, { timezone: 'America/Chicago' });
+    console.log('LinkedIn enrichment scheduled (daily 12:00 PM CT — drains the backlog, then idles)');
   }
 
   // Weekly founder digest — Friday 7:00 AM CT. Emails the week's top under-the-radar
