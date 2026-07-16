@@ -166,6 +166,18 @@ Ran the new engine on **Cadrian AI** (Dan Preiss, a real live deal) with the rea
 
 ---
 
+## 4b-bis. ⚠️ GRANOLA OVER-RECORDS — this is a privacy hazard, not a data-quality one
+
+Found 2026-07-16 while backfilling transcripts. One Granola note ("Ayush", 2026-04-20) kept recording long after the call ended: roughly half the transcript is ambient household audio — a third party's medical details, a family member's unannounced resignation, childcare conversation. None of it is meeting content, and none of it is Danny's to hold in a deal tool.
+
+**It did not reach Stu**, and only by luck of design: no card matched the title, and `resolveFounderId` refuses rather than guesses, so `ingestGranolaNote` was never called. Had the title matched a founder card, the whole thing would have been stored and fed to the signal extractor.
+
+Two consequences for anything that pipes Granola into Stu:
+1. **Never "fix" a transcript by trimming it.** Silently editing source text is the exact laundering the verbatim-quote rule exists to prevent. If a transcript is wrong to store, it should be deleted at the source in Granola — not cleaned up in transit.
+2. **The refusal rule is load-bearing beyond attribution.** It was written to stop a transcript landing on the wrong card; it also happens to be the only thing standing between an over-recorded personal conversation and a permanent, indexed, quote-extracted record. Do not loosen it.
+
+Danny should check Granola's auto-stop setting. This is a source-side problem and only he can fix it.
+
 ## 4c. Session 2026-07-16 — what shipped, and what it's actually worth
 
 All deployed to prod. **451 tests passing.**
