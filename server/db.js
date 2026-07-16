@@ -271,6 +271,77 @@ addColumn('founders', 'data_room_url', 'TEXT');
 // transcript summary ends up being read as his own judgment six months later.
 addColumn('founder_notes', 'source', "TEXT DEFAULT 'manual'");
 
+// ══════════════════════════════════════════════════════════════════════════
+// THE SOURCE LOG + THE SIGNAL GATE
+//
+// Danny, 2026-07-16: "These cards should be a living, dynamic log of data I feed
+// it from uploaded decks, URL links, LinkedIn links, notes, Granola notes. I want
+// to get incredibly insightful, accurate signals about founder and company
+// performance to the best of your ability, no hallucinations and 100% honest."
+//
+// "No hallucinations" is not a prompt instruction — you cannot ask a model to be
+// honest and then trust it. It's a SCHEMA constraint. The design here makes a
+// fabricated signal impossible to REPRESENT, let alone display:
+//
+//   · A signal has source_id NOT NULL. There is no such row as a claim from
+//     nowhere.
+//   · A signal has quote NOT NULL. The verbatim line that proves it is required,
+//     exactly as commitments require the line that proves a promise — because a
+//     paraphrase of a fact is precisely the thing that can be invented.
+//   · Every quote is checked against its source's content_text by
+//     agents/verify.js (deterministic, bigram-adjacency, no second LLM call).
+//     `unverified` is DROPPED, not badged. verify.js annotates for assessments,
+//     where a human reads the evidence; a card signal is glanced at, so the gate
+//     has to be mechanical.
+//
+// This is the conviction engine's evidence rung, one layer out: below the rung
+// there is no score, there is a question list.
+// ══════════════════════════════════════════════════════════════════════════
+db.exec(`
+  CREATE TABLE IF NOT EXISTS company_sources (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    founder_id INTEGER NOT NULL REFERENCES founders(id),
+    -- deck | url | linkedin | granola | note | filing
+    kind TEXT NOT NULL,
+    title TEXT,
+    uri TEXT,                      -- the URL, or the stored filename for a deck
+    -- The extracted text. THIS is what every quote is checked against, so a
+    -- source with no content_text can never father a signal.
+    content_text TEXT,
+    content_hash TEXT,             -- dedupe: the same deck uploaded twice is one source
+    meta TEXT,                     -- JSON: page count, granola id, fetch status
+    occurred_at TEXT,              -- when the CALL happened / the deck is dated —
+                                   -- not when we ingested it. A six-month-old deck
+                                   -- and today's call must not read as equally current.
+    added_by INTEGER REFERENCES users(id),
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE INDEX IF NOT EXISTS idx_sources_founder ON company_sources(founder_id, kind, created_at DESC);
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_sources_hash ON company_sources(founder_id, content_hash);
+
+  CREATE TABLE IF NOT EXISTS company_signals (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    founder_id INTEGER NOT NULL REFERENCES founders(id),
+    -- NOT NULL, and ON DELETE CASCADE below in code: delete the deck, the signals
+    -- it produced die with it. A claim must never outlive its evidence.
+    source_id INTEGER NOT NULL REFERENCES company_sources(id),
+    -- traction | team | product | market | risk | raise | customer
+    kind TEXT NOT NULL,
+    claim TEXT NOT NULL,
+    -- The line that proves it. Required. Verified. Not decorative.
+    quote TEXT NOT NULL,
+    -- verbatim | paraphrased. NEVER 'unverified' — those are dropped at write
+    -- time and never reach this table. A CHECK enforces it at the storage layer
+    -- so no future code path can quietly insert one.
+    verification TEXT NOT NULL CHECK (verification IN ('verbatim','paraphrased')),
+    extracted_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    model TEXT,
+    created_by INTEGER REFERENCES users(id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_signals_founder ON company_signals(founder_id, kind);
+  CREATE INDEX IF NOT EXISTS idx_signals_source ON company_signals(source_id);
+`);
+
 // Airtable sync audit log
 db.exec(`
   CREATE TABLE IF NOT EXISTS airtable_sync_log (

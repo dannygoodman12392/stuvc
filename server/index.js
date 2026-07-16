@@ -370,6 +370,9 @@ app.use('/api/today', requireAuth, require('./routes/today'));
 // assessments and decisions hang off. See routes/pipeline.js for why there is no
 // companies table.
 app.use('/api/pipeline', requireAuth, require('./routes/pipeline'));
+// The card's source log: decks, URLs, notes, Granola. Mounted separately from
+// /api/sources, which is the sourcing CONNECTORS route — same word, different layer.
+app.use('/api/companies', requireAuth, require('./routes/companySources'));
 app.use('/api/founders', requireAuth, require('./routes/founders'));
 app.use('/api/notes', requireAuth, require('./routes/notes'));
 app.use('/api/sourcing', requireAuth, require('./routes/sourcing'));

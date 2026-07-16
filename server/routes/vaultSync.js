@@ -181,6 +181,75 @@ router.post('/commitments', (req, res) => {
   res.json(out);
 });
 
+// ── POST /api/vault-sync/call-notes — Granola notes onto the card ──
+//
+// Danny: "Granola notes (which I think also get automatically loaded?)"
+// They didn't. Only commitments came down this road; the note itself — the thing
+// he actually wants to re-read before a second call — never landed. founder_notes
+// has 189 rows and every one is from the March Airtable import.
+//
+// Same channel, same secret, same reason as commitments above: the nightly
+// `founder-call-auto-workup` is the ONLY thing in the stack that can see a Granola
+// transcript, so it pushes rather than Stu pulling. Scope stays narrow — this adds
+// exactly one more table to an owner-only, secret-gated endpoint.
+//
+// The note lands as a SOURCE, not a blob of prose. That means the honesty gate
+// applies to it like anything else: signals extracted from a call are checked
+// against the actual transcript text, and a quote the model invented about a
+// conversation is dropped exactly as it would be from a deck.
+//
+// occurred_at is the CALL date, not tonight. A note pushed at 7pm about a call
+// from March must not read as fresh contact — that distinction is precisely what
+// lib/attention.js is currently blocked on, since every touch signal in the
+// database is the Airtable import date.
+router.post('/call-notes', (req, res) => {
+  const rows = Array.isArray(req.body?.notes) ? req.body.notes : null;
+  if (!rows) return res.status(400).json({ error: 'body must be { notes: [...] }' });
+  if (rows.length > 100) return res.status(400).json({ error: 'max 100 per call' });
+
+  const { ingestGranolaNote } = require('../lib/ingest');
+  const out = { created: 0, deduped: 0, skipped: [] };
+
+  for (const r of rows) {
+    let founderId = r.founder_id || null;
+    if (!founderId && r.founder_name) {
+      const f = db.prepare(
+        'SELECT id FROM founders WHERE created_by = ? AND is_deleted = 0 AND LOWER(name) = LOWER(?) LIMIT 1'
+      ).get(OWNER_ID, String(r.founder_name).trim());
+      founderId = f?.id || null;
+    }
+    // Fall back to the company name — the workup task knows "Cadrian AI" from the
+    // Granola title as often as it knows the founder.
+    if (!founderId && r.company) {
+      const f = db.prepare(
+        'SELECT id FROM founders WHERE created_by = ? AND is_deleted = 0 AND LOWER(company) = LOWER(?) LIMIT 1'
+      ).get(OWNER_ID, String(r.company).trim());
+      founderId = f?.id || null;
+    }
+    if (!founderId) {
+      out.skipped.push({ reason: 'no matching company', name: r.founder_name || r.company });
+      continue;
+    }
+
+    try {
+      const w = ingestGranolaNote({
+        founderId,
+        title: r.title,
+        text: r.text,
+        occurredAt: r.occurred_at,
+        granolaId: r.granola_id,
+        userId: OWNER_ID,
+      });
+      if (w.error) out.skipped.push({ reason: w.error, title: r.title });
+      else if (w.created) out.created++;
+      else out.deduped++; // the same call pushed by seven consecutive nightly runs
+    } catch (e) {
+      out.skipped.push({ reason: e.message, title: String(r.title || '').slice(0, 60) });
+    }
+  }
+  res.json(out);
+});
+
 module.exports = router;
 module.exports.timingSafeEqual = timingSafeEqual;
 module.exports.mapAgentOutputs = mapAgentOutputs;
