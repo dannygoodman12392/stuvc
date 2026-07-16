@@ -225,6 +225,16 @@ Diligence: ${founder.diligence_status || 'Not started'}`;
     const response = await client.messages.create({
       model: MODEL,
       max_tokens: 8192,
+      // 0, like every other scoring path. This was unset — i.e. 1.0 — so the IC
+      // memo, the most consequential artifact Stu produces, was being SAMPLED.
+      // Regenerate it twice on identical inputs and you'd get two different
+      // recommendations, which is the exact bug routes/assessments.js documents
+      // finding empirically: six founders assessed twice on byte-identical inputs
+      // moved up to 1.1 points, because Stu was sampling its own verdicts.
+      // Every agent got the fix; this one was missed because it lives in another
+      // file and never ran often enough for anyone to notice.
+      // ⚠️ Sonnet 5 / Opus 4.7+ REJECT non-default temperature with a 400.
+      temperature: 0,
       system: `You are the IC Memo Writer for Superior Studios, a Chicago-based pre-seed venture fund (~$10M Fund I).
 
 You write investment committee memos that are direct, evidence-based, and intellectually honest. Your memos are the primary decision document for the investment committee (Brandon Cruz, Managing Partner).

@@ -502,7 +502,19 @@ export default function Assess() {
                     <li className="flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-blue-500" /><span className="text-gray-700 font-medium">Market Analyst</span> — TAM, timing, why now</li>
                     <li className="flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-red-500" /><span className="text-gray-700 font-medium">The Bear</span> — adversarial risk analysis</li>
                   </ul>
-                  <p className="text-[11px] text-gray-400 mt-3 pt-3 border-t border-gray-100">All 4 agents run in parallel (Team 45% / Product 25% / Market 30%, then a Bear risk adjustment), then a synthesis agent produces an IC-ready memo.</p>
+                  {/* This used to read "All 4 agents run in parallel (Team 45% /
+                      Product 25% / Market 30%, then a Bear risk adjustment)".
+                      That weighting was RETIRED — correctSynthesisScores()
+                      documents killing it, because a flat weighted mean inverted
+                      the rubric: 10,10,1,1 scored 6.4 "Monitor" while 5,5,10,10
+                      scored 7.0 "write a memo". The intake page was describing an
+                      engine that no longer exists, which is worse than describing
+                      nothing: it tells Danny the score means something it doesn't. */}
+                  <p className="text-[11px] text-gray-400 mt-3 pt-3 border-t border-gray-100">
+                    The rubric agent runs first and alone — it sets the score from the four movements.
+                    Team, Product, Market and the Bear then run in parallel; their job is commentary and
+                    risk, and they can only ever dock the score, never raise it.
+                  </p>
                 </>
               )}
             </div>

@@ -195,6 +195,11 @@ export const api = {
   // Assessments
   getAssessments: () => request('/assessments'),
   getAssessment: (id) => request(`/assessments/${id}`),
+  // Danny's call. Invalidates the assessment (his decision unlocks Stu's column),
+  // the pipeline (the Call column and the derived funnel stage), and today (the
+  // undecided lane and the predictions-due check).
+  createDecision: (body) =>
+    after(request('/today/decisions', { method: 'POST', body: JSON.stringify(body) }), '/assessments', '/pipeline', '/today'),
   getAssessmentInputs: (id) => request(`/assessments/${id}/inputs`),
   getAssessmentTasteDivergence: (id) => request(`/assessments/${id}/taste-divergence`),
   getAssessmentGroup: (groupId) => request(`/assessments/group/${groupId}`),
