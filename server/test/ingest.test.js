@@ -78,3 +78,65 @@ test('dormant without an Exa key — and it never calls out', async () => {
   assert.match(r.error, /No Exa key/);
   assert.equal(called, false);
 });
+
+// ══════════════════════════════════════════════════════════════════════════
+// A meeting's identity is its ID, not its transcript text.
+//
+// Caught on PRODUCTION 2026-07-16: one Cadrian call landed twice —
+//   id=106 uri=granola:ba38465a-… signals=11
+//   id=107 uri=granola:ba38465a-… signals=10
+// Same meeting, same Granola id, two rows, because the pushes carried slightly
+// different text. The card then claimed 21 facts from one conversation: the same
+// claims counted twice, each with a genuine verbatim quote. Every receipt checks
+// out and the total is false — the worst shape of wrong this codebase can produce.
+// ══════════════════════════════════════════════════════════════════════════
+test('the same Granola call pushed with DIFFERENT text is one source, not two', () => {
+  const db = require('../db');
+  const fid = db.prepare(
+    `INSERT INTO founders (name, company, created_by, is_deleted) VALUES ('Dedupe Probe', 'Dedupe Co', 1, 0)`
+  ).run().lastInsertRowid;
+
+  const { ingestGranolaNote } = require('../lib/ingest');
+  const id = 'granola-dedupe-uuid-001';
+
+  const a = ingestGranolaNote({
+    founderId: fid, title: 'Founder (Dedupe Co)', granolaId: id,
+    text: 'The founder said they have four hundred thousand in committed capital and two customers.',
+  });
+  // Granola re-processes transcripts — speaker labels, corrections. Same call,
+  // different bytes. This is the real-world case, not a contrived one.
+  const b = ingestGranolaNote({
+    founderId: fid, title: 'Founder (Dedupe Co)', granolaId: id,
+    text: 'Dan: The founder said they have four hundred thousand in committed capital and two customers. [corrected]',
+  });
+
+  assert.equal(a.created, true, 'first push creates');
+  assert.equal(b.created, false, 'second push of the SAME meeting must not create a second row');
+  assert.equal(b.id, a.id, 'it resolves to the same source');
+
+  const n = db.prepare('SELECT COUNT(*) c FROM company_sources WHERE founder_id = ? AND kind = ?').get(fid, 'granola').c;
+  assert.equal(n, 1, 'one meeting, one source — however many times the nightly task re-pushes it');
+
+  db.prepare('DELETE FROM company_sources WHERE founder_id = ?').run(fid);
+  db.prepare('DELETE FROM founders WHERE id = ?').run(fid);
+});
+
+test('two DIFFERENT calls with the same founder both land', () => {
+  // The inverse guard: ONNYX really did have two calls (5/1 and 5/5). Deduping on
+  // uri must not collapse genuinely distinct meetings.
+  const db = require('../db');
+  const fid = db.prepare(
+    `INSERT INTO founders (name, company, created_by, is_deleted) VALUES ('Two Calls', 'Two Co', 1, 0)`
+  ).run().lastInsertRowid;
+  const { ingestGranolaNote } = require('../lib/ingest');
+
+  const a = ingestGranolaNote({ founderId: fid, title: '1st call', granolaId: 'uuid-aaa', text: 'First conversation about the product roadmap and hiring plans in detail.' });
+  const b = ingestGranolaNote({ founderId: fid, title: '2nd call', granolaId: 'uuid-bbb', text: 'Second conversation, six weeks later, about the raise and the new customer.' });
+
+  assert.equal(a.created, true);
+  assert.equal(b.created, true, 'a different meeting is a different source');
+  assert.notEqual(a.id, b.id);
+
+  db.prepare('DELETE FROM company_sources WHERE founder_id = ?').run(fid);
+  db.prepare('DELETE FROM founders WHERE id = ?').run(fid);
+});

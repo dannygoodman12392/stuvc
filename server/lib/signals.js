@@ -53,14 +53,47 @@ const hash = (s) => crypto.createHash('sha256').update(String(s || '')).digest('
 
 /**
  * Record a source — one artifact Danny fed the card.
- * Idempotent on (founder_id, content_hash): the same deck uploaded twice, or the
- * same Granola note pushed by seven consecutive nightly runs, is ONE source. The
- * ledger fills with duplicates otherwise and he stops trusting it by Thursday —
- * the same failure the commitment ledger was designed around.
+ *
+ * Idempotent on TWO keys, because an artifact has two kinds of identity and
+ * content_hash alone only catches one of them:
+ *
+ *   1. `uri`  — a stable EXTERNAL id. A Granola meeting is `granola:<uuid>`; a web
+ *      read is the URL. This is the artifact's real identity: the call happened
+ *      once, whatever its transcript says today.
+ *   2. `content_hash` — for artifacts with no external id (a pasted note, a deck).
+ *
+ * ── WHY uri HAD TO BE ADDED ──
+ * content_hash alone assumes the same artifact always yields byte-identical text.
+ * It doesn't. Caught on production 2026-07-16: ONE Cadrian call landed TWICE —
+ *
+ *   id=106 uri=granola:ba38465a-… signals=11
+ *   id=107 uri=granola:ba38465a-… signals=10
+ *
+ * — same meeting, same Granola id, two rows, because the two pushes carried
+ * slightly different transcript text. The card then reported 21 facts from a
+ * single conversation: the same claims, counted twice, each with a real verbatim
+ * quote. Every receipt checks out and the total is a lie.
+ *
+ * This was going to happen nightly without the fix. Granola re-processes
+ * transcripts (speaker labels, corrections), so the text for a given meeting is
+ * not stable over time — and the nightly task re-pushes a 30-day window on every
+ * run. The docstring above this function already warned that duplicates are how
+ * "he stops trusting it by Thursday". It was describing the bug it had.
+ *
+ * Re-pushing a known uri returns the existing row and does NOT overwrite its text.
+ * Deliberate: the stored transcript is what the card's existing signals were
+ * verified against, and silently swapping it under them would leave quotes
+ * pointing at text that no longer contains them.
  */
 function recordSource({ founderId, kind, title, uri, contentText, meta, occurredAt, addedBy }) {
   if (!SOURCE_KINDS.includes(kind)) throw new Error(`source kind must be one of ${SOURCE_KINDS.join('|')}`);
   if (!founderId) throw new Error('a source must belong to a company');
+
+  if (uri) {
+    const byUri = db.prepare('SELECT id FROM company_sources WHERE founder_id = ? AND uri = ?')
+      .get(founderId, uri);
+    if (byUri) return { id: byUri.id, created: false };
+  }
 
   const h = hash(contentText || uri || title);
   const existing = db.prepare('SELECT id FROM company_sources WHERE founder_id = ? AND content_hash = ?')
