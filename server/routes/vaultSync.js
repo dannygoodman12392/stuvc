@@ -202,6 +202,81 @@ router.post('/commitments', (req, res) => {
 // from March must not read as fresh contact — that distinction is precisely what
 // lib/attention.js is currently blocked on, since every touch signal in the
 // database is the Airtable import date.
+// ══════════════════════════════════════════════════════════════════════════
+// POST /api/vault-sync/notes — Danny's OWN words onto a card.
+//
+// Distinct from /call-notes, and the distinction is the point. A Granola note is a
+// record of a CONVERSATION (kind='granola' → the OBSERVED evidence rung). This is
+// Danny's read (kind='note') — it renders in his ink, not the machine's, and the
+// honesty gate checks any claim drawn from it against his own line.
+//
+// Why this endpoint exists at all: his 35-company pipeline dump — by his own
+// account the most valuable text in this database, "the only record of what he
+// actually thinks about his own deals" — was written into a LOCAL dev database by a
+// script that was never committed. The commit that claimed to put it on the cards
+// changed one client file. It never reached production, and there was no path to
+// send it there without a browser session. Now there is one, and it is the same
+// secret-gated, owner-only channel the vault already uses.
+//
+// Matches by name/company because ids are per-database and this crosses databases.
+// ══════════════════════════════════════════════════════════════════════════
+router.post('/notes', (req, res) => {
+  const rows = Array.isArray(req.body?.notes) ? req.body.notes : null;
+  if (!rows) return res.status(400).json({ error: 'body must be { notes: [...] }' });
+  if (rows.length > 100) return res.status(400).json({ error: 'max 100 per call' });
+
+  const { ingestNote } = require('../lib/ingest');
+  const out = { created: 0, deduped: 0, skipped: [] };
+
+  for (const r of rows) {
+    const founderId = resolveFounderId(r);
+    if (!founderId) { out.skipped.push({ reason: 'no matching card', name: r.founder_name || r.company }); continue; }
+    try {
+      const w = ingestNote({
+        founderId,
+        title: r.title || 'Note',
+        text: r.text,
+        occurredAt: r.occurred_at,
+        userId: OWNER_ID,
+      });
+      if (w.error) out.skipped.push({ reason: w.error, name: r.founder_name });
+      else if (w.created) out.created++;
+      else out.deduped++; // recordSource is idempotent on content_hash — re-running is free
+    } catch (e) {
+      out.skipped.push({ reason: e.message, name: r.founder_name });
+    }
+  }
+  res.json(out);
+});
+
+// Shared by /notes and /call-notes. Name first, then name+company, then company —
+// ids are meaningless across databases, so the name is the join key.
+function resolveFounderId(r) {
+  if (r.founder_id) return r.founder_id;
+  if (r.founder_name && r.company) {
+    const f = db.prepare(
+      'SELECT id FROM founders WHERE created_by = ? AND is_deleted = 0 AND LOWER(TRIM(name)) = LOWER(?) AND LOWER(TRIM(company)) = LOWER(?) LIMIT 1'
+    ).get(OWNER_ID, String(r.founder_name).trim(), String(r.company).trim());
+    if (f) return f.id;
+  }
+  if (r.founder_name) {
+    const f = db.prepare(
+      'SELECT id FROM founders WHERE created_by = ? AND is_deleted = 0 AND LOWER(TRIM(name)) = LOWER(?) LIMIT 1'
+    ).get(OWNER_ID, String(r.founder_name).trim());
+    if (f) return f.id;
+  }
+  // Company alone is a LAST resort and never for a placeholder: "Stealth" is shared
+  // by 18 founders and "Not Yet" by 3, so matching on it would file Danny's note
+  // about one company onto a stranger's card.
+  if (r.company && !/^(stealth|not yet|tbd|n\/a|unknown)/i.test(String(r.company).trim())) {
+    const f = db.prepare(
+      'SELECT id FROM founders WHERE created_by = ? AND is_deleted = 0 AND LOWER(TRIM(company)) = LOWER(?) LIMIT 1'
+    ).get(OWNER_ID, String(r.company).trim());
+    if (f) return f.id;
+  }
+  return null;
+}
+
 router.post('/call-notes', (req, res) => {
   const rows = Array.isArray(req.body?.notes) ? req.body.notes : null;
   if (!rows) return res.status(400).json({ error: 'body must be { notes: [...] }' });
@@ -211,21 +286,13 @@ router.post('/call-notes', (req, res) => {
   const out = { created: 0, deduped: 0, skipped: [] };
 
   for (const r of rows) {
-    let founderId = r.founder_id || null;
-    if (!founderId && r.founder_name) {
-      const f = db.prepare(
-        'SELECT id FROM founders WHERE created_by = ? AND is_deleted = 0 AND LOWER(name) = LOWER(?) LIMIT 1'
-      ).get(OWNER_ID, String(r.founder_name).trim());
-      founderId = f?.id || null;
-    }
-    // Fall back to the company name — the workup task knows "Cadrian AI" from the
-    // Granola title as often as it knows the founder.
-    if (!founderId && r.company) {
-      const f = db.prepare(
-        'SELECT id FROM founders WHERE created_by = ? AND is_deleted = 0 AND LOWER(company) = LOWER(?) LIMIT 1'
-      ).get(OWNER_ID, String(r.company).trim());
-      founderId = f?.id || null;
-    }
+    // Shared with /notes. The old inline version here fell back to company name with
+    // no placeholder guard: a Granola call titled "Michael Dunn (Stealth)" would
+    // match whichever of the 18 founders whose company is literally "Stealth" came
+    // back first, and file a real call transcript onto a stranger's card. The
+    // transcript would then father signals, with quotes, that verify perfectly —
+    // against the wrong company.
+    const founderId = resolveFounderId(r);
     if (!founderId) {
       out.skipped.push({ reason: 'no matching company', name: r.founder_name || r.company });
       continue;
