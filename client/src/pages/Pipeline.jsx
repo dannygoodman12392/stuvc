@@ -31,9 +31,25 @@ import KanbanBoard from '../components/KanbanBoard';
 // on Home. A board you can drag has to write something real.
 // ══════════════════════════════════════════════════════════════════════════
 
+// ══════════════════════════════════════════════════════════════════════════
+// The stages that EXIST, measured against the real board (2026-07-16):
+//   Under Consideration 42 · Passed 35 · (empty) 25 · Family office 3
+// First Meeting, Partner Call, Memo Draft, IC Review and Committed had ZERO rows
+// each — five of seven columns were permanent placeholders. A board that is 70%
+// empty scaffolding reads as a board with nothing on it.
+//
+// FAMILY OFFICE is Danny's own category, from his pipeline dump: "likely a family
+// office opportunity vs. Superior." It isn't a pass — it's the wrong door. Brandon's
+// family office invests Series A through pre-IPO; Superior writes $150-400K at
+// pre-seed. A company raising a Series A in Q1 2027 is a real opportunity for the
+// building and a bad fit for the fund, and the board had no word for that. Filing
+// those as "Passed" would have been a lie about three live relationships.
+//
+// The middle stages return when a deal actually reaches one. An empty column you
+// can't drag into is worse than no column: it implies a process that isn't running.
 const DEAL_STAGES = [
-  'Under Consideration', 'First Meeting', 'Partner Call',
-  'Memo Draft', 'IC Review', 'Committed', 'Passed',
+  'Under Consideration', 'Memo Draft', 'IC Review', 'Committed',
+  'Family office', 'Passed',
 ];
 
 const BAND_LABEL = { anchor: 'Anchor', memo: 'Memo', monitor: 'Monitor', pass: 'Pass', indeterminate: 'Held' };
@@ -249,8 +265,15 @@ export default function Pipeline() {
   );
 }
 
+// 'Density Resident' has 21 rows and was NOT in this list — so the biggest single
+// cohort on the admissions board fell through to KanbanBoard's fallback and
+// rendered AFTER the canonical stages, out of lifecycle order. Measured:
+//   Hold/Nurture 40 · Density Resident 21 · Not Admitted 20 · Sourced 18 ·
+//   Outreach 17 · First Call Complete 17 · First Call Scheduled 14 ·
+//   Active Resident 9 · Second Call Scheduled 6
+// 'Admitted', 'Alumni' and 'Second Call Complete' have zero and are dropped.
 const ADMISSIONS_STAGES = [
   'Sourced', 'Outreach', 'First Call Scheduled', 'First Call Complete',
-  'Second Call Scheduled', 'Second Call Complete', 'Admitted',
-  'Active Resident', 'Alumni', 'Hold/Nurture', 'Not Admitted',
+  'Second Call Scheduled', 'Density Resident', 'Active Resident',
+  'Hold/Nurture', 'Not Admitted',
 ];
