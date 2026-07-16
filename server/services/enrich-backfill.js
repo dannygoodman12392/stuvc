@@ -41,6 +41,13 @@ const { TERMINAL_STAGES } = require('../lib/airtableVocab');
 
 // Live cards, named company, on the board. `?` placeholders built from the vocab so
 // this list can never drift from the one the board uses.
+//
+// `represented_by_founder_id IS NULL` — a co-founder's row is the SAME COMPANY, and
+// enrichment is a fact about the company, not the person. Auvi Labs has two rows
+// (Satyansh Yeluri and Rishab Veldur), and the first run happily paid EnrichLayer
+// twice to fetch the identical roster onto both. Small money, but it's the same
+// mistake as counting Permute's $50K twice because it sits on two rows: treating
+// one company as two things.
 function liveCards(userId) {
   const holes = TERMINAL_STAGES.map(() => '?').join(',');
   return db.prepare(`
@@ -50,6 +57,7 @@ function liveCards(userId) {
       AND stage_status IS NOT NULL
       AND stage_status NOT IN (${holes})
       AND company IS NOT NULL AND TRIM(company) != ''
+      AND represented_by_founder_id IS NULL
     ORDER BY company
   `).all(userId, ...TERMINAL_STAGES);
 }

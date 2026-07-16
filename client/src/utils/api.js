@@ -287,6 +287,12 @@ export const api = {
     after(request(`/pipeline/${id}/stage`, { method: 'PATCH', body: JSON.stringify({ stage }) }), '/pipeline'),
   setPipelineTracks: (id, tracks) =>
     after(request(`/pipeline/${id}/tracks`, { method: 'PATCH', body: JSON.stringify({ tracks }) }), '/pipeline'),
+
+  // Fold a co-founder's row into their company's card, or (by: null) put it back on
+  // the board. Invalidates the board AND the card — the card gains/loses a
+  // co-founder block, and a stale card would show a fold that isn't there.
+  setRepresentedBy: (id, by) =>
+    after(request(`/pipeline/${id}/represented-by`, { method: 'PATCH', body: JSON.stringify({ by }) }), '/pipeline'),
   getPipelineCompany: (id, opts) => cachedGet(`/pipeline/${id}`, opts),
   // The card's writes. Each invalidates the card AND the board — editing a
   // company name or stage changes both, and a cache that forgets that shows him

@@ -403,10 +403,18 @@ async function syncFromAirtable(opts = {}) {
       diffs.push({ col, from: now, to: next });
     }
 
-    // Tracks: union. Airtable can add Danny to a board, never remove him from one.
-    const mergedTracks = mergeTracks(existing.pipeline_tracks, want.pipeline_tracks);
-    if (mergedTracks !== String(existing.pipeline_tracks || '')) {
-      diffs.push({ col: 'pipeline_tracks', from: existing.pipeline_tracks, to: mergedTracks });
+    // ── Tracks ──
+    // Union: Airtable can add Danny to a board, never remove him from one.
+    //
+    // UNLESS he has edited the badge himself. The badge does not publish to Airtable
+    // (his rule: "stage updates... But that's it"), so Airtable cannot know he
+    // switched Investment off — and the union would switch it back on tonight.
+    // Once he's touched it, Stu owns it and this leaves it alone.
+    if (!existing.tracks_set_by_user_at) {
+      const mergedTracks = mergeTracks(existing.pipeline_tracks, want.pipeline_tracks);
+      if (mergedTracks !== String(existing.pipeline_tracks || '')) {
+        diffs.push({ col: 'pipeline_tracks', from: existing.pipeline_tracks, to: mergedTracks });
+      }
     }
 
     if (existing.airtable_founder_record_id !== record.id) {

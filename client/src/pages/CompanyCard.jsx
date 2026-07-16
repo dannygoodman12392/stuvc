@@ -51,6 +51,18 @@ export default function CompanyCard() {
     }
   }
 
+  // Put a folded co-founder back on the board as their own card. The inverse of
+  // folding exists because folding is a view decision, not a deletion — Danny has
+  // to be able to change his mind without anything being gone.
+  async function unfold(founderId) {
+    try {
+      await api.setRepresentedBy(founderId, null);
+      load();
+    } catch (e) {
+      setErr(e.message);
+    }
+  }
+
   async function enrich() {
     setEnriching(true);
     setErr(null);
@@ -211,6 +223,53 @@ export default function CompanyCard() {
             <Field label="Email" value={c.email} onSave={(v) => save('email', v)} />
             <Field label="Illinois tie" value={c.chicago_connection} onSave={(v) => save('chicago_connection', v)} />
           </Block>
+
+          {/* ── The co-founders folded into this card ──
+              Danny: "Eric Mills and Scott Nelson are both showing for Permute...
+              Could we just have Scott and Kyle kept in?" They're off the BOARD, not
+              out of the product — Eric is still Permute's co-founder. Folding a
+              relationship out of sight to tidy a column would be deleting it. */}
+          {c.cofounders?.length > 0 && (
+            <Block label={c.cofounders.length > 1 ? 'Co-founders' : 'Co-founder'}>
+              {c.cofounders.map((p) => (
+                <div key={p.id} className="flex items-baseline gap-2 py-0.5">
+                  <span className="text-small text-ink flex-1 truncate">{p.name}</span>
+                  {p.role && <span className="text-mini text-ink-4 truncate">{p.role}</span>}
+                  {p.linkedin_url && (
+                    <a href={p.linkedin_url} target="_blank" rel="noreferrer" className="text-mini text-accent flex-none">in ↗</a>
+                  )}
+                  <button
+                    onClick={() => unfold(p.id)}
+                    title="Put them back on the board as their own card"
+                    className="text-mini text-ink-4 hover:text-ink flex-none"
+                  >
+                    unfold
+                  </button>
+                </div>
+              ))}
+            </Block>
+          )}
+
+          {/* This card is folded into another. Say so — a card that isn't on the
+              board otherwise reads as a bug rather than a decision. */}
+          {c.represented_by && (
+            <Block label="Folded into">
+              <div className="flex items-baseline gap-2 py-0.5">
+                <button
+                  onClick={() => nav(`/founders/${c.represented_by.id}`)}
+                  className="text-small text-accent flex-1 text-left truncate"
+                >
+                  {c.represented_by.company} · {c.represented_by.name}
+                </button>
+                <button onClick={() => unfold(c.id)} className="text-mini text-ink-4 hover:text-ink flex-none">
+                  unfold
+                </button>
+              </div>
+              <p className="text-mini text-ink-4 leading-snug pt-1">
+                This founder isn't on the board — their company is shown by that card.
+              </p>
+            </Block>
+          )}
 
           <Block label="Deal">
             <Field label="Stage" value={c.deal_status} onSave={(v) => save('deal_status', v)} />

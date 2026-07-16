@@ -112,26 +112,39 @@ test('pushStage sends the Admission Status field id and the exact stage string',
   assert.deepStrictEqual(calls[0].fields, { [vocab.FIELD.ADMISSION_STATUS]: 'Stage 2: Interviewed' });
 });
 
-test('pushTracks sends the Pipeline field id as an array of real options', async () => {
+// ── STAGE PUBLISHES. NOTHING ELSE DOES. ──
+// Danny: "I'm comfortable with you publishing stage updates to Airtable. But that's
+// it. I'm going to primarily work in Stu, and then choose to enter my own context
+// to the team view in Airtable depending on what I want them to see."
+//
+// So the track pusher is DELETED, not merely unused. An unused writer to a shared
+// base is one call site away from being a used one.
+test('there is no track pusher — the badge can never reach Airtable', () => {
   const sync = require('../services/airtable-sync');
-  const calls = [];
-  const patch = async (table, rec, fields) => { calls.push({ table, rec, fields }); return {}; };
-  const founder = { id: 1, name: 'T', airtable_founder_record_id: 'recX', pipeline_tracks: 'admissions' };
+  assert.strictEqual(sync.pushTracks, undefined, 'pushTracks must not exist');
 
-  await sync.pushTracks(founder, ['Resident', 'Investment'], { explicit: true, patch });
-  assert.deepStrictEqual(calls[0].fields, { [vocab.FIELD.PIPELINE]: ['Resident', 'Investment'] });
+  const src = read('services/airtable-sync.js');
+  assert.ok(!/FIELD\.PIPELINE/.test(src), 'nothing in the push service may address the Pipeline field');
 
-  // Junk never reaches Airtable — a multi-select rejects unknown options outright.
-  calls.length = 0;
-  await sync.pushTracks(founder, ['Resident', 'Nonsense'], { explicit: true, patch });
-  assert.deepStrictEqual(calls[0].fields, { [vocab.FIELD.PIPELINE]: ['Resident'] });
+  const pipeline = read('routes/pipeline.js');
+  const tracks = pipeline.match(/router\.patch\('\/:id\/tracks'[\s\S]*?\n\}\);/);
+  assert.ok(tracks, 'the badge endpoint must exist');
+  assert.ok(!/explicit: true/.test(tracks[0]), 'the badge endpoint must never publish to Airtable');
+});
 
-  // Clearing every badge is a real, intended state: it's how Danny takes a company
-  // off both tracks, and the nightly union can only stop re-adding a track if the
-  // removal actually reaches Airtable.
-  calls.length = 0;
-  await sync.pushTracks(founder, [], { explicit: true, patch });
-  assert.deepStrictEqual(calls[0].fields, { [vocab.FIELD.PIPELINE]: [] });
+// ── AND THE CONSEQUENCE OF THAT ──
+// The badge not publishing means Airtable cannot learn Danny switched Investment
+// off. The nightly sync unions tracks, so it would switch it straight back on.
+// `tracks_set_by_user_at` is what stops his edit being undone overnight.
+test('once Danny edits a badge, the sync stops unioning that founder\'s tracks', () => {
+  const pipeline = read('routes/pipeline.js');
+  const tracks = pipeline.match(/router\.patch\('\/:id\/tracks'[\s\S]*?\n\}\);/);
+  assert.ok(/tracks_set_by_user_at = CURRENT_TIMESTAMP/.test(tracks[0]),
+    'editing the badge must record that Danny owns this founder\'s tracks');
+
+  const imp = read('services/airtable-import.js');
+  assert.ok(/if \(!existing\.tracks_set_by_user_at\)/.test(imp),
+    'the sync must skip the track union for founders whose badge Danny has edited');
 });
 
 test('a stage Airtable does not have never reaches the network', async () => {
@@ -153,7 +166,6 @@ test('the gate still refuses a push without explicit:true, stub or not', async (
   const founder = { id: 1, name: 'T', airtable_founder_record_id: 'recX' };
 
   assert.deepStrictEqual(await sync.pushStage(founder, 'Stage 2: Interviewed', { patch }), { skipped: 'not_explicit' });
-  assert.deepStrictEqual(await sync.pushTracks(founder, ['Resident'], { patch }), { skipped: 'not_explicit' });
   assert.strictEqual(called, false, 'a non-explicit call must not touch the network at all');
 });
 
@@ -168,16 +180,53 @@ test('an orphan with no Airtable record is skipped, not errored', async () => {
   assert.strictEqual(called, false);
 });
 
+// ── THE NARROW COLUMN LIST, CAUGHT STRUCTURALLY ──
+// PIPELINE_SQL lists columns explicitly (it runs over ~190 rows and a wide payload
+// is paid on every page load). That narrowness has now shipped the SAME bug three
+// times: a column the board reasons about is missing, so the check reads
+// `undefined`, and the board silently does the wrong thing while the card — which
+// selects f.* — does the right one.
+//   · investment_amount omitted → every portfolio company rendered as "met"
+//   · company_linkedin_url omitted → "add the company LinkedIn URL" on a card that had one
+//   · represented_by_founder_id omitted → both Permute cards stayed on the board
+// So: any column the GET handler references must actually be selected.
+test('every founders column the board filters on is in PIPELINE_SQL', () => {
+  const src = read('routes/pipeline.js');
+  const sql = src.match(/const PIPELINE_SQL = `([\s\S]*?)`;/);
+  assert.ok(sql, 'PIPELINE_SQL must exist');
+  const selected = sql[1];
+
+  // Columns the board's own logic depends on, by name.
+  const required = [
+    'stage_status',              // the merged board's axis
+    'represented_by_founder_id', // folded co-founders are filtered out
+    'pipeline_tracks',           // the R/I badge
+    'investment_amount',         // stageOf() derives "invested" from it
+    'airtable_next_step',        // rendered on the card
+  ];
+  for (const col of required) {
+    assert.ok(
+      new RegExp(`f\\.${col}\\b`).test(selected),
+      `PIPELINE_SQL does not select f.${col} — the board reasons about it, so it will read undefined`
+    );
+  }
+});
+
 // ── 7. ONLY A HUMAN DRAG MAY WRITE TO AIRTABLE ──
 // Danny chose "Drag in Stu, and it writes to Airtable". That relaxes the rule for
 // HIS action, not for background jobs. The gate stays; the two board endpoints are
 // the only callers allowed through it.
-test('explicit Airtable writes come only from the two board endpoints', () => {
+test('the stage drag is the ONLY explicit Airtable write in the codebase', () => {
   const pipeline = read('routes/pipeline.js');
   const stage = pipeline.match(/router\.patch\('\/:id\/stage'[\s\S]*?\n\}\);/);
-  const tracks = pipeline.match(/router\.patch\('\/:id\/tracks'[\s\S]*?\n\}\);/);
   assert.ok(stage && /explicit: true/.test(stage[0]), 'the stage drag must push explicitly');
-  assert.ok(tracks && /explicit: true/.test(tracks[0]), 'the badge toggle must push explicitly');
+
+  // Count every explicit:true in real CODE — comments talk about the flag and must
+  // not be counted, or this test measures prose. Danny scoped the write to stage
+  // updates and nothing else, so there is exactly one.
+  const code = pipeline.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
+  const hits = (code.match(/explicit:\s*true/g) || []).length;
+  assert.strictEqual(hits, 1, `routes/pipeline.js has ${hits} explicit Airtable writes in code; only the stage drag may publish`);
 
   // No scheduled job may pass the flag.
   for (const f of ['index.js', 'services/airtable-import.js']) {

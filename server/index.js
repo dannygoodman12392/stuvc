@@ -149,6 +149,19 @@ try {
       db.prepare("INSERT INTO migration_flags (key) VALUES ('stage_status_backfill_v1')").run();
       console.log(`[Migration] stage_status: ${r.mirrored} mirrored, ${r.derived} derived, ${r.unresolved.length} left without a stage (untriaged sourcing output — correct).`);
     }
+
+    // ── Fold the two co-founder rows Danny named ──
+    // "Could we just have Scott and Kyle kept in?" Nobody is deleted — Eric's and
+    // Ehren's rows point at their company's card and are listed on it. Flagged, and
+    // it only ever folds those two by name, so a re-run can't cascade.
+    const cofoundersFlag = db.prepare("SELECT * FROM migration_flags WHERE key = 'cofounder_fold_v1'").get();
+    if (!cofoundersFlag) {
+      const backfillCofounders = require('./backfill-cofounders');
+      const r = backfillCofounders();
+      db.prepare("INSERT INTO migration_flags (key) VALUES ('cofounder_fold_v1')").run();
+      for (const f of r.folded) console.log(`[Migration] cofounder: ${f.company} keeps ${f.kept}, folded ${f.folded}`);
+      for (const s of r.skipped) console.log(`[Migration] cofounder: ${s.company} skipped — ${s.reason}`);
+    }
     // ── Incremental Airtable → Stu sync ──
     // This used to run on EVERY startup, unflagged, while every migration around
     // it is flag-guarded. It's fired without await so it doesn't delay listen(),

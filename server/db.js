@@ -349,6 +349,48 @@ addColumn('founders', 'airtable_synced_at', 'DATETIME');
 addColumn('founders', 'stage_status', 'TEXT');
 db.exec(`CREATE INDEX IF NOT EXISTS idx_founders_stage_status ON founders(stage_status);`);
 
+// ── ONCE DANNY TOUCHES A BADGE, STU OWNS IT ──
+// Danny: "I'm comfortable with you publishing stage updates to Airtable. But
+// that's it. I'm going to primarily work in Stu, and then choose to enter my own
+// context to the team view in Airtable depending on what I want them to see."
+//
+// So the Resident/Investment badge never publishes. But the nightly sync UNIONS
+// tracks from Airtable (it may add a track, never remove one — removing a company
+// from a board is a decision, not a sync). Without this column those two rules
+// collide: Danny switches Investment OFF in Stu, and at 5:45am an Airtable record
+// that still says Investment switches it back ON. His edit, silently undone
+// overnight — the same failure that let this board lie for four months.
+//
+// Set the moment he edits a badge. The sync reads it and leaves that founder's
+// tracks alone from then on: his edit is the more recent decision.
+addColumn('founders', 'tracks_set_by_user_at', 'DATETIME');
+
+// ── ONE CARD PER COMPANY ──
+// Danny: "There are a few companies where there are multiple entries, it tends to
+// be for companies we've invested in (Eric Mills and Scott Nelson are both showing
+// for Permute, and Kyle DeSana and Ehren are showing for Siftree, for example).
+// Could we just have Scott and Kyle kept in?"
+//
+// These are not duplicate records — they're CO-FOUNDERS. Airtable's Founder
+// Ecosystem table is one row per person (residency is per-person: people get
+// desks), so two founders of one company are two legitimate rows up there. But this
+// board is a board of COMPANIES, and two cards for Permute is one company printed
+// twice.
+//
+// It was also quietly corrupting the money: investment_amount is stored on BOTH
+// rows, so Permute's $50K and Siftree's $300K each counted twice in any total.
+//
+// So: nobody is deleted. The co-founder's row points at the card that represents
+// their company. The board shows rows where this is NULL; the card lists the rest
+// as co-founders. Reversible, and Danny can repoint it from the card — which is why
+// this is a column and not a DELETE.
+//
+// DELIBERATELY NOT AUTOMATIC ACROSS THE BOARD: company names like "Stealth" and
+// "Not Yet" are form placeholders, not companies. Three unrelated founders share
+// "Not Yet". Grouping by name alone would merge strangers.
+addColumn('founders', 'represented_by_founder_id', 'INTEGER REFERENCES founders(id)');
+db.exec(`CREATE INDEX IF NOT EXISTS idx_founders_represented_by ON founders(represented_by_founder_id);`);
+
 // ── The company card's automated half (pipeline/company-enrich.js) ──
 // Danny: "company pages on LinkedIn show how many people work there and have been
 // hired at these companies over time... I'll pay for enrichment."

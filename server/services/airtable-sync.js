@@ -70,21 +70,28 @@ function gatedOut(opts, founder, kind) {
 // ══════════════════════════════════════════════════════════════════════════
 // THE MERGED BOARD'S WRITE PATH (2026-07-16)
 //
-// Danny chose this explicitly when asked what a drag inside Stu should do:
-// "Drag in Stu, and it writes to Airtable" — so the board he works in and the
-// base his team reads never disagree, and tomorrow's 5:45am sync finds its own
-// answer already there instead of reverting him.
+// EXACTLY ONE THING PUBLISHES: the stage. Danny drew the line himself —
 //
-// This does NOT loosen the standing rule. The rule is that no AGENT writes to the
-// team's base — nothing scheduled, nothing inferred, nothing fired off in the
-// background. Every writer below still refuses without { explicit: true }, and the
-// only callers that pass it are the two endpoints behind a human drag. A cron can
-// never reach these.
+//   "I'm comfortable with you publishing stage updates to Airtable. But that's it.
+//    I'm going to primarily work in Stu, and then choose to enter my own context to
+//    the team view in Airtable depending on what I want them to see."
 //
-// Unlike the two legacy pushers above, these send Airtable's OWN vocabulary
-// straight through (lib/airtableVocab) — no stuAdmissionsToAirtable() translation,
-// because the board now speaks Airtable's words natively. Nothing to mistranslate.
-// Field IDs, not names, so a rename in Airtable's UI can't silently 422 us.
+// So Stu is where he works and Airtable is what his team sees, and he decides what
+// crosses. The stage crosses because the team's view of where a deal stands must
+// not silently disagree with his. Everything else — the Resident/Investment badge,
+// his notes, Stu's read — stays in Stu until he says otherwise. There was a
+// pushTracks() here; it is deleted rather than left unused, because an unused
+// writer to a shared base is one call site away from being a used one.
+//
+// This does NOT loosen the standing rule. No AGENT writes to the team's base —
+// nothing scheduled, nothing inferred, nothing fired off in the background. Every
+// writer below still refuses without { explicit: true }, and the only caller that
+// passes it is the endpoint behind Danny's own drag. A cron can never reach it.
+//
+// Unlike the legacy pushers below, this sends Airtable's OWN vocabulary straight
+// through (lib/airtableVocab) — no stuAdmissionsToAirtable() translation, because
+// the board now speaks Airtable's words natively. Nothing to mistranslate. Field
+// IDs, not names, so a rename in Airtable's UI can't silently 422 us.
 // ══════════════════════════════════════════════════════════════════════════
 
 const vocab = require('../lib/airtableVocab');
@@ -111,25 +118,6 @@ async function pushStage(founder, stage, opts = {}) {
   } catch (err) {
     logSync(founder.id, 'founder_ecosystem', 'Admission Status', founder.stage_status, stage, recordId, 'failed', err.message);
     console.error(`[AirtableSync] ✗ ${founder.name} stage push failed:`, err.message);
-    return { error: err.message };
-  }
-}
-
-/** Push the Resident/Investment badge. `tracks` is an array of vocab.TRACKS. */
-async function pushTracks(founder, tracks, opts = {}) {
-  if (gatedOut(opts, founder, 'tracks')) return { skipped: 'not_explicit' };
-  const recordId = founder.airtable_founder_record_id;
-  if (!recordId) return { skipped: 'no_airtable_record' };
-
-  const clean = (tracks || []).filter((t) => vocab.TRACKS.includes(t));
-  const patch = opts.patch || patchAirtableRecord;
-  try {
-    await patch(vocab.FOUNDER_TABLE, recordId, { [vocab.FIELD.PIPELINE]: clean });
-    logSync(founder.id, 'founder_ecosystem', 'Pipeline', founder.pipeline_tracks, clean.join(','), recordId, 'success', null);
-    return { pushed: true, tracks: clean };
-  } catch (err) {
-    logSync(founder.id, 'founder_ecosystem', 'Pipeline', founder.pipeline_tracks, clean.join(','), recordId, 'failed', err.message);
-    console.error(`[AirtableSync] ✗ ${founder.name} tracks push failed:`, err.message);
     return { error: err.message };
   }
 }
@@ -201,4 +189,4 @@ async function pushDealChange(founder, oldStatus, opts = {}) {
   }
 }
 
-module.exports = { pushAdmissionsChange, pushDealChange, pushStage, pushTracks };
+module.exports = { pushAdmissionsChange, pushDealChange, pushStage };

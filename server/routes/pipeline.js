@@ -54,6 +54,14 @@ const PIPELINE_SQL = `
     f.deal_status, f.admissions_status, f.pipeline_tracks, f.source,
     -- The merged board's axis and badge, plus the Airtable link the card offers.
     f.stage_status, f.airtable_next_step, f.airtable_founder_record_id,
+    -- Load-bearing, and this file's third casualty of the same omission. The board
+    -- filters folded co-founders on represented_by_founder_id; leaving the column
+    -- out of this list made that test read undefined -- truthy-negated for every
+    -- row -- so both Permute cards stayed on the board, while the CARD (which
+    -- selects f.*) correctly showed Eric as a co-founder. Identical in shape to the
+    -- investment_amount and company_linkedin_url scars documented below. If you add
+    -- a column the board reasons about, it goes here.
+    f.represented_by_founder_id,
     f.chicago_connection, f.caliber_tier, f.next_action, f.arr,
     f.deal_entered_at, f.created_at,
     -- Load-bearing: stageOf() derives the invested stage from this. Omitting it
@@ -173,6 +181,16 @@ router.get('/', (req, res) => {
   // to let this product do. Untriaged sourcing output belongs in Sourcing.
   // `?all=1` still returns them, so nothing is hidden, only un-promoted.
   if (req.query.all !== '1') out = out.filter((r) => !!r.stage_status);
+
+  // ── ONE CARD PER COMPANY ──
+  // Danny: "Eric Mills and Scott Nelson are both showing for Permute, and Kyle
+  // DeSana and Ehren are showing for Siftree... Could we just have Scott and Kyle
+  // kept in?"
+  //
+  // The co-founder isn't deleted — their row points at the card that represents the
+  // company, and the card lists them. This board is a board of companies; two cards
+  // for Permute is one company printed twice.
+  if (req.query.all !== '1') out = out.filter((r) => !r.represented_by_founder_id);
 
   if (track) out = out.filter((r) => (r.pipeline_tracks || '').includes(track));
   if (geo === 'il') out = out.filter((r) => !!r.chicago_connection);
@@ -451,6 +469,24 @@ router.get('/:id', (req, res) => {
   res.json({
     ...row,
     funnel_stage: stageOf(row),
+
+    // ── The co-founders folded into this card ──
+    // Folding a co-founder off the board must not make them disappear from the
+    // product — that would be deleting a relationship to tidy a column. Eric Mills
+    // is still Permute's co-founder; he just isn't a second Permute card. The card
+    // is where he lives now, so the card has to say so.
+    cofounders: db.prepare(`
+      SELECT id, name, role, email, linkedin_url, airtable_founder_record_id
+      FROM founders WHERE represented_by_founder_id = ? AND is_deleted = 0
+      ORDER BY name
+    `).all(req.params.id),
+
+    // And if THIS card is itself folded into another, say which — otherwise a card
+    // that isn't on the board looks like a bug rather than a decision.
+    represented_by: row.represented_by_founder_id
+      ? db.prepare('SELECT id, name, company FROM founders WHERE id = ?').get(row.represented_by_founder_id)
+      : null,
+
     assessments: db
       .prepare(
         `SELECT id, conviction_score, conviction_band, evidence_rung, status, assessment_type, created_at
@@ -528,7 +564,7 @@ router.patch('/:id', (req, res) => {
 });
 
 // ══════════════════════════════════════════════════════════════════════════
-// THE MERGED BOARD'S TWO WRITES
+// THE MERGED BOARD'S TWO WRITES — AND ONLY ONE OF THEM LEAVES STU
 //
 // Danny: "Let's merge Investment and Admissions pipelines, consolidating.
 // Investment and/or Admissions Pipeline should be a badge I can edit on each
@@ -536,12 +572,20 @@ router.patch('/:id', (req, res) => {
 //
 // So there is ONE board with ONE stage axis in Airtable's words, and the
 // Resident/Investment track is a badge. Exactly two things move: the stage (drag)
-// and the badge (click). Both live here, and both push to Airtable — his choice,
-// asked and answered: "Drag in Stu, and it writes to Airtable", so the base his
-// team reads never disagrees with the board he works in, and the 5:45am sync finds
-// its own answer rather than reverting him.
+// and the badge (click).
 //
-// These are the ONLY two callers in the codebase that pass { explicit: true }.
+// THE STAGE PUBLISHES. THE BADGE DOES NOT. Danny drew that line himself:
+//
+//   "I'm comfortable with you publishing stage updates to Airtable. But that's it.
+//    I'm going to primarily work in Stu, and then choose to enter my own context to
+//    the team view in Airtable depending on what I want them to see."
+//
+// Stu is where he works; Airtable is what the team sees; he decides what crosses.
+// The stage crosses because the team's view of where a deal stands must not
+// silently disagree with his, and because the 5:45am sync would otherwise revert
+// his drag by morning. The badge stays home.
+//
+// The stage drag is the ONLY caller in this file that passes { explicit: true }.
 // Every scheduled job is still refused by the gate in services/airtable-sync.js.
 // A human pressing a card is not an agent; that distinction is the whole rule.
 //
@@ -604,22 +648,78 @@ router.patch('/:id/tracks', async (req, res) => {
   }
 
   const csv = vocab.tracksToStu(tracks);
-  db.prepare('UPDATE founders SET pipeline_tracks = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
-    .run(csv, founder.id);
+  db.prepare(
+    'UPDATE founders SET pipeline_tracks = ?, tracks_set_by_user_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+  ).run(csv, founder.id);
 
-  // Pushing matters more here than it looks. The nightly sync UNIONS tracks, so a
-  // badge Danny switches off in Stu would be switched straight back on tomorrow by
-  // an Airtable record that still says Investment. Sending the change up is what
-  // makes turning a badge OFF stick at all.
-  let airtable = { skipped: 'no_airtable_record' };
-  try {
-    airtable = await airtableSync.pushTracks(founder, tracks, { explicit: true });
-  } catch (e) {
-    airtable = { error: e.message };
+  // ── THE BADGE DOES NOT GO TO AIRTABLE ──
+  // Danny, asked how far the Airtable write should go: "I'm comfortable with you
+  // publishing stage updates to Airtable. But that's it. I'm going to primarily
+  // work in Stu, and then choose to enter my own context to the team view in
+  // Airtable depending on what I want them to see."
+  //
+  // So the stage publishes and nothing else does. That has a consequence which has
+  // to be handled here rather than discovered later: the nightly sync UNIONS tracks
+  // (Airtable may add a track, never remove one). With no push, a badge Danny
+  // switches OFF in Stu would be switched straight back ON at 5:45am by an Airtable
+  // record that still says Investment — his edit silently undone overnight, which
+  // is the exact class of bug that made this board lie for four months.
+  //
+  // `tracks_set_by_user_at` is the fix: once Danny has touched a founder's badge,
+  // Stu owns that founder's tracks and the sync stops unioning them. His edit is
+  // the more recent decision and it stands.
+  const updated = cardRow(req.user.id, founder.id);
+  res.json({
+    ...updated,
+    funnel_stage: stageOf(updated),
+    airtable: { skipped: 'tracks_are_stu_only' },
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// PATCH /api/pipeline/:id/represented-by  { by: <founderId> | null }
+//
+// Fold a co-founder's row into the card that represents their company, or unfold it.
+// Danny: "Could we just have Scott and Kyle kept in?"
+//
+// Nothing is deleted. `by: null` puts the row back on the board — which is the whole
+// reason this is a pointer and not a DELETE. He asked for "a clear way for me to
+// manually add, edit, and delete anything in pipeline"; a delete you can't undo
+// isn't a feature, it's a trap on a board built out of relationships.
+// ══════════════════════════════════════════════════════════════════════════
+router.patch('/:id/represented-by', (req, res) => {
+  const row = db.prepare('SELECT * FROM founders WHERE id = ? AND created_by = ? AND is_deleted = 0')
+    .get(req.params.id, req.user.id);
+  if (!row) return res.status(404).json({ error: 'not found' });
+
+  const by = req.body?.by ?? null;
+  if (by === null) {
+    db.prepare('UPDATE founders SET represented_by_founder_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+      .run(row.id);
+    return res.json(cardRow(req.user.id, row.id));
   }
 
-  const updated = cardRow(req.user.id, founder.id);
-  res.json({ ...updated, funnel_stage: stageOf(updated), airtable });
+  // SELECT * — the guard below reads represented_by_founder_id, and a narrow column
+  // list would hand it `undefined` and pass silently. That exact bug has already
+  // shipped from this file once (see cardRow's comment); it is not shipping twice.
+  const target = db.prepare('SELECT * FROM founders WHERE id = ? AND created_by = ? AND is_deleted = 0')
+    .get(by, req.user.id);
+  if (!target) return res.status(400).json({ error: 'that card does not exist' });
+  if (Number(by) === row.id) return res.status(400).json({ error: 'a card cannot represent itself' });
+
+  // One hop only. If the target is itself folded into someone else, pointing at it
+  // would build a chain the board has to walk — and a cycle would hide both rows
+  // from the board forever with no way back through the UI.
+  if (target.represented_by_founder_id) {
+    return res.status(400).json({
+      error: 'that card is itself folded into another one',
+      detail: 'Point at the card that actually shows on the board.',
+    });
+  }
+
+  db.prepare('UPDATE founders SET represented_by_founder_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+    .run(target.id, row.id);
+  res.json(cardRow(req.user.id, row.id));
 });
 
 // ── POST /api/pipeline/enrich-backfill — resolve + enrich the whole live board ──
