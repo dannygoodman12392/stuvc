@@ -68,11 +68,46 @@ async function ingestUrl({ founderId, url, userId = 1, deps = {} }) {
   }
   const r = data.results[0];
   const text = String(r.text || '').trim();
+  const title = String(r.title || '');
 
   // A page that returned no text is a FAILURE, not an empty source. Storing it
   // would put a row on the card that looks ingested and can never yield anything.
   if (text.length < 80) {
     return { error: `${host} returned almost no text (${text.length} chars) — probably JS-rendered or gated.` };
+  }
+
+  // ══════════════════════════════════════════════════════════════════════
+  // A LOGIN WALL IS NOT A SOURCE.
+  //
+  // Caught on the first real use: cadrian.ai returned `"Sign in | Cadrian"`, 269
+  // chars, and sailed straight through — because 269 > 80 and my only test was
+  // length. That's the exact failure I blocked LinkedIn for ("a login wall HAS
+  // text, so it would sail through as a source and produce confident signals
+  // about nothing") — and then let in through the front door for every other
+  // host, having written the reason down two hours earlier.
+  //
+  // Length alone can't tell an auth page from a thin one. The tell is the CONTENT:
+  // a real company page does not consist of the words "sign in" and nothing else.
+  // Requiring BOTH signals (auth vocabulary AND implausibly short) keeps a genuine
+  // page that merely has a login link in the nav.
+  // ══════════════════════════════════════════════════════════════════════
+  // The tell is not that auth words APPEAR — every real site has "Sign in" in its
+  // nav. My first pass tested exactly that and refused the genuine permute.ai
+  // page, which is worse than the bug: a guard that blocks real sources gets
+  // switched off. The tell is that auth words are ALL THERE IS.
+  //
+  // Two independent signals, and the title is the strong one: a real company page
+  // is not titled "Sign in". The body test only fires when the page both LEADS
+  // with auth vocabulary and is too short to contain anything else.
+  const AUTH_WORDS = /\b(sign in|sign up|log ?in|create (an )?account|forgot password|continue with (google|github|sso)|access denied|403 forbidden|page not found|enable javascript|verify you are human|are you a robot)\b/i;
+  const titleIsGate = AUTH_WORDS.test(title) || /^\s*(404|403|error)\b/i.test(title);
+  const bodyIsGate = AUTH_WORDS.test(text.slice(0, 160)) && text.length < 700;
+
+  if (titleIsGate || bodyIsGate) {
+    return {
+      error: `${host} served a login or error page, not content.`,
+      detail: `Got "${title || text.slice(0, 40)}" (${text.length} chars). If it's behind auth or JS-rendered, paste the text in as a note instead.`,
+    };
   }
 
   const s = recordSource({

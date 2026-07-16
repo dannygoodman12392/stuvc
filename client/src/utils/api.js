@@ -270,6 +270,38 @@ export const api = {
   updatePipelineCompany: (id, body) =>
     after(request(`/pipeline/${id}`, { method: 'PATCH', body: JSON.stringify(body) }), '/pipeline'),
   enrichPipelineCompany: (id) => after(request(`/pipeline/${id}/enrich`, { method: 'POST' }), `/pipeline/${id}`),
+
+  // ── The source log: everything Danny feeds a company. ──
+  // These endpoints existed for hours with no UI on top — the honesty gate, the
+  // extractor and four ingest pipes were reachable only by curl. A substrate
+  // nobody can drive is a substrate that doesn't exist.
+  getCompanySources: (id, opts) => cachedGet(`/companies/${id}/sources`, opts),
+  addSourceUrl: (id, url) =>
+    after(request(`/companies/${id}/sources/url`, { method: 'POST', body: JSON.stringify({ url }) }), `/companies/${id}`),
+  addSourceNote: (id, body) =>
+    after(request(`/companies/${id}/sources/note`, { method: 'POST', body: JSON.stringify(body) }), `/companies/${id}`),
+  // multipart — NOT request(), which forces Content-Type: application/json and
+  // would strip the boundary, so multer sees no file and every upload 400s.
+  uploadDeck: async (id, file) => {
+    const fd = new FormData();
+    fd.append('file', file);
+    const res = await fetch(`${API_BASE}/companies/${id}/sources/deck`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${getToken()}` },
+      body: fd,
+    });
+    const d = await res.json().catch(() => ({ error: 'Upload failed' }));
+    if (!res.ok) { const e = new Error(d.error || 'Upload failed'); e.detail = d.detail; throw e; }
+    invalidate(`/companies/${id}`);
+    return d;
+  },
+  extractSignals: (id, sourceId) =>
+    after(request(`/companies/${id}/sources/${sourceId}/extract`, { method: 'POST' }), `/companies/${id}`),
+  deleteSource: (id, sourceId) =>
+    after(request(`/companies/${id}/sources/${sourceId}`, { method: 'DELETE' }), `/companies/${id}`),
+  // Run a conviction read from the sources already on the card — no re-uploading.
+  runCardRead: (id) =>
+    after(request(`/companies/${id}/read`, { method: 'POST' }), '/pipeline', '/assessments'),
   addCompanyNote: (id, body) =>
     after(request(`/pipeline/${id}/notes`, { method: 'POST', body: JSON.stringify(body) }), `/pipeline/${id}`),
   updateCompanyNote: (id, noteId, body) =>
