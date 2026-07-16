@@ -65,6 +65,63 @@ const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 // layer: two identical strings on one row makes the eye compare them, find
 // nothing, and move on.
 // ══════════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════════
+// WHY THEY'RE HERE — the elevated reasoning, not a company blurb.
+//
+// Danny, 2026-07-16: "a lot of the entries are...odd...it just says the person's
+// name. If the intention is to show why they're here, there should be some
+// elevated reasoning. They are an exited founder. They're in a notable
+// accelerator. They go to a prestigious university."
+//
+// He's right, and my first pass answered the wrong question. I made this column
+// show what the COMPANY DOES ("AI-powered operations management platform"), which
+// is better than a name and still isn't the reason the scout picked them.
+//
+// The reasoning was in the database the whole time. caliber_signals, for Geoff
+// Segal:
+//   ["Prior exit", "YC alum", "Strong traction (revenue/users)",
+//    "Raised institutional capital",
+//    "Repeat founder: built TaxProper (YC S19, acquired), now FullSeam (YC W26)",
+//    "YC twice: S19 (TaxProper) and W26 (FullSeam)"]
+//
+// Two kinds of entry in one array: short TAGS ("Prior exit") and long EVIDENCED
+// strings ("Prior exit: 'Acquired by Opendoor (NASDAQ: OPEN) in 2022'"). The tags
+// belong in the row — they're scannable at 32px. The evidenced ones belong in the
+// study panel, where he's already decided to look closer.
+//
+// Coverage is honest and uneven:
+//   exa (23)          caliber_signals on 22, pedigree on 20   — rich
+//   yc_directory (23) breakout_signals only                   — thin
+//   pre_program (15)  breakout_signals only                   — thin
+//
+// For the thin rows the HEADLINE already carries the reasoning ("Founder at
+// Floracene (YC S26). Previously Tech Lead at Palantir"), so it wins there.
+// ══════════════════════════════════════════════════════════════════════════
+
+// Signals that assert nothing. "actively building" fires on the word "founder"
+// appearing in a bio — in a table where every row is a founder — and it is on 268
+// of 624 rows carrying the identical score. A tag that is always true is not a
+// reason; it's noise wearing a signal's clothes.
+const JUNK_SIGNAL = /^(actively building|founder|building|startup|entrepreneur)$/i;
+
+// A tag is the scannable half: short, no embedded evidence quote.
+const isTag = (s) => s && s.length <= 46 && !/:\s*['"]/.test(s);
+
+function whyOf(r) {
+  const tags = [...parseArr(r.caliber_signals), ...parseArr(r.pedigree_signals)]
+    .filter((s) => isTag(s) && !JUNK_SIGNAL.test(String(s).trim()));
+
+  if (tags.length) return [...new Set(tags)];
+
+  // Thin rows: the headline IS the reasoning, when it isn't just the name.
+  const h = String(r.headline || '').trim();
+  if (h && !isJustTheName(h, r.name)) return null; // signalOf renders it as prose
+
+  // Last resort — breakout tags, minus the junk.
+  const weak = parseArr(r.breakout_signals).filter((s) => !JUNK_SIGNAL.test(String(s).trim()));
+  return weak.length ? [...new Set(weak)] : null;
+}
+
 // Is this string just the person's name wearing a different hat?
 // Not exact equality — that missed "Amrit Kanesa-thasan" for name "Amrit Kanesa",
 // which sailed through and rendered the name in the signal column anyway. Either
@@ -349,8 +406,19 @@ export default function Sourcing() {
 
               {/* The reason this stranger is in front of him. Without it the row is
                   just a name, and a name is not a reason to read anything. */}
-              <span className="flex-[3] min-w-0 text-ink-2 truncate" title={r.headline || ''}>
-                {signalOf(r) || <span className="text-ink-4">no signal recorded</span>}
+              {/* Reasoning first, prose second. A row that can say "Prior exit ·
+                  YC alum · Raised institutional capital" should never spend its
+                  width on a product description — Danny is deciding whether this
+                  PERSON is worth a call, and the tags answer that in one glance
+                  where a sentence needs a read. */}
+              <span className="flex-[3] min-w-0 truncate" title={reasonTitle(r)}>
+                {whyOf(r) ? (
+                  <Why tags={whyOf(r)} />
+                ) : signalOf(r) ? (
+                  <span className="text-ink-2">{signalOf(r)}</span>
+                ) : (
+                  <span className="text-ink-4">no signal recorded</span>
+                )}
               </span>
 
               {/* Geography is the moat, so the tie is a column and its evidence is on
@@ -627,6 +695,60 @@ function ScoutState({ data, running, onRun }) {
       </button>
     </div>
   );
+}
+
+// ── The reasoning, rendered. ──
+// Ranked, not alphabetical: the reason Danny takes the call leads. A prior exit
+// and "strong traction" are not equal claims, and whichever lands first is the one
+// that gets read at 32px — the rest truncate.
+const SIGNAL_RANK = [
+  /prior exit|acquired|exited/i,          // the strongest thing a founder can be
+  /repeat|serial|second-time|\bYC twice/i,
+  /YC|y combinator|techstars|a16z|speedrun|thiel|z fellows|neo|pear|on deck/i, // picked by someone good
+  /raised|institutional capital|backed by/i,
+  /elite-company|ex-|worked at/i,
+  /wharton|mba|phd|stanford|harvard|mit|chicago|northwestern|illinois|uiuc/i,   // school
+  /traction|revenue|users|shipped at scale/i,
+];
+
+function rankOf(tag) {
+  const i = SIGNAL_RANK.findIndex((re) => re.test(tag));
+  return i === -1 ? SIGNAL_RANK.length : i;
+}
+
+function Why({ tags }) {
+  const ranked = [...tags].sort((a, b) => rankOf(a) - rankOf(b));
+
+  // ONE string, ONE truncation. Not a flex row of chips.
+  //
+  // Two failed passes are worth recording. First I pinned each tag with
+  // flex-shrink-0, so they didn't truncate at all — they bled through into the
+  // Illinois column and rendered "Elite-ccurrent · Chicago". Then I let each tag
+  // truncate, and flex distributed the squeeze evenly, producing four useless
+  // fragments: "YC… · YC P26 admit (cur… · Raised inst… · Elite-company …".
+  //
+  // A chopped tag is worth nothing — "YC…" says less than nothing, because the
+  // eye stops to parse it. So: join into one sentence and let it clip ONCE, at
+  // the end, where a trailing ellipsis means "there's more" instead of "this word
+  // is broken". Ranking is what makes the clip safe — the prior exit survives it.
+  return (
+    <span className="text-mini text-ink-2 truncate block">
+      {ranked.map((t, i) => (
+        <span key={i}>
+          {i > 0 && <span className="text-ink-4"> · </span>}
+          {t}
+        </span>
+      ))}
+    </span>
+  );
+}
+
+// Everything, including the evidenced long-form signals, on hover. The row shows
+// the claim; the tooltip shows the receipt.
+function reasonTitle(r) {
+  const all = [...parseArr(r.caliber_signals), ...parseArr(r.pedigree_signals), ...parseArr(r.breakout_signals)]
+    .filter((s) => !JUNK_SIGNAL.test(String(s).trim()));
+  return all.length ? all.join('\n') : r.headline || '';
 }
 
 function Section({ label, children }) {
