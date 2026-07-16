@@ -202,14 +202,52 @@ router.get('/inbox', (req, res) => {
     SELECT id, name, company, company_one_liner, role, source, headline,
            confidence_score, confidence_rationale, chicago_connection, location_city,
            location_type, caliber_tier, caliber_score, breakout_score, linkedin_url,
-           github_url, website_url, list_scope, status, created_at
+           github_url, website_url, list_scope, status, created_at,
+           -- The study panel's whole point, and it was reading three columns this
+           -- query never selected. Sourcing.jsx:353 says "Everything here is
+           -- EVIDENCE" above three sections that silently rendered nothing,
+           -- because "'evidence_map' in row" was false and undefined skips a block
+           -- without erroring. Half the panel was dead for 23 of 61 rows that HAVE
+           -- the data. Same narrow-column-list trap as the company card.
+           evidence_map, caliber_signals, builder_signals
     FROM sourced_founders
     WHERE user_id = ? AND status IN ('pending','starred')
       AND COALESCE(do_not_resurface, 0) = 0
       AND list_scope = COALESCE(?, 'pipeline')
     ORDER BY
       CASE status WHEN 'starred' THEN 0 ELSE 1 END,
-      COALESCE(caliber_score, breakout_score, confidence_score, 0) DESC,
+      -- ══════════════════════════════════════════════════════════════
+      -- NORMALIZE. These are three different instruments, not one column.
+      --
+      -- This was COALESCE(caliber_score, breakout_score, confidence_score, 0),
+      -- which reads as "whichever score exists" and is a scale collision:
+      --
+      --   exa rows          caliber_score   2-9    (n=23, breakout NULL)
+      --   yc_directory      breakout_score  10-48  (n=23, caliber  NULL)
+      --   pre_program       breakout_score  10-40  (n=15, caliber  NULL)
+      --   rows with BOTH:   0
+      --
+      -- Disjoint populations on incomparable ranges, so every breakout row
+      -- mechanically outranked every caliber row. Measured 2026-07-16: all 7 of
+      -- Danny's S/A-tier founders sat at ranks 39-45 of 61, below rows scoring
+      -- breakout=10. The ranker was ANTI-correlated with quality at the top —
+      -- and Sourcing.jsx renders server order with no client sort, so this is
+      -- literally what he read top-down with j.
+      --
+      -- Each score is now divided by its own ceiling (caliber /10, breakout and
+      -- confidence /100 per breakoutScore.js's Math.min(score,100)), which is the
+      -- honest amount of comparability available: it says "how far up its own
+      -- scale did this row get", not "these numbers mean the same thing." They
+      -- don't — caliber is a tiered judgement with signals behind it, breakout is
+      -- a keyword count. A future ranker should prefer caliber outright rather
+      -- than average the two; this only stops the inversion.
+      -- ══════════════════════════════════════════════════════════════
+      CASE
+        WHEN caliber_score IS NOT NULL THEN caliber_score / 10.0
+        WHEN breakout_score IS NOT NULL THEN breakout_score / 100.0
+        WHEN confidence_score IS NOT NULL THEN confidence_score / 100.0
+        ELSE 0
+      END DESC,
       created_at DESC
   `).all(req.user.id, req.query.scope || 'pipeline');
 

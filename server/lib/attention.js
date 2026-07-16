@@ -47,6 +47,10 @@
 
 const db = require('../db');
 const commitments = require('./commitments');
+// companyKey normalises a company name and returns null for generics ("Stealth",
+// "Unknown", "TBD"). Reused rather than reimplemented so the definition of "the
+// same company" can't drift between the tie gate and the attention engine.
+const { companyKey } = require('./ilTie');
 
 // Days a live deal can sit untouched before it counts as going cold.
 // Not arbitrary: Crebit died because the round closed the week they met. Three
@@ -176,6 +180,56 @@ function overduePromises(uid) {
 // live rather than in a retrospective 12 months later.
 // ══════════════════════════════════════════════════════════════════════
 function undecidedHighSignal(uid) {
+  // ══════════════════════════════════════════════════════════════════════
+  // BLOCKED, not clean. This check cannot run and must say so.
+  //
+  // Measured 2026-07-16: 14 completed assessments, and conviction_score is NULL
+  // on all 14. Not a persistence bug — routes/assessments.js:765 writes it fine.
+  // Every one of those assessments ran 2026-04-04..15, and the conviction engine
+  // shipped in July. NOTHING HAS BEEN ASSESSED SINCE THE ENGINE WAS BUILT.
+  //
+  // So `conviction_score >= 7` was evaluating `NULL >= 7` -> NULL -> false, and
+  // this check reported "✓ Every memo-grade read has your call on it" — a clean
+  // green tick asserting the opposite of the truth, which is that no read has a
+  // score at all. That is exactly the false-by-silence failure goingCold() below
+  // refuses to commit, in the same file, thirty lines down.
+  //
+  // routes/today.js:48 already draws the distinction this check was missing: a
+  // NULL band means EITHER the engine ran and honestly held for lack of evidence,
+  // OR the row predates the engine and was never scored. conviction_output tells
+  // them apart. Reporting the second as "clean" is the same lie the rebuild
+  // exists to remove, one layer up.
+  //
+  // Self-diagnosing: the moment one assessment runs under the current engine,
+  // this unblocks on its own. Nobody has to remember.
+  // ══════════════════════════════════════════════════════════════════════
+  const scored = db.prepare(`
+    SELECT COUNT(*) n FROM opportunity_assessments
+    WHERE created_by = ? AND is_deleted = 0 AND assessment_type = 'assessment'
+      AND status IN ('complete','partial') AND conviction_output IS NOT NULL
+  `).get(uid).n;
+
+  if (!scored) {
+    const legacy = db.prepare(`
+      SELECT COUNT(*) n FROM opportunity_assessments
+      WHERE created_by = ? AND is_deleted = 0 AND assessment_type = 'assessment'
+        AND status IN ('complete','partial')
+    `).get(uid).n;
+    return {
+      key: 'undecided_high_signal',
+      title: 'Memo-grade reads with no decision',
+      clean: 'Every memo-grade read has your call on it',
+      count: 0,
+      blocked: true,
+      blocked_reason: legacy
+        ? `${legacy} assessments on file, none scored by the current conviction engine — they all predate it. ` +
+          `Re-run one and this check starts working. Until then it can't tell a memo-grade read from a pass.`
+        : 'No assessment has ever completed, so there is nothing to have a view about yet.',
+      action: legacy ? 'Re-run a read' : null,
+      rows: [],
+    };
+  }
+
   const rows = db.prepare(`
     SELECT a.id AS assessment_id, a.founder_id, a.conviction_score, a.conviction_band,
            a.created_at, f.name AS founder_name, f.company AS founder_company
@@ -239,7 +293,12 @@ function approvedNeverEntered(uid) {
     action: 'Finish the promotion',
     rows: rows.map((r) => ({
       id: r.id,
-      primary: r.company || r.name,
+      company: r.company,
+      // A generic company name is not a name. 8 of the 31 rows in
+      // considering_never_assessed all read "Stealth" and they are 8 DIFFERENT
+      // companies — eight identical cards is how a list gets ignored. Fall back
+      // to the founder, who at least tells them apart.
+      primary: companyKey({ company: r.company }) ? r.company : (r.name || 'Unknown'),
       detail: 'You approved this out of the inbox and it never became a pipeline record.',
       meta: `via ${r.source}`,
     })),
@@ -291,17 +350,29 @@ function consideringNeverAssessed(uid) {
     rows: rows.map((r) => ({
       id: r.id,
       founder_id: r.id,
-      primary: r.company || r.name,
+      company: r.company,
+      // A generic company name is not a name. 8 of the 31 rows in
+      // considering_never_assessed all read "Stealth" and they are 8 DIFFERENT
+      // companies — eight identical cards is how a list gets ignored. Fall back
+      // to the founder, who at least tells them apart.
+      primary: companyKey({ company: r.company }) ? r.company : (r.name || 'Unknown'),
       // The fact that Stu has never looked is the CHECK's claim, not the row's —
       // it's already in the title. Rendering it per-row printed one identical
       // sentence 40 times, which is the same "nine rows carrying one bit between
       // them" failure the old Today screen shipped. The row's job is to tell them
       // apart, so it carries the thing that differs.
       detail: [personName(r), r.company_one_liner].filter(Boolean).join(' — '),
-      // Deliberately NOT "last touched" — see touchSignalIsLive(). There is no
-      // honest last-contact number to show here yet, so this shows when the deal
-      // entered, which is a real recorded fact.
-      meta: r.deal_entered_at ? `in the pipeline since ${String(r.deal_entered_at).slice(0, 10)}` : '',
+      // ── No meta. Measured: deal_entered_at is 2026-03-18 on ALL 40 rows. ──
+      // It's the Airtable import date, not when anything entered anything. So
+      // "in the pipeline since 2026-03-18" rendered 31 times is 31 rows carrying
+      // ONE bit between them — the precise failure the header of this file
+      // describes fixing on the old Today screen, reproduced here at 31x by a
+      // line whose own comment calls it "a real recorded fact." It records the
+      // import, and Danny cannot act on it.
+      //
+      // When there is nothing distinguishing to say, say nothing. This comes back
+      // the moment deal_entered_at means something.
+      meta: null,
     })),
   };
 }
@@ -352,7 +423,12 @@ function goingCold(uid) {
     rows: rows.map((r) => ({
       id: r.id,
       founder_id: r.id,
-      primary: r.company || r.name,
+      company: r.company,
+      // A generic company name is not a name. 8 of the 31 rows in
+      // considering_never_assessed all read "Stealth" and they are 8 DIFFERENT
+      // companies — eight identical cards is how a list gets ignored. Fall back
+      // to the founder, who at least tells them apart.
+      primary: companyKey({ company: r.company }) ? r.company : (r.name || 'Unknown'),
       // Passing must be cheap and kind — so the framing offers the exit, not guilt.
       detail: `${r.days} days quiet. A pass with respect is a real answer.`,
       meta: `last touched ${String(r.last_touch).slice(0, 10)}`,
@@ -414,10 +490,27 @@ function checks(uid = 1) {
   // of one fact. A number that doubles when you add a rule is a number that
   // punishes Danny for instrumenting his own pipeline, and he'd stop reading it
   // by Thursday. What he needs to know is how many COMPANIES want him today.
+  // ══════════════════════════════════════════════════════════════════════
+  // Dedupe by COMPANY, which is what the comment below always claimed and the
+  // code never did. It keyed on `f${founder_id}` — per FOUNDER — so Permute's two
+  // rows (Scott Nelson, Eric Mills) counted twice, as did Siftree's, Mondo's,
+  // ClearCogs' and August's. Danny does not have two Permute decisions to make.
+  //
+  // companyKey() comes from ilTie.js, which already solved the other half: it
+  // returns null for GENERIC_COMPANY ("Stealth", "Unknown", "TBD"). That matters
+  // here more than anywhere — 8 of the 31 rows in considering_never_assessed all
+  // render `primary: "Stealth"`, and they are 8 DIFFERENT companies. Collapsing
+  // them on the string would hide seven real gaps; counting them as one company
+  // would be worse than counting eight. So a generic name falls back to the
+  // founder id, which is the only identity those rows actually have.
+  // ══════════════════════════════════════════════════════════════════════
   const distinct = new Set();
   for (const c of all) {
     if (c.blocked) continue;
-    for (const r of c.rows) distinct.add(r.founder_id ? `f${r.founder_id}` : `${c.key}:${r.id}`);
+    for (const r of c.rows) {
+      const key = companyKey({ company: r.company });
+      distinct.add(key ? `c:${key}` : r.founder_id ? `f${r.founder_id}` : `${c.key}:${r.id}`);
+    }
   }
 
   return {
