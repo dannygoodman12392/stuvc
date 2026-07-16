@@ -622,6 +622,36 @@ router.patch('/:id/tracks', async (req, res) => {
   res.json({ ...updated, funnel_stage: stageOf(updated), airtable });
 });
 
+// ── POST /api/pipeline/enrich-backfill — resolve + enrich the whole live board ──
+//
+// The per-card enrich below is Danny pressing a button on one company. This is the
+// same work across everything live, and it exists because the per-card button was
+// unreachable for 103 of 105 cards: it 400s without `company_linkedin_url`, and
+// almost nothing had one. Stage 1 resolves that URL; stage 2 spends the credits.
+//
+// `?dry=1` resolves only and spends nothing — worth running first, since its
+// `unresolved` list with reasons is the actual to-fix list ("one-word name — no
+// corroboration" is fixed by finding the website, not by loosening the matcher).
+//
+// `maxSpendUsd` is a local ceiling on top of providerKeys' daily cap. A bulk loop is
+// where a cap earns its keep.
+router.post('/enrich-backfill', async (req, res) => {
+  if (req.user.id !== 1) return res.status(403).json({ error: 'not available for your account' });
+  try {
+    const { enrichBackfill } = require('../services/enrich-backfill');
+    const r = await enrichBackfill({
+      userId: req.user.id,
+      dryRun: req.query.dry === '1',
+      maxSpendUsd: Number(req.query.maxSpend || 15),
+      limit: req.query.limit ? Number(req.query.limit) : undefined,
+    });
+    res.json(r);
+  } catch (e) {
+    console.error('[EnrichBackfill]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── POST /api/pipeline/:id/enrich — fetch the team from LinkedIn, on demand ──
 // Costs real credits (2 + 4/employee), so it is never automatic on page load.
 // Danny presses it, or the nightly job does it in bulk.
