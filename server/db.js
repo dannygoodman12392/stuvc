@@ -427,6 +427,22 @@ addColumn('founders', 'company_enrichment', 'TEXT');
 addColumn('founders', 'company_enriched_at', 'DATETIME');
 addColumn('founders', 'company_linkedin_url', 'TEXT');
 
+// ── The free half: what the public record says (lib/edgar.js, lib/hiring.js) ──
+// Danny: "How many people/are they hiring and growing, what you could learn from
+// the company site and crunchbase, etc..."
+//
+// Same one-blob-per-provider rule as company_enrichment above, and same reason:
+// the shape belongs to the SEC and to three job boards, not to us.
+//
+// Split from company_enrichment rather than merged into it because they cost
+// different things and fail independently. EnrichLayer costs real credits per
+// employee and needs a resolved LinkedIn URL; this costs nothing and needs a
+// website. Merging them would mean a card can't have the free half without paying
+// for the expensive one — which is backwards, since the free half is the one that
+// can run on all 188 rows on a schedule.
+addColumn('founders', 'company_public', 'TEXT');
+addColumn('founders', 'company_public_at', 'DATETIME');
+
 // ── The card's manual half — the fields Danny fills in himself ──
 // "These should all be fields I can enter and edit too."
 addColumn('founders', 'deck_url', 'TEXT');

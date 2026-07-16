@@ -531,6 +531,15 @@ router.get('/:id', (req, res) => {
       if (!row.company_enrichment) return null;
       try { return JSON.parse(row.company_enrichment); } catch { return null; }
     })(),
+
+    // The free half — the SEC's Form D record and their open roles. Same
+    // machine-owned rules and the same honest-empty contract as `enrichment`
+    // above, but it costs nothing to fetch, so it's the one that can be true for
+    // every card rather than the two that had a LinkedIn URL.
+    public_record: (() => {
+      if (!row.company_public) return null;
+      try { return JSON.parse(row.company_public); } catch { return null; }
+    })(),
   });
 });
 
@@ -855,6 +864,57 @@ router.post('/:id/enrich', async (req, res) => {
   } catch (e) {
     console.error('[Pipeline] enrich failed:', e.message);
     res.status(500).json({ error: 'Enrichment failed: ' + e.message });
+  }
+});
+
+// ── POST /api/pipeline/:id/public — the free read: Form D + open roles ──
+//
+// Deliberately NOT folded into /enrich. That one spends EnrichLayer credits and
+// 400s without a company LinkedIn URL, which 103 of 105 cards didn't have. This
+// needs only a company name and costs nothing, so it must not inherit either the
+// gate or the bill.
+router.post('/:id/public', async (req, res) => {
+  const row = db.prepare('SELECT id, company, name, website_url FROM founders WHERE id = ? AND created_by = ?')
+    .get(req.params.id, req.user.id);
+  if (!row) return res.status(404).json({ error: 'not found' });
+  if (!row.company || !String(row.company).trim()) {
+    return res.status(400).json({
+      error: 'No company name on this card.',
+      detail: 'The SEC and the job boards are both searched by company name.',
+      field: 'company',
+    });
+  }
+
+  try {
+    const { readPublicRecord, savePublicRecord } = require('../services/public-record');
+    const blob = await readPublicRecord({ company: row.company, founderName: row.name, website: row.website_url });
+    savePublicRecord(row.id, blob);
+    // Always 200, even when both halves found nothing. "No Form D and no job board"
+    // is the correct answer for most pre-seed companies, and an error status would
+    // make the card render a failure where it should render a fact.
+    res.json(blob);
+  } catch (e) {
+    console.error('[Pipeline] public record read failed:', e.message);
+    res.status(500).json({ error: 'Public record read failed: ' + e.message });
+  }
+});
+
+// ── POST /api/pipeline/public-backfill — the same, across the live board ──
+// Free, so there's no maxSpend here. Paged for the same reason enrich-backfill is:
+// one synchronous request across 188 cards 502s.
+router.post('/public-backfill', async (req, res) => {
+  if (req.user.id !== 1) return res.status(403).json({ error: 'not available for your account' });
+  try {
+    const { publicRecordBackfill } = require('../services/public-record');
+    const r = await publicRecordBackfill({
+      userId: req.user.id,
+      limit: req.query.limit ? Number(req.query.limit) : 25,
+      offset: req.query.offset ? Number(req.query.offset) : 0,
+    });
+    res.json(r);
+  } catch (e) {
+    console.error('[PublicBackfill]', e.message);
+    res.status(500).json({ error: e.message });
   }
 });
 

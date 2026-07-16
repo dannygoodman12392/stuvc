@@ -194,6 +194,9 @@ export default function CompanyCard() {
             )}
           </Block>
 
+          {/* ══ THE PUBLIC RECORD — free, and the only block true of every card ══ */}
+          <PublicRecord founderId={id} company={c} onChange={load} />
+
           {/* ══ WHAT STU HAS READ ══ */}
           <Sources founderId={id} company={c} />
 
@@ -402,6 +405,182 @@ function RunRead({ founderId, company: c }) {
 // from is named. If Danny can't check it in two seconds, it shouldn't be here —
 // that's what lib/signals.js enforces in the schema and this is where he sees it.
 // ══════════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════════
+// The public record — what the SEC and their job board say, for free.
+//
+// Danny: "click a founder/company and be able to get a lot of insight into how the
+// company is doing. How many people/are they hiring and growing, what you could
+// learn from the company site and crunchbase, etc..."
+//
+// The team block above answers headcount and growth but costs credits and needs a
+// resolved LinkedIn URL. This costs nothing, so it's the block that can be true of
+// every card rather than the two that had the URL.
+//
+// ── HOW THIS BLOCK EARNS TRUST ──
+// Every fact here is either sworn to the SEC or posted by the company itself, so
+// the risk isn't accuracy — it's ATTRIBUTION. Show another company's Form D and
+// Danny walks into IC with a number that is real and isn't theirs. So the server
+// refuses far more often than it answers, and this block renders the refusal
+// rather than hiding it: a reason he can read beats an empty space he'll assume is
+// a bug.
+//
+// The `name-only` case is the one to look at. It means the filing's name matched
+// but the founder isn't on the officer list — usually harmless (a lawyer filed it),
+// occasionally the wrong company. That's a judgement, and judgements are Danny's,
+// so it's flagged in place instead of being silently upgraded or dropped.
+// ══════════════════════════════════════════════════════════════════════════
+function PublicRecord({ founderId, company: c, onChange }) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+  const p = c.public_record;
+
+  async function read() {
+    setBusy(true); setErr(null);
+    try { await api.readPublicRecord(founderId); onChange(); }
+    catch (e) { setErr(e.message); }
+    finally { setBusy(false); }
+  }
+
+  const f = p?.funding;
+  const h = p?.hiring;
+
+  return (
+    <Block label="The public record" right={
+      <button onClick={read} disabled={busy} className="text-mini text-accent hover:text-accent-hover disabled:text-ink-4">
+        {busy ? 'Reading SEC + careers…' : p ? 'Refresh' : 'Read the free web'}
+      </button>
+    }>
+      {err && <p className="text-mini text-danger mb-2">{err}</p>}
+
+      {!p ? (
+        <Empty>Not read yet. Free — the SEC’s Form D record and their open roles.</Empty>
+      ) : (
+        <div className="space-y-3">
+          {/* ── FUNDING ── */}
+          <div>
+            <div className="flex items-baseline gap-2 mb-1">
+              <span className="text-micro font-semibold uppercase text-ink-4">Raised</span>
+              {f?.found && f.confidence === 'name-only' && (
+                // The `attention` hue is reserved in tailwind.config.js for the
+                // attention engine — "only when a check is not clean". This is a
+                // deliberate extension of that reservation, not an oversight: it is
+                // literally an unclean check, and it's the one state in this block
+                // where the number may belong to a different company. Machine text
+                // recedes to ink-3 by house rule, and letting THIS recede is how a
+                // wrong number reaches an IC meeting.
+                <span className="text-micro text-attention" title={f.reason}>unconfirmed — check it’s them</span>
+              )}
+            </div>
+            {!f?.found ? (
+              <Empty>{f?.reason}</Empty>
+            ) : (
+              <>
+                <div className="flex items-baseline gap-3">
+                  <span className="text-display num text-ink">{fmt(f.latest.amount_sold)}</span>
+                  <span className="text-mini text-ink-3">
+                    {f.latest.offering_amount && f.latest.offering_amount !== f.latest.amount_sold && (
+                      <>of {fmt(f.latest.offering_amount)} offered · </>
+                    )}
+                    {f.latest.sale_yet_to_occur
+                      ? 'filed, first sale not yet'
+                      : f.latest.first_sale && `first sale ${String(f.latest.first_sale).slice(0, 10)}`}
+                  </span>
+                </div>
+                {/* The history is the story: one Form D is a fact, four ascending is
+                    a company that keeps clearing the bar. */}
+                {f.filings?.length > 1 && (
+                  <p className="text-mini text-ink-3 mt-0.5">
+                    <span className="num">{f.filings.length}</span> Form Ds since {String(f.filings[f.filings.length - 1].filed).slice(0, 4)}
+                  </p>
+                )}
+                {/* Form D names officers AND directors — and a director at this stage
+                    is usually the investor who took the board seat. This is the
+                    "who else is in it" answer, from a legal filing rather than a
+                    rumour. */}
+                {f.latest.people?.length > 0 && (
+                  <p className="text-mini text-ink-3 mt-0.5 truncate" title={f.latest.people.map((x) => `${x.name} — ${x.relationships.join(', ')}`).join(' · ')}>
+                    {f.latest.people.slice(0, 4).map((x) => x.name).join(' · ')}
+                    {f.latest.people.length > 4 && ` +${f.latest.people.length - 4}`}
+                  </p>
+                )}
+                <a href={f.source_url} target="_blank" rel="noreferrer" className="text-micro text-accent">
+                  SEC filing ↗
+                </a>
+              </>
+            )}
+          </div>
+
+          {/* ── HIRING ── */}
+          <div>
+            <span className="text-micro font-semibold uppercase text-ink-4">Hiring</span>
+            {!h?.found ? (
+              <div className="mt-1">
+                {/* Never "not hiring". No board found means we don't know, and at
+                    pre-seed that's the normal case, not a finding. */}
+                <Empty>{h?.reason}</Empty>
+                {h?.careers_url && (
+                  <a href={h.careers_url} target="_blank" rel="noreferrer" className="text-micro text-accent">
+                    {normUrl(h.careers_url)} ↗
+                  </a>
+                )}
+              </div>
+            ) : (
+              <>
+                <div className="flex items-baseline gap-3 mt-1">
+                  <span className="text-display num text-ink">{h.role_count}</span>
+                  <span className="text-mini text-ink-3">
+                    open {h.role_count === 1 ? 'role' : 'roles'} on {h.ats}
+                    {h.newest_post && <> · newest {String(h.newest_post).slice(0, 10)}</>}
+                  </span>
+                </div>
+
+                {/* WHAT they're hiring for is the roadmap — stated in the one place
+                    a founder can't hedge it. A deck says "going to market in Q3"; a
+                    Founding AE posted eleven days ago is them doing it. */}
+                {h.tells?.length > 0 && (
+                  <div className="mt-1">
+                    {h.tells.map((t, i) => (
+                      <p key={i} className="text-mini text-ink-2">
+                        {t.role} <span className="text-ink-4">— {t.means}</span>
+                      </p>
+                    ))}
+                  </div>
+                )}
+
+                <div className="mt-1.5 -mx-2">
+                  {h.roles.slice(0, 6).map((r, i) => (
+                    <div key={i} className="row px-2">
+                      <span className="flex-1 min-w-0">
+                        {r.url ? (
+                          <a href={r.url} target="_blank" rel="noreferrer" className="row-primary hover:text-accent truncate">{r.title}</a>
+                        ) : (
+                          <span className="row-primary truncate">{r.title}</span>
+                        )}
+                      </span>
+                      <span className="w-40 text-mini text-ink-3 truncate">{[r.team, r.location].filter(Boolean).join(' · ') || '—'}</span>
+                      <span className="w-20 text-mini text-ink-4 num text-right">{r.posted ? String(r.posted).slice(0, 10) : '—'}</span>
+                    </div>
+                  ))}
+                </div>
+                {h.role_count > 6 && (
+                  <a href={h.board_url} target="_blank" rel="noreferrer" className="text-micro text-accent">
+                    all {h.role_count} on {h.ats} ↗
+                  </a>
+                )}
+              </>
+            )}
+          </div>
+
+          <p className="text-micro text-ink-4">
+            SEC Form D + their own job board. Free, no account.
+            {p.fetched_at && ` Read ${String(p.fetched_at).slice(0, 10)}.`}
+          </p>
+        </div>
+      )}
+    </Block>
+  );
+}
+
 const SOURCE_LABEL = { deck: 'Deck', url: 'Web', granola: 'Call', note: 'Note', linkedin: 'LinkedIn', filing: 'Filing' };
 const KIND_ORDER = ['traction', 'customer', 'raise', 'team', 'product', 'market', 'risk'];
 

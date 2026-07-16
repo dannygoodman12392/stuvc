@@ -300,6 +300,9 @@ export const api = {
   updatePipelineCompany: (id, body) =>
     after(request(`/pipeline/${id}`, { method: 'PATCH', body: JSON.stringify(body) }), '/pipeline'),
   enrichPipelineCompany: (id) => after(request(`/pipeline/${id}/enrich`, { method: 'POST' }), `/pipeline/${id}`),
+  // The free read — Form D + open roles. Separate call from enrich because it
+  // spends nothing and needs no LinkedIn URL.
+  readPublicRecord: (id) => after(request(`/pipeline/${id}/public`, { method: 'POST' }), `/pipeline/${id}`),
 
   // ── The source log: everything Danny feeds a company. ──
   // These endpoints existed for hours with no UI on top — the honesty gate, the
