@@ -122,15 +122,35 @@ function classifyQuote(quote, index) {
  * "$60K ARR" reads as a fact and there is no other way for a reader to catch it.
  * @returns {string[]} the unsupported number tokens
  */
+// The digits, stripped of notation. "$15m" -> "15", "$500k" -> "500", "4.0" -> "4".
+//
+// Founders speak in shorthand and models write in notation. On the live Cadrian
+// call Dan Preiss said "We're doing it at a 15 post" and "500 committed, another
+// 250 soft committed"; the extractor faithfully rendered those as "$15M post" and
+// "$500k committed". Comparing strings, "$15m" is nowhere in "15 post", so the
+// gate discarded BOTH — the two most important facts on a live deal, with the
+// quotes sitting right there proving them.
+//
+// A false negative is cheap by design, but not on the round terms. Comparing the
+// mantissa keeps the constraint that matters — a claim asserting $15M must still
+// find "15" in its own quote, so an invented "$60K ARR" against a quote with no 60
+// still dies — while tolerating the notation drift that is the model doing its job.
+function mantissa(n) {
+  return String(n).replace(/[$%,]/g, '').replace(/[kmb]$/i, '').replace(/\.0+$/, '');
+}
+
 function unsupportedNumbers(text, index) {
   if (!text || !index) return [];
   const nums = extractNumbers(normalize(text));
+  const mantissaSet = new Set([...index.numberSet].map(mantissa));
   return [...new Set(nums)].filter((n) => {
     if (index.numberSet.has(n)) return false;
     // Tolerate formatting drift: $60k vs 60000, 4 vs 4.0
     const bare = n.replace(/[$%]/g, '');
     if (index.numberSet.has(bare)) return false;
     if (index.numberSet.has('$' + bare)) return false;
+    // Notation drift: the claim's "$15m" against the transcript's spoken "15".
+    if (mantissaSet.has(mantissa(n))) return false;
     // Small integers are usually counts of things said in prose, not claims.
     if (/^\d$/.test(bare)) return false;
     return true;
