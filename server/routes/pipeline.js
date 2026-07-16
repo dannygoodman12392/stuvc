@@ -644,6 +644,7 @@ router.post('/enrich-backfill', async (req, res) => {
       dryRun: req.query.dry === '1',
       maxSpendUsd: Number(req.query.maxSpend || 15),
       limit: req.query.limit ? Number(req.query.limit) : undefined,
+      offset: req.query.offset ? Number(req.query.offset) : 0,
     });
     res.json(r);
   } catch (e) {

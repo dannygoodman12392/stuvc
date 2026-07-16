@@ -55,12 +55,21 @@ function liveCards(userId) {
 }
 
 /**
+ * ── WHY THIS PAGES ──
+ * 96 companies × an Exa lookup each is minutes of work, and a platform proxy kills
+ * a synchronous request long before that: the first full run came back 502 while
+ * the same call with limit=3 returned in under a second. So the caller walks it in
+ * chunks. `offset` is load-bearing rather than cosmetic — `limit` alone re-slices
+ * the same first N rows every call, and any card that refuses to resolve (35 of
+ * them do, by design) would block the window forever and nothing past it would run.
+ *
  * @param {object}  opts
  * @param {boolean} opts.dryRun      Resolve only; never spend an EnrichLayer credit.
  * @param {number}  opts.maxSpendUsd Local ceiling for this run.
  * @param {number}  opts.limit       Cap the number of cards touched.
+ * @param {number}  opts.offset      Where to start in the (stably ordered) list.
  */
-async function enrichBackfill({ userId = 1, dryRun = false, maxSpendUsd = 15, limit = Infinity } = {}) {
+async function enrichBackfill({ userId = 1, dryRun = false, maxSpendUsd = 15, limit = Infinity, offset = 0 } = {}) {
   const exaKey = resolveKey(userId, 'exa');
   const out = {
     considered: 0,
@@ -69,10 +78,15 @@ async function enrichBackfill({ userId = 1, dryRun = false, maxSpendUsd = 15, li
     estSpendUsd: 0, stoppedOnCap: false,
   };
 
-  const rows = liveCards(userId);
-  out.considered = rows.length;
+  const all = liveCards(userId);           // ORDER BY company — stable across calls
+  out.considered = all.length;
+  const end = limit === Infinity ? all.length : offset + limit;
+  const rows = all.slice(offset, end);
+  out.offset = offset;
+  out.batch = rows.length;
+  out.done = end >= all.length;            // so the caller knows when to stop paging
 
-  for (const r of rows.slice(0, limit === Infinity ? rows.length : limit)) {
+  for (const r of rows) {
     // ── 1. Resolve ──
     let url = r.company_linkedin_url;
     if (url) {
