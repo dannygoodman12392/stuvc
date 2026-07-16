@@ -71,6 +71,17 @@ export default function Home() {
     try { await api.deleteTodayItem(item.id); } catch { /* optimistic */ }
   }
 
+  // Danny: "I just want a daily task list so I know what to be doing per day. As
+  // my day goes on, I'll want to add things and remove them."
+  // Add, complete and delete already worked. EDIT didn't — so a typo meant delete
+  // and retype, which is exactly the friction that makes a list stop being used.
+  async function renameItem(item, title) {
+    const t = String(title).trim();
+    if (!t || t === item.title) return;
+    setToday((s) => ({ ...s, items: s.items.map((i) => (i.id === item.id ? { ...i, title: t } : i)) }));
+    try { await api.updateTodayItem(item.id, { title: t }); } catch { /* optimistic */ }
+  }
+
   const items = today?.items || [];
 
   return (
@@ -110,28 +121,13 @@ export default function Home() {
           </div>
 
           {items.map((item) => (
-            <div key={item.id} className="row px-3 group">
-              <button
-                onClick={() => toggleItem(item)}
-                className={`w-3 h-3 rounded-sm border mr-2 flex-none transition ${
-                  item.completed_at ? 'bg-ink border-ink' : 'border-line-3 hover:border-ink-3'
-                }`}
-                aria-label={item.completed_at ? 'Mark undone' : 'Mark done'}
-              />
-              <span className={`flex-1 min-w-0 truncate ${item.completed_at ? 'text-ink-4 line-through' : 'text-ink'}`}>
-                {item.title}
-              </span>
-              {/* An agent row says where it came from, quietly. It is still HIS row —
-                  he can delete it, and the tombstone stops the next nightly run
-                  resurrecting it, which is the most common way this pattern dies. */}
-              {item.origin === 'agent' && <span className="text-mini text-ink-4 mr-2">from a call</span>}
-              <button
-                onClick={() => removeItem(item)}
-                className="text-mini text-ink-4 hover:text-danger opacity-0 group-hover:opacity-100 transition"
-              >
-                Delete
-              </button>
-            </div>
+            <TaskRow
+              key={item.id}
+              item={item}
+              onToggle={() => toggleItem(item)}
+              onDelete={() => removeItem(item)}
+              onRename={(title) => renameItem(item, title)}
+            />
           ))}
 
           <form onSubmit={addItem} className="flex items-center h-row px-3 border-t border-line">
@@ -155,6 +151,68 @@ export default function Home() {
 // is trustworthy is that "✓ no overdue follow-ups" sits next to the amber one. A
 // list that only appears when something is wrong is indistinguishable from a list
 // that is broken. Silence has to mean "I looked."
+// ── One task row. Click the text to edit it. ──
+// Deliberately not a modal, not a pencil icon, not a right-click menu: click the
+// words, they become an input, Enter or blur saves, Esc reverts. A daily list
+// gets edited mid-thought while he's on a call — anything that costs a second
+// click gets skipped, and a list you skip editing becomes a list of stale lies.
+function TaskRow({ item, onToggle, onDelete, onRename }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(item.title);
+  useEffect(() => setDraft(item.title), [item.title]);
+
+  return (
+    <div className="row px-3 group">
+      <button
+        onClick={onToggle}
+        className={`w-3 h-3 rounded-sm border mr-2 flex-none transition ${
+          item.completed_at ? 'bg-ink border-ink' : 'border-line-3 hover:border-ink-3'
+        }`}
+        aria-label={item.completed_at ? 'Mark undone' : 'Mark done'}
+      />
+
+      {editing ? (
+        <input
+          className="flex-1 min-w-0 bg-transparent border-0 outline-none text-small text-ink"
+          autoFocus
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={() => { setEditing(false); onRename(draft); }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') e.currentTarget.blur();
+            if (e.key === 'Escape') { setDraft(item.title); setEditing(false); }
+          }}
+        />
+      ) : (
+        <span
+          onClick={() => setEditing(true)}
+          className={`flex-1 min-w-0 truncate cursor-text ${item.completed_at ? 'text-ink-4 line-through' : 'text-ink'}`}
+          title="Click to edit"
+        >
+          {item.title}
+        </span>
+      )}
+
+      {/* An agent row says where it came from, quietly — and carries the line that
+          produced it on hover. "Send the deck" is a nag; "My next step, I guess, is
+          I'll send you some slides" — Dan Preiss, 2 days ago — is a fact he can act
+          on without re-deriving anything. The quote is the whole difference. */}
+      {item.origin === 'agent' && (
+        <span className="text-mini text-ink-4 mr-2 flex-none" title={item.quote || 'suggested by Stu'}>
+          {item.quote ? 'from a call ⌄' : 'from a call'}
+        </span>
+      )}
+
+      <button
+        onClick={onDelete}
+        className="text-mini text-ink-4 hover:text-danger opacity-0 group-hover:opacity-100 transition flex-none"
+      >
+        Delete
+      </button>
+    </div>
+  );
+}
+
 function Checks({ data, nav }) {
   const [open, setOpen] = useState(null);
   const [showClean, setShowClean] = useState(false);

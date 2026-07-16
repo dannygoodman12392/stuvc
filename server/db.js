@@ -1,8 +1,47 @@
 const Database = require('better-sqlite3');
 const path = require('path');
 
-// In production, use /data volume for persistence; locally use server dir
-const dbPath = process.env.DATABASE_PATH || path.join(__dirname, 'superior-os.db');
+// ══════════════════════════════════════════════════════════════════════════
+// In production, DATABASE_PATH is MANDATORY. It used to silently fall back.
+//
+// This line was `process.env.DATABASE_PATH || path.join(__dirname, ...)` — a
+// quiet fallback to a container-local file. On Railway that path is ephemeral, so
+// if the variable were ever unset or renamed, every redeploy would start from an
+// empty database.
+//
+// And the fallback is CAMOUFLAGED, which is what makes it the scariest thing in
+// this repo rather than merely bad:
+//
+//   1. db.js falls back with no warning, no log line, no error
+//   2. seedIfEmpty() (index.js:38) sees COUNT(*)=0 and restores 5,084 founders
+//      from seed-data.json.gz
+//   3. migration_flags is empty too, so every "one-time" migration re-runs and
+//      reports success
+//   4. You log in. The founder count looks HEALTHY. Nothing errors.
+//   5. Every assessment, note, call log, signal and sourced founder is gone —
+//      because assessments are never re-seeded. They're the canary.
+//
+// The one number you'd check is the one number that lies. You would keep
+// deploying, and each deploy would look fine, and the product would be quietly
+// zeroed each time.
+//
+// Verified 2026-07-16: prod's oldest assessment is 2026-04-05 and it survived
+// dozens of deploys, so DATABASE_PATH IS currently set in Railway's dashboard.
+// But that's dashboard state the repo can't see, can't test, and can't defend. A
+// crash-loop is survivable and loud. Silent ephemeral storage is neither.
+// ══════════════════════════════════════════════════════════════════════════
+const envPath = process.env.DATABASE_PATH;
+if (process.env.NODE_ENV === 'production' && !envPath) {
+  console.error(
+    'FATAL: DATABASE_PATH is not set in production.\n' +
+    '  Refusing to start rather than write to ephemeral container disk.\n' +
+    '  Set it to the mounted volume, e.g. DATABASE_PATH=/data/superior-os.db\n' +
+    '  (If you see this after a deploy, DO NOT redeploy repeatedly — the data is\n' +
+    '   likely intact on the volume; the variable is what is missing.)'
+  );
+  process.exit(1);
+}
+const dbPath = envPath || path.join(__dirname, 'superior-os.db');
 const db = new Database(dbPath);
 
 db.pragma('journal_mode = WAL');
@@ -270,6 +309,16 @@ addColumn('founders', 'data_room_url', 'TEXT');
 // Without this column every note looks equally authored, which is precisely how a
 // transcript summary ends up being read as his own judgment six months later.
 addColumn('founder_notes', 'source', "TEXT DEFAULT 'manual'");
+
+// Was Stu's score already on screen when Danny recorded his verdict?
+// He explicitly rejected being FORCED to go first ("let's not make this so
+// complicated") — so this is a fact we record, never a gate. "When Stu and I
+// disagreed, who was right?" only means something across rows where his view was
+// independent; without this column, anchored and unanchored decisions average
+// together silently and the result gets called calibration.
+// Both of the first two decisions were recorded AFTER the score existed — one of
+// them two minutes after. That's knowable now instead of invisible.
+addColumn('decisions', 'saw_score_first', 'INTEGER DEFAULT 0');
 
 // ══════════════════════════════════════════════════════════════════════════
 // THE SOURCE LOG + THE SIGNAL GATE
