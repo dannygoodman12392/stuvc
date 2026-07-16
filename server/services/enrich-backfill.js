@@ -79,6 +79,8 @@ function liveCards(userId) {
  */
 async function enrichBackfill({ userId = 1, dryRun = false, maxSpendUsd = 15, limit = Infinity, offset = 0 } = {}) {
   const exaKey = resolveKey(userId, 'exa');
+  // The domain resolver runs on the EnrichLayer key, not Exa's — see resolve-company-linkedin.
+  const enrichKey = resolveKey(userId, 'enrichlayer');
   const out = {
     considered: 0,
     resolved: 0, alreadyHadUrl: 0, unresolved: [],
@@ -100,9 +102,12 @@ async function enrichBackfill({ userId = 1, dryRun = false, maxSpendUsd = 15, li
     if (url) {
       out.alreadyHadUrl++;
     } else {
-      if (!exaKey) { out.unresolved.push({ company: r.company, reason: 'no Exa key' }); continue; }
+      // Either key is enough now: the domain path needs EnrichLayer, the search
+      // path needs Exa. Requiring Exa up front used to skip cards that a domain
+      // could have resolved outright.
+      if (!exaKey && !enrichKey) { out.unresolved.push({ company: r.company, reason: 'no Exa or EnrichLayer key' }); continue; }
       const res = await resolveCompanyLinkedIn({
-        company: r.company, founderName: r.name, website: r.website_url, exaKey,
+        company: r.company, founderName: r.name, website: r.website_url, exaKey, enrichKey,
       });
       if (!res.url) {
         // Recorded with its reason, not swallowed. The reasons are the to-fix list:

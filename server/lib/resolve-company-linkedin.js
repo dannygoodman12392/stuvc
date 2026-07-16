@@ -114,15 +114,107 @@ function httpPost(host, path, headers, body) {
   });
 }
 
+// ══════════════════════════════════════════════════════════════════════════
+// STRATEGY ZERO: ASK THE DOMAIN.
+//
+// Everything below this line is a search — guess a page, then interrogate it, then
+// usually refuse. It works, and its refusals are correct, but they are refusals:
+// dry run against production 2026-07-16, 93 cards considered, **0 resolved**, 39
+// stuck on "one-word name — no page both matched it and corroborated". Ampere,
+// Albacore, Addictd, Aganomix. The guard was doing its job and the feature was
+// still worth nothing.
+//
+// A DOMAIN is not a guess. EnrichLayer resolves one directly:
+//
+//   GET /api/v2/company/resolve?company_domain=auvilabs.com
+//     -> {"url": "https://www.linkedin.com/company/auvilabs"}
+//
+// Verified live against three real pre-seed companies off Danny's board
+// (concordahq.com, hydrastack.io, inferadb.com) — all three correct, ~1.3 credits
+// each. These are 4-person companies the name search refuses to touch.
+//
+// ── WHY THIS IS SAFE WHEN THE SEARCH ISN'T ──
+// The domain comes off Danny's own card. If he typed the company's website, the
+// domain IS the company — there's no inference left to get wrong. The whole
+// paranoia below exists because "Peak" could be anyone; peak.com could not.
+//
+// Measured failure modes, all handled:
+//   zzzzz-not-real.com -> {"url": null}      honest refusal, no guessing
+//   linkedin.com       -> company/linkedin   <- THE ONE THAT BITES
+//   gmail.com          -> company/gmail-it-ltd
+//
+// The live board has LegalOS's website_url set to a founder's LinkedIn PROFILE. Pass
+// that through and Matthew Asir's 4-person card fills with LinkedIn Corp's 20,000
+// employees. So the same aggregator guard lib/hiring.js uses gates this — a website
+// field that isn't a company's own site is not a domain, it's a mistake.
+const { isCompanySite, originOf } = require('./hiring');
+
+function domainOf(website) {
+  const o = originOf(website);
+  if (!o) return null;
+  try { return new URL(o).hostname.replace(/^www\./i, ''); } catch { return null; }
+}
+
+async function resolveByDomain({ website, key, deps = {} }) {
+  const getJson = deps.getJson || httpGetJson;
+  if (!key) return { url: null, reason: 'no EnrichLayer key' };
+  if (!website) return { url: null, reason: 'no website on the card' };
+
+  // Order matters, and getting it wrong produces a reason that lies. isCompanySite()
+  // is false for an aggregator AND for a string that isn't a domain at all, so
+  // checking it first reported the live value "tbd" as "points at an aggregator" —
+  // nonsense to anyone reading it, and the fix for the two cases is different (one
+  // is a wrong URL, the other is an empty field with a word in it).
+  const domain = domainOf(website);
+  if (!domain) return { url: null, reason: `"${String(website).slice(0, 40)}" is not a domain` };
+  if (!isCompanySite(website)) {
+    return { url: null, reason: `the website field points at ${domain}, which is a profile rather than the company's own site` };
+  }
+
+  const r = await getJson(`/api/v2/company/resolve?company_domain=${encodeURIComponent(domain)}`, key);
+  if (r.status !== 200) return { url: null, reason: `EnrichLayer HTTP ${r.status}` };
+  const url = r.data && r.data.url;
+  // `{"url": null}` is EnrichLayer saying it doesn't know. That's the honest answer
+  // for a startup with no LinkedIn page, and it must not fall through to a guess.
+  if (!url) return { url: null, reason: `no LinkedIn page for ${domain}` };
+  const slug = companySlug(url);
+  if (!slug) return { url: null, reason: `EnrichLayer returned a non-company URL: ${url}` };
+  return { url: canonicalUrl(slug), reason: `resolved from ${domain}` };
+}
+
+function httpGetJson(path, key) {
+  return new Promise((resolve) => {
+    const req = https.get(
+      { hostname: 'enrichlayer.com', path, headers: { Authorization: `Bearer ${key}` } },
+      (res) => {
+        let b = '';
+        res.on('data', (c) => (b += c));
+        res.on('end', () => { try { resolve({ status: res.statusCode, data: JSON.parse(b) }); } catch { resolve({ status: res.statusCode, data: null }); } });
+      }
+    );
+    req.on('error', () => resolve({ status: 0, data: null }));
+    req.setTimeout(20000, () => { req.destroy(); resolve({ status: 0, data: null }); });
+  });
+}
+
 /**
  * @returns {Promise<{url:string|null, reason:string, candidates?:string[]}>}
  *   `url` is null unless the evidence agrees. `reason` always explains which.
  */
-async function resolveCompanyLinkedIn({ company, founderName, website, exaKey, deps = {} }) {
+async function resolveCompanyLinkedIn({ company, founderName, website, exaKey, enrichKey, deps = {} }) {
   const post = deps.post || httpPost;
   const name = String(company || '').trim();
 
   if (!name) return { url: null, reason: 'no company name' };
+
+  // Ask the domain first. It's cheaper than being clever and it's the only path here
+  // that isn't an inference.
+  if (website && enrichKey) {
+    const byDomain = await resolveByDomain({ website, key: enrichKey, deps });
+    if (byDomain.url) return byDomain;
+    // Fall through to the search — a company with no LinkedIn page under its domain
+    // may still have one under a former name.
+  }
   // "Stealth" is not a company. Searching it returns whichever startup last
   // branded itself that, and every stealth card would enrich as the same firm.
   if (/^stealth/i.test(norm(name))) return { url: null, reason: 'stealth — no company to resolve' };
@@ -225,4 +317,4 @@ async function resolveCompanyLinkedIn({ company, founderName, website, exaKey, d
   return { url: canonicalUrl(distinct[0]), reason: 'matched' };
 }
 
-module.exports = { resolveCompanyLinkedIn, __test: { norm, companySlug, nameMatches, canonicalUrl } };
+module.exports = { resolveCompanyLinkedIn, resolveByDomain, __test: { norm, companySlug, nameMatches, canonicalUrl, domainOf } };

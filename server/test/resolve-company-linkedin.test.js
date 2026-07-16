@@ -186,3 +186,102 @@ test('only person profiles come back → nothing to resolve', async () => {
   assert.strictEqual(r.url, null);
   assert.match(r.reason, /no LinkedIn company page/);
 });
+
+// ══════════════════════════════════════════════════════════════════════════
+// STRATEGY ZERO — the domain.
+//
+// The search path above is correct and, on the real board, useless: 93 cards, 0
+// resolved, 39 refused on "one-word name — no corroboration". A domain isn't a
+// guess, so it doesn't need the paranoia — it needs one guard, because the website
+// field on a real card sometimes isn't a website.
+// ══════════════════════════════════════════════════════════════════════════
+
+const { resolveByDomain, resolveCompanyLinkedIn: resolve2, __test: t2 } = require('../lib/resolve-company-linkedin');
+
+const ok = (url) => async () => ({ status: 200, data: { url } });
+
+test('domain -> LinkedIn page, which the name search would have refused', async () => {
+  // Live: auvilabs.com resolves, and "Auvi Labs" as a search does not.
+  const r = await resolveByDomain({
+    website: 'www.auvilabs.com', key: 'k',
+    deps: { getJson: ok('https://www.linkedin.com/company/auvilabs') },
+  });
+  assert.equal(r.url, 'https://www.linkedin.com/company/auvilabs');
+  assert.match(r.reason, /auvilabs\.com/);
+});
+
+test('EnrichLayer saying null is an answer, not a prompt to guess', async () => {
+  // Live: {"url": null} for a domain it doesn't know. That's the honest state for a
+  // startup with no LinkedIn page.
+  const r = await resolveByDomain({ website: 'nothing-here.com', key: 'k', deps: { getJson: ok(null) } });
+  assert.equal(r.url, null);
+  assert.match(r.reason, /no LinkedIn page/);
+});
+
+test('THE ONE THAT BITES: a LinkedIn profile in the website field is refused', async () => {
+  // LegalOS on the live board: website_url = linkedin.com/in/matthew-asir.
+  // Live, EnrichLayer maps linkedin.com -> company/linkedin. Unguarded, that puts
+  // LinkedIn Corp's 20,000 employees on a 4-person card.
+  let called = false;
+  const r = await resolveByDomain({
+    website: 'https://www.linkedin.com/in/matthew-asir', key: 'k',
+    deps: { getJson: async () => { called = true; return ok('https://www.linkedin.com/company/linkedin')(); } },
+  });
+  assert.equal(r.url, null);
+  assert.equal(called, false, 'never even ask — the field is a mistake, not a domain');
+  assert.match(r.reason, /profile rather than the company/);
+});
+
+test('a non-company URL back from EnrichLayer is refused', async () => {
+  const r = await resolveByDomain({
+    website: 'acme.com', key: 'k',
+    deps: { getJson: ok('https://www.linkedin.com/in/someone') },
+  });
+  assert.equal(r.url, null);
+  assert.match(r.reason, /non-company URL/);
+});
+
+test('no key, no website, junk website: each says which', async () => {
+  assert.match((await resolveByDomain({ website: 'a.com', key: null })).reason, /no EnrichLayer key/);
+  assert.match((await resolveByDomain({ website: '', key: 'k' })).reason, /no website/);
+  // "tbd" is a live value in this field. It is not a domain and it is not an
+  // aggregator, and saying the wrong one is how a correct refusal reads as a bug.
+  assert.match((await resolveByDomain({ website: 'tbd', key: 'k', deps: { getJson: ok('x') } })).reason, /is not a domain/);
+});
+
+test('domainOf strips www and survives what founders actually paste', () => {
+  assert.equal(t2.domainOf('https://www.auvilabs.com/'), 'auvilabs.com');
+  assert.equal(t2.domainOf('hydrastack.io'), 'hydrastack.io');
+  // Two URLs in one field — live on the board.
+  assert.equal(t2.domainOf('https://openmatter.network https://zkfirewall.openmatter.network'), 'openmatter.network');
+});
+
+test('the domain wins, and the search never runs when it does', async () => {
+  let searched = false;
+  const r = await resolve2({
+    company: 'Peak', founderName: 'Someone', website: 'peakhq.com',
+    exaKey: 'e', enrichKey: 'k',
+    deps: {
+      getJson: ok('https://www.linkedin.com/company/peakhq'),
+      post: async () => { searched = true; return { status: 200, data: { results: [] } }; },
+    },
+  });
+  assert.equal(r.url, 'https://www.linkedin.com/company/peakhq');
+  assert.equal(searched, false, 'a domain is not a guess — do not pay Exa to second-guess it');
+});
+
+test('a domain that resolves to nothing falls back to the search, it does not dead-end', async () => {
+  // A company can have no LinkedIn page under its current domain and still have one
+  // under a former name.
+  let searched = false;
+  const r = await resolve2({
+    company: 'Brae Systems', founderName: 'Ana Cruz', website: 'braesys.com',
+    exaKey: 'e', enrichKey: 'k',
+    deps: {
+      getJson: ok(null),
+      post: async () => { searched = true; return { status: 200, data: { results: [] } }; },
+    },
+  });
+  assert.equal(searched, true);
+  assert.equal(r.url, null);
+});
