@@ -81,6 +81,8 @@ I read the paragraph below, then measured `server/superior-os.db` anyway and rep
 | cards with a website read | 3 | **68** |
 | cards with notes | — | **73** |
 
+And it happened a THIRD time, subtler: I cited "LegalOS's website_url is a LinkedIn profile" as a live production fact in two library headers, two tests, and this brief. **There is no LegalOS card on production** — that row exists only in the local DB. The guard it justified is correct and the hazard is real (Permute's website_url is `scout.space`, a *different portfolio company*; Ampere's is the string `"N/A"`), but I had shipped a false citation into files whose whole value is being trustworthy. If you cite a row as live, fetch it from prod first.
+
 **Do not measure the local DB. Ever.** Read prod with a locally-minted JWT — Railway shares the `.env` `JWT_SECRET`, so this works and is the fastest path in:
 
 ```js

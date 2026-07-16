@@ -143,10 +143,12 @@ function httpPost(host, path, headers, body) {
 //   linkedin.com       -> company/linkedin   <- THE ONE THAT BITES
 //   gmail.com          -> company/gmail-it-ltd
 //
-// The live board has LegalOS's website_url set to a founder's LinkedIn PROFILE. Pass
-// that through and Matthew Asir's 4-person card fills with LinkedIn Corp's 20,000
-// employees. So the same aggregator guard lib/hiring.js uses gates this — a website
-// field that isn't a company's own site is not a domain, it's a mistake.
+// The website field holds whatever got pasted. Measured on PRODUCTION 2026-07-16:
+// Permute's is `scout.space` (a DIFFERENT portfolio company), Ampere's is the literal
+// string "N/A", OpenMatter's is two URLs in one field. Pass an aggregator URL through
+// and a 4-person card fills with that aggregator's roster. So the same guard
+// lib/hiring.js uses gates this — a website field that isn't a company's own site is
+// not a domain, it's a mistake.
 const { isCompanySite, originOf } = require('./hiring');
 
 function domainOf(website) {

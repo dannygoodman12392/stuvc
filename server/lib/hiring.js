@@ -99,16 +99,23 @@ function domainLabel(website) {
 
 // ── Hosts that are somebody's PROFILE, not somebody's company ──
 //
-// Not hypothetical. Measured on the live board 2026-07-16, 79 of 188 cards have a
-// website_url and among them:
+// Not hypothetical. Measured on PRODUCTION 2026-07-16 — 76 of 183 cards carry a
+// website_url and the field holds whatever got pasted:
 //
-//   LegalOS -> https://www.linkedin.com/in/matthew-asir
+//   Permute            -> scout.space          <- a DIFFERENT portfolio company
+//   Ampere             -> "N/A"
+//   OpenMatter Network -> "https://openmatter.network https://zkfirewall.openmatter.network"
 //
-// A founder's LinkedIn profile, pasted into the website field. Read it as a website
-// and we'd crawl linkedin.com, find LinkedIn Corp's careers page, and hang THEIR
-// job board off Matthew's card. The company field is 4 people; the board would say
-// 20,000. Every host here is one whose careers page belongs to the aggregator
-// rather than the company being aggregated.
+// The aggregator case (a founder's linkedin.com/in/... profile in the website field)
+// is the one this list exists for: read it as a website and we'd crawl linkedin.com,
+// find LinkedIn Corp's careers page, and hang THEIR job board off a 4-person card.
+// The card would say 4 people; the board would say 20,000.
+//
+// An earlier version of this comment cited "LegalOS -> linkedin.com/in/matthew-asir"
+// as live. That row exists only in the STALE LOCAL DB — there is no LegalOS card on
+// production. The guard is right; the citation was measured against the wrong
+// database. Every host below is one whose careers page belongs to the aggregator
+// rather than to the company being aggregated.
 //
 // lib/ingest.js has a BLOCKED_HOSTS of its own, for a different reason (Exa gets a
 // login wall). Same instinct, different failure — that one loses data, this one

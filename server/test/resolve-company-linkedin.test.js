@@ -219,9 +219,12 @@ test('EnrichLayer saying null is an answer, not a prompt to guess', async () => 
 });
 
 test('THE ONE THAT BITES: a LinkedIn profile in the website field is refused', async () => {
-  // LegalOS on the live board: website_url = linkedin.com/in/matthew-asir.
   // Live, EnrichLayer maps linkedin.com -> company/linkedin. Unguarded, that puts
   // LinkedIn Corp's 20,000 employees on a 4-person card.
+  //
+  // (The "LegalOS" name here is illustrative. I first cited it as a live row after
+  // measuring the stale local DB; production has no LegalOS card. The production-real
+  // cases are Permute -> scout.space and Ampere -> "N/A".)
   let called = false;
   const r = await resolveByDomain({
     website: 'https://www.linkedin.com/in/matthew-asir', key: 'k',

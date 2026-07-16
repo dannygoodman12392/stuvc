@@ -62,10 +62,14 @@ test('readTells reads the roadmap out of the titles, and stays quiet otherwise',
 });
 
 test('a profile URL in the website field is refused, not crawled', async () => {
-  // Live on the board 2026-07-16: LegalOS's website_url is
-  // https://www.linkedin.com/in/matthew-asir — a founder's profile, pasted into the
-  // website field. Crawl it and LinkedIn Corp's 20,000-person careers page lands on
-  // a 4-person card.
+  // A founder's LinkedIn profile pasted into the website field. Crawl it and LinkedIn
+  // Corp's 20,000-person careers page lands on a 4-person card.
+  //
+  // The fixture name is illustrative, not a production row — I originally cited
+  // "LegalOS" as live, having measured the STALE LOCAL DB; prod has no such card.
+  // The hazard is real and production-verified in its other forms: Permute's
+  // website_url is `scout.space` (a different portfolio company), Ampere's is "N/A".
+  // Same guard, same reason.
   const calls = [];
   const r = await hiringFor({
     company: 'LegalOS', website: 'https://www.linkedin.com/in/matthew-asir',
