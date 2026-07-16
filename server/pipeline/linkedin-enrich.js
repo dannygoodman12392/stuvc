@@ -77,7 +77,15 @@ function assessProfile(profile, criteria) {
 
 // The capped, cached DB pass. Returns a summary; never throws.
 async function runLinkedInEnrichment({ userId = 1, limit = 25, deps = {} } = {}) {
-  const key = deps.enrichKey || (resolveKey ? resolveKey(userId, 'enrichlayer') : null);
+  // `'enrichKey' in deps` — NOT `deps.enrichKey || resolveKey(...)`.
+  //
+  // The || form cannot express "no key". Passing enrichKey:null fell through to
+  // the database, found the real key, and made live billable calls — the dormancy
+  // test ran for 8.4 SECONDS against the network the moment Danny's key was
+  // configured on 2026-07-15. It had passed for months only because no key
+  // existed, i.e. it was asserting the absence of a key rather than the code's
+  // handling of one. Identical bug lived in company-enrich.js; fixed there too.
+  const key = 'enrichKey' in deps ? deps.enrichKey : resolveKey ? resolveKey(userId, 'enrichlayer') : null;
   if (!key && !deps.fetchProfile) return { skipped: 'no EnrichLayer key', enriched: 0, promoted: 0, flagged: 0 };
 
   const criteria = userGeoCriteria(userId);

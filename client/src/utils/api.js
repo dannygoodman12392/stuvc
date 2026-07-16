@@ -259,6 +259,18 @@ export const api = {
   // a skeleton to arrive at rows we already had. 136KB a visit, now 0 when warm.
   getPipeline: (params, opts) => cachedGet('/pipeline?' + new URLSearchParams(params || {}), opts),
   getPipelineCompany: (id, opts) => cachedGet(`/pipeline/${id}`, opts),
+  // The card's writes. Each invalidates the card AND the board — editing a
+  // company name or stage changes both, and a cache that forgets that shows him
+  // an edit that appears to have not saved.
+  updatePipelineCompany: (id, body) =>
+    after(request(`/pipeline/${id}`, { method: 'PATCH', body: JSON.stringify(body) }), '/pipeline'),
+  enrichPipelineCompany: (id) => after(request(`/pipeline/${id}/enrich`, { method: 'POST' }), `/pipeline/${id}`),
+  addCompanyNote: (id, body) =>
+    after(request(`/pipeline/${id}/notes`, { method: 'POST', body: JSON.stringify(body) }), `/pipeline/${id}`),
+  updateCompanyNote: (id, noteId, body) =>
+    after(request(`/pipeline/${id}/notes/${noteId}`, { method: 'PATCH', body: JSON.stringify(body) }), `/pipeline/${id}`),
+  deleteCompanyNote: (id, noteId) =>
+    after(request(`/pipeline/${id}/notes/${noteId}`, { method: 'DELETE' }), `/pipeline/${id}`),
   // The inbox — the seam between the sourcing engine and the tracker. Approving
   // promotes in one transaction and keeps the source chain intact.
   getPipelineInbox: (params, opts) => cachedGet('/pipeline/inbox?' + new URLSearchParams(params || {}), opts),
