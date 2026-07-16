@@ -438,8 +438,15 @@ function computeConviction({ movements = {}, rung = RUNG.NONE, marketRisk = {}, 
   // enumerating all 10,000 integer combinations through the old mean showed it
   // inverting the rubric in exactly the way you'd fear:
   //
-  //   10, 10,  1,  1  →  6.4  "Monitor — track the next data point"
-  //    5,  5, 10, 10  →  7.0  "Top-quartile — write a memo"
+  //   THE OLD MEAN (removed):        THE GATE BELOW (current, measured 2026-07-16):
+  //     10,10, 1, 1 →  6.4 Monitor     10,10, 1, 1 →  9.0  Anchor-grade
+  //      5, 5,10,10 →  7.0 memo         5, 5,10,10 →  6.0  Monitor
+  //
+  // ⚠️ READ THAT TABLE BEFORE QUOTING IT. The 6.4/7.0 numbers describe the BUG,
+  // not this file. I quoted them as if they were the gate's output when briefing a
+  // review panel, and the panel — correctly — came back with "you pitched us the
+  // pathology as the product." The left column is what was wrong. The right column
+  // is what the code does. Both are here so nobody has to re-derive it, including me.
   //
   // A founder who is perfect on both STRONG-evidence movements got tracked. A founder
   // middling on both got a memo, carried there by two movements the rubric itself

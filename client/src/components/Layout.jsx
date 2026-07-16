@@ -33,13 +33,27 @@ import { api, fetchAppVersion } from '../utils/api';
 // card can launch a read on its own; dropping it sooner would remove the only way
 // to start one, which is a regression wearing a simplification's clothes.
 const navConfig = [
+  // ── Three doors, three jobs, zero dead ones. ──
+  //
+  // ASSESS came out. This file's own comment already conceded the case — "Assess
+  // is reachable from a company card. It stays in the nav only until the card can
+  // launch a read on its own." That shipped: CompanyCard has "Assess this
+  // company". A nav item now opens a company PICKER, which is the Discover mistake
+  // — a search box you have to already know the answer to. An assessment is not a
+  // destination; it's something you do TO a company. The route stays; the door goes.
+  //
+  // TALENT came out. 304 candidates and 57 matches against ONE role and ONE
+  // portfolio company. It's a different product for a different customer — his
+  // founders, not him — and it doesn't belong beside the three screens he opens
+  // every morning. Moved to the utility menu until there's a second req.
+  //
+  // Every dead door is a reason not to open the building.
   { to: '/', label: 'Home' },
   { to: '/sourcing', label: 'Sourcing' },
   { to: '/pipeline', label: 'Pipeline' },
-  { to: '/assess', label: 'Assess' },
-  { to: '/talent', label: 'Talent' },
 ];
 const utilityConfig = [
+  { to: '/talent', label: 'Talent' },
   { to: '/settings', label: 'Settings' },
   { to: '/health', label: 'Health' },
   { to: '/releases', label: 'Releases' }, // Danny likes the changelog — it stays.

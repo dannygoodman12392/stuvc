@@ -442,16 +442,87 @@ function Docks({ conv }) {
 // The 7-M. Already built as a pure formatter over the agent outputs — no LLM
 // call, no second opinion, no sampling. Danny asked for "pretty close to a memo"
 // and this is it; it was just buried below the fold.
+// ══════════════════════════════════════════════════════════════════════════
+// THE MEMO HAS TO BE ABLE TO LEAVE THE BUILDING.
+//
+// Danny's stated goal: "I publish memos in Obsidian." His stated pain: "I don't
+// bring anything to IC... I should be the deal leader."
+//
+// The 7-M memo was already assembled and already good — and it was a collapsed
+// disclosure at the bottom of a column, with no copy, no export, no file. Every
+// other thing in this product is upstream plumbing for an outlet that wasn't
+// wired. A review panel called it worth more than the next four gaps combined,
+// and they were right: an analysis that can't become a document he walks in with
+// is a hobby.
+//
+// Copy → markdown, straight to the clipboard, paste into Obsidian. Not an
+// integration, not a sync, not a new secret — the shortest path from "Stu did the
+// analysis" to "Danny has a document". Open by default now, because a memo behind
+// a ▸ is a memo nobody reads.
+// ══════════════════════════════════════════════════════════════════════════
 function Memo({ a }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(true);
+  const [copied, setCopied] = useState(false);
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(memoMarkdown(a));
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch { /* clipboard denied — the text is on screen either way */ }
+  }
+
+  if (!a.memo_7m?.length) return null;
+
   return (
     <div className="border-t border-line pt-3">
-      <button onClick={() => setOpen(!open)} className="text-small font-medium text-ink hover:text-accent">
-        {open ? '▾' : '▸'} Deal memo — 7-M
-      </button>
+      <div className="flex items-center gap-2">
+        <button onClick={() => setOpen(!open)} className="text-small font-medium text-ink hover:text-accent">
+          {open ? '▾' : '▸'} Deal memo — 7-M
+        </button>
+        <div className="flex-1" />
+        <button onClick={copy} className="text-mini text-accent hover:text-accent-hover">
+          {copied ? 'Copied — paste into Obsidian' : 'Copy as markdown'}
+        </button>
+      </div>
       {open && <MemoBody a={a} />}
     </div>
   );
+}
+
+// The document he walks in with. His verdict leads — it's his memo, not Stu's.
+function memoMarkdown(a) {
+  const d = a.decision;
+  const co = a.founder_company || a.founder_name || 'Untitled';
+  const L = [`# ${co} — Deal Memo`, '', `*${String(a.created_at).slice(0, 10)} · Danny Goodman · Strider Capital*`, ''];
+
+  if (d) {
+    L.push('## My call', '', `**${labelFor(d.band)}**`, '');
+    if (d.rationale) L.push(d.rationale, '');
+    L.push(`**Prediction:** ${d.prediction}`, `**We find out:** ${d.resolve_by}`, '');
+    // The disagreement is the artifact. It belongs in the document, not just the DB —
+    // walking into IC with "Stu read this Monitor, I read it Anchor, check me in
+    // November" is the thing nobody else at that table can do.
+    if (a.conviction_band && a.conviction_band !== 'indeterminate' && a.conviction_band !== d.band) {
+      L.push(`> Stu read this **${labelFor(a.conviction_band)}**${a.conviction_score != null ? ` (${a.conviction_score})` : ''}. I disagree. Check me on ${d.resolve_by}.`, '');
+    }
+  }
+
+  if (a.defensibility?.length) {
+    L.push('## Defensibility', '');
+    for (const p of a.defensibility) L.push(`**${p.label}.** ${p.body}`, '');
+  }
+
+  for (const s of a.memo_7m) {
+    L.push(`## ${s.title}`, '');
+    if (s.note) L.push(`*${s.note}*`, '');
+    L.push(s.body, '');
+  }
+
+  if (a.conviction_score != null) {
+    L.push('---', '', `*Stu: ${a.conviction_score} — ${labelFor(a.conviction_band)}. This is an evidence-organising score, not a prediction; it has never been checked against an outcome. The judgement is mine.*`);
+  }
+  return L.join('\n');
 }
 
 function PredatesEngine({ a }) {

@@ -225,8 +225,34 @@ db.exec(`
 `);
 
 // ── Pipeline tracks & deal fields (added for unified pipeline model) ──
+// ══════════════════════════════════════════════════════════════════════════
+// 102 migrations, and a bare `catch {}` used to swallow every one of them.
+//
+// The catch could not tell these apart:
+//   "duplicate column name"  — expected; the idempotent path, fires 102x per boot
+//   "no such table"          — the schema is wrong and a column was just skipped
+//   SQLITE_BUSY / disk I/O   — the migration FAILED and the app booted anyway
+//   a typo in the type       — skipped silently, forever
+//
+// So the app boots green with a column missing, and you find out at runtime when
+// a query returns undefined and writes null into a business field. It isn't a
+// crash — it's silent data corruption, reported as success. That's the same
+// disease as every other bug found today: a status decoupled from the thing it
+// describes.
+//
+// Now: "duplicate column name" is the ONLY tolerated error. Everything else is
+// re-thrown, which converts 102 silent failure modes into one loud one.
+// ══════════════════════════════════════════════════════════════════════════
 function addColumn(table, col, type) {
-  try { db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${type}`); } catch {}
+  try {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${type}`);
+  } catch (e) {
+    // The expected, idempotent case: the column is already there.
+    if (/duplicate column name/i.test(e.message)) return;
+    // Anything else means the schema is not what this file thinks it is. Failing
+    // to boot is recoverable; booting with a missing column is not.
+    throw new Error(`Migration failed — ${table}.${col} (${type}): ${e.message}`);
+  }
 }
 
 // Track flags

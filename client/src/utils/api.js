@@ -256,7 +256,6 @@ export const api = {
   completeOnboarding: () => request('/settings/complete-onboarding', { method: 'POST' }),
 
   // Home dashboard
-  getHome: () => request('/home'),
 
   // ── Today — the surface ──
   // Pipeline — the front door. One connected read over the founders spine.
