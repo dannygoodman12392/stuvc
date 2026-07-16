@@ -53,7 +53,7 @@ const NO_STAGE = '(no stage)';
 // An empty lane he might legitimately drag into (Stage 2, Stage 4) still shows.
 const isDeadEnd = (s) => /^Stage 0:/.test(s) || /^Stage 5:/.test(s);
 
-export default function KanbanBoard({ founders, stages, tracks, onStageChange, onTracksChange }) {
+export default function KanbanBoard({ founders, stages, tracks, onStageChange, onTracksChange, onDelete }) {
   const [activeId, setActiveId] = useState(null);
   const nav = useNavigate();
 
@@ -111,6 +111,7 @@ export default function KanbanBoard({ founders, stages, tracks, onStageChange, o
             unstaged={stage === NO_STAGE}
             allTracks={tracks}
             onTracksChange={onTracksChange}
+            onDelete={onDelete}
             onOpen={(id) => nav(`/founders/${id}`)}
           />
         ))}
@@ -121,7 +122,7 @@ export default function KanbanBoard({ founders, stages, tracks, onStageChange, o
   );
 }
 
-function Column({ id, rows, unstaged, onOpen, allTracks, onTracksChange }) {
+function Column({ id, rows, unstaged, onOpen, allTracks, onTracksChange, onDelete }) {
   const { setNodeRef, isOver } = useDroppable({ id });
   return (
     <div
@@ -148,7 +149,7 @@ function Column({ id, rows, unstaged, onOpen, allTracks, onTracksChange }) {
           </p>
         )}
         {rows.map((r) => (
-          <Card key={r.id} row={r} onOpen={onOpen} allTracks={allTracks} onTracksChange={onTracksChange} />
+          <Card key={r.id} row={r} onOpen={onOpen} allTracks={allTracks} onTracksChange={onTracksChange} onDelete={onDelete} />
         ))}
         {!rows.length && !unstaged && (
           <div className="h-8 flex items-center justify-center text-mini text-ink-4">—</div>
@@ -218,7 +219,7 @@ function insightOf(row) {
   return c;
 }
 
-function Card({ row, onOpen, dragging, allTracks, onTracksChange }) {
+function Card({ row, onOpen, dragging, allTracks, onTracksChange, onDelete }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: String(row.id) });
 
   return (
@@ -227,7 +228,7 @@ function Card({ row, onOpen, dragging, allTracks, onTracksChange }) {
       {...listeners}
       {...attributes}
       onClick={() => !dragging && onOpen && onOpen(row.id)}
-      className={`bg-ground border rounded-sm px-2 py-1.5 cursor-pointer select-none transition ${
+      className={`group bg-ground border rounded-sm px-2 py-1.5 cursor-pointer select-none transition ${
         dragging ? 'border-line-3 rotate-1' : 'border-line hover:border-line-3'
       } ${isDragging && !dragging ? 'opacity-30' : ''}`}
     >
@@ -239,6 +240,24 @@ function Card({ row, onOpen, dragging, allTracks, onTracksChange }) {
         </span>
         {row.investment_amount > 0 && (
           <span className="text-micro text-ink-4 flex-none" title="Portfolio company">●</span>
+        )}
+        {/* Danny: "I need to be able to create and delete the cards themselves."
+            Hidden until hover: 184 always-visible × buttons would be 184 invitations
+            to misclick on a board whose primary gesture is drag.
+
+            Both handlers stop propagation, and they stop DIFFERENT things —
+            onPointerDown keeps dnd-kit from reading the press as the start of a drag,
+            onClick keeps the card from opening underneath. Missing either one makes
+            the button look broken in a way that reads as a flaky board. */}
+        {onDelete && !dragging && (
+          <button
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => { e.stopPropagation(); onDelete(row.id); }}
+            className="flex-none text-micro text-ink-4 hover:text-danger opacity-0 group-hover:opacity-100 transition-opacity px-1 -mr-1"
+            title={`Remove ${row.company || row.person || 'this card'} from the board`}
+          >
+            ×
+          </button>
         )}
       </div>
 

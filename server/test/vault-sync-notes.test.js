@@ -16,17 +16,26 @@ const SRC = read('routes/vaultSync.js');
 // old /call-notes matcher fell back to company name with no guard, so a Granola call
 // titled "Michael Dunn (Stealth)" would land on whichever Stealth founder came back
 // first.
+// Rewritten to assert BEHAVIOUR rather than grep the source. The original matched
+// the literal text of the guard regex, which meant it went red the moment the
+// implementation was improved and green for any code that merely CONTAINED the
+// right-looking string. resolveFounderId is exported now, so the real question —
+// "does a placeholder company file a note on a stranger's card?" — is askable
+// directly. Full coverage lives in vault-sync-resolve.test.js.
 test('company-name fallback refuses placeholder names', () => {
-  assert.ok(
-    /\/\^\(stealth\|not yet\|tbd\|n\\\/a\|unknown\)\/i/.test(SRC),
-    'the company-alone fallback must refuse placeholder company names'
-  );
-  // And the guard must sit on the company branch, not the name branch — a founder
-  // NAMED "stealth" isn't the problem; a company called it is.
-  const fn = SRC.match(/function resolveFounderId\(r\) \{[\s\S]*?\n\}/);
-  assert.ok(fn, 'resolveFounderId must exist');
-  const companyBranch = fn[0].slice(fn[0].indexOf('LAST resort'));
-  assert.ok(/stealth/i.test(companyBranch), 'the placeholder guard belongs on the company-alone branch');
+  const { resolveFounderId } = require('../routes/vaultSync');
+  const cards = [
+    { id: 1, name: 'Evan Wray', company: 'Stealth' },
+    { id: 2, name: 'Alex Wilson', company: 'Stealth' },
+    { id: 3, name: 'Stealth Person', company: 'Real Co' },
+  ];
+  assert.equal(resolveFounderId({ company: 'Stealth' }, cards), null, 'a placeholder company must never resolve');
+  assert.equal(resolveFounderId({ company: 'Not Yet' }, cards), null);
+  // The guard belongs on the company branch, not the name branch — a founder NAMED
+  // "Stealth" isn't the problem; a company called it is.
+  assert.equal(resolveFounderId({ founder_name: 'Stealth Person' }, cards), 3, 'a person named Stealth is still a person');
+  // And the name rescues the placeholder rather than guessing past it.
+  assert.equal(resolveFounderId({ founder_name: 'Alex Wilson', company: 'Stealth' }, cards), 2);
 });
 
 // ── 2. ONE MATCHER, NOT TWO ──
@@ -36,8 +45,8 @@ test('both note endpoints use the same matcher', () => {
   const notes = SRC.match(/router\.post\('\/notes'[\s\S]*?\n\}\);/);
   const calls = SRC.match(/router\.post\('\/call-notes'[\s\S]*?\n\}\);/);
   assert.ok(notes && calls, 'both endpoints must exist');
-  assert.ok(/resolveFounderId\(r\)/.test(notes[0]), '/notes must use the shared matcher');
-  assert.ok(/resolveFounderId\(r\)/.test(calls[0]), '/call-notes must use the shared matcher');
+  assert.ok(/resolveFounderId\(r(?:,\s*cards)?\)/.test(notes[0]), '/notes must use the shared matcher');
+  assert.ok(/resolveFounderId\(r(?:,\s*cards)?\)/.test(calls[0]), '/call-notes must use the shared matcher');
   // No inline lookup left behind in either.
   assert.ok(!/LOWER\(name\) = LOWER\(\?\)/.test(calls[0]), '/call-notes must not keep its own inline name lookup');
 });

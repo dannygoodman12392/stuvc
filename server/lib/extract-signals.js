@@ -117,4 +117,49 @@ function parseJson(text) {
   return null;
 }
 
-module.exports = { extractFrom, SYSTEM, TEMPERATURE };
+// ══════════════════════════════════════════════════════════════════════════
+// Pull the facts out of a source the moment it lands, without being asked.
+//
+// Danny: "I want to get real insights on these companies: from my Granola notes,
+// from online sources... For some companies further along in the pipeline I might
+// have decks."
+//
+// The ingest and extract calls are separate on purpose (routes/companySources.js:
+// "Uploading a deck must never silently spend money") and that separation is still
+// right at the HTTP layer — a failed extraction must never lose the deck. But it
+// left the product in a state where you upload a deck, the row says "not analysed",
+// and the only thing that turns it into insight is a button rendered at opacity-0
+// until you happen to hover the row. Measured 2026-07-16: 37 cards had a source, 2
+// had ever been extracted. That is the same disease as the 79 websites nobody read
+// — a chore nobody remembers to do is a feature that doesn't exist.
+//
+// So sources now analyse themselves, out of band, and the manual button stays for
+// re-running. The spend is one model call per source — a few cents against a
+// product whose entire job is to have already read the thing.
+async function extractSoon(founderId, sourceId, userId = 1) {
+  setImmediate(async () => {
+    try {
+      const db = require('../db');
+      const signals = require('./signals');
+      const source = db.prepare('SELECT * FROM company_sources WHERE id = ? AND founder_id = ?')
+        .get(sourceId, founderId);
+      if (!source) return;
+
+      const { candidates, error, model } = await extractFrom(source, { userId });
+      if (error) { console.warn('[AutoExtract] source %s: %s', sourceId, error); return; }
+
+      // Same idempotency as the manual route: re-reading a source must not double
+      // the card.
+      db.prepare('DELETE FROM company_signals WHERE source_id = ?').run(sourceId);
+      const r = signals.recordSignals({ founderId, sourceId, candidates, model, createdBy: userId });
+      console.log('[AutoExtract] source %s -> %s proposed, %s kept', sourceId, candidates.length, r.kept);
+    } catch (e) {
+      // Never throws into the caller: this is a side effect of saving something, and
+      // the source is already safely stored. Worst case the row says "not analysed"
+      // and the button is right there.
+      console.warn('[AutoExtract] source %s failed: %s', sourceId, e.message);
+    }
+  });
+}
+
+module.exports = { extractFrom, extractSoon, SYSTEM, TEMPERATURE };

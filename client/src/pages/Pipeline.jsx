@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../utils/api';
 import KanbanBoard from '../components/KanbanBoard';
@@ -76,6 +76,97 @@ function Band({ band, score, muted }) {
   );
 }
 
+// ══════════════════════════════════════════════════════════════════════════
+// The composer — a company, added in about four seconds.
+//
+// Danny takes ~28 first calls a month and adds companies between them. So the
+// affordance that matters is speed: type, Tab, Enter, gone.
+//
+// ── WHY IT ASKS FOR BOTH NAMES ──
+// A card is a person AND their company. The board still carries rows from the March
+// import where a company name got written into the founder field, and nothing
+// downstream can untangle them — which is why the server refuses a bare company and
+// why this doesn't offer one. The website is optional and does real work: fill it in
+// and the card reads the site before he's finished typing the name.
+function Composer({ onCreate, onClose }) {
+  const [v, setV] = useState({ company: '', name: '', website_url: '' });
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+  const first = useRef(null);
+
+  useEffect(() => { first.current?.focus(); }, []);
+
+  async function submit() {
+    if (!v.company.trim() || !v.name.trim() || busy) return;
+    setBusy(true); setErr(null);
+    try {
+      await onCreate(v);
+    } catch (e) {
+      // The 409 knows which card he already has. Say so — "already on the board" with
+      // no name is a dead end, and he'd just make the duplicate anyway.
+      setErr(e.message);
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center pt-24 bg-ink/10" onClick={onClose}>
+      <div
+        className="w-[420px] bg-ground rounded-md border border-line-2 shadow-lg overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') onClose();
+          // Enter submits from any field — Cmd+Enter shouldn't be required to do the
+          // only thing this dialog does.
+          if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); }
+        }}
+      >
+        <div className="px-3 h-8 flex items-center border-b border-line">
+          <span className="text-mini font-semibold uppercase text-ink-4">New company</span>
+        </div>
+        <div className="p-3 space-y-2">
+          <input
+            ref={first}
+            className="input w-full"
+            placeholder="Company"
+            value={v.company}
+            onChange={(e) => setV({ ...v, company: e.target.value })}
+          />
+          <input
+            className="input w-full"
+            placeholder="Founder"
+            value={v.name}
+            onChange={(e) => setV({ ...v, name: e.target.value })}
+          />
+          <input
+            className="input w-full"
+            placeholder="Website (optional — Stu reads it now if you add it)"
+            value={v.website_url}
+            onChange={(e) => setV({ ...v, website_url: e.target.value })}
+          />
+          {err && <p className="text-mini text-danger">{err}</p>}
+        </div>
+        <div className="px-3 h-9 flex items-center gap-2 border-t border-line bg-ground-2">
+          {/* Says where it goes and who sees it. The second half is the load-bearing
+              part: Airtable is the team's, and he should know a card he adds here is
+              his alone until he drags it. */}
+          <span className="text-micro text-ink-4 flex-1 truncate" title="A card you add here stays in Stu. Only dragging it to a new stage writes to Airtable.">
+            Stage 1: Identified · stays in Stu
+          </span>
+          <button onClick={onClose} className="text-mini text-ink-3 hover:text-ink px-2">Cancel</button>
+          <button
+            onClick={submit}
+            disabled={busy || !v.company.trim() || !v.name.trim()}
+            className="px-2 h-6 rounded text-mini font-medium bg-accent text-white disabled:bg-ground-4 disabled:text-ink-4"
+          >
+            {busy ? 'Adding…' : 'Add'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function Pipeline() {
   const nav = useNavigate();
   const [params, setParams] = useSearchParams();
@@ -86,6 +177,8 @@ export default function Pipeline() {
   const [track, setTrack] = useState('');
   const [q, setQ] = useState('');
   const [cursor, setCursor] = useState(0);
+  const [composing, setComposing] = useState(false);
+  const [undo, setUndo] = useState(null);
   const stage = params.get('stage') || '';
 
   useEffect(() => { localStorage.setItem('stu_pipeline_view', view); }, [view]);
@@ -169,12 +262,78 @@ export default function Pipeline() {
     }
   }
 
-  if (err) return <div className="p-4 text-small text-danger">{err}</div>;
+  async function onCreate(v) {
+    const created = await api.createPipelineCompany({
+      company: v.company.trim(), name: v.name.trim(), website_url: v.website_url.trim(),
+    });
+    setData((d) => ({ ...d, rows: [...d.rows, created] }));
+    setComposing(false);
+    // Straight into the card. He added it because he has something to put in it.
+    nav(`/founders/${created.id}`);
+  }
+
+  // ── Delete, with the undo attached ──
+  // The row is the join target for transcripts, commitments, assessments and
+  // decisions, so the server deletes softly. That makes undo a restore, and undo is
+  // what makes the delete usable: without it he won't touch the button, and the
+  // board keeps accreting companies he stopped caring about in March.
+  async function onDelete(id) {
+    const row = data?.rows.find((r) => r.id === id);
+    if (!row) return;
+    const prev = data;
+    setData((d) => ({ ...d, rows: d.rows.filter((r) => r.id !== id) }));
+    try {
+      await api.deletePipelineCompany(id);
+      setUndo({ id, label: `${row.company || row.person || 'Card'} removed` });
+    } catch (e) {
+      setErr(e.message);
+      setData(prev);
+    }
+  }
+
+  async function onUndo() {
+    if (!undo) return;
+    try {
+      const restored = await api.restorePipelineCompany(undo.id);
+      setData((d) => ({ ...d, rows: [...d.rows, restored] }));
+      setUndo(null);
+    } catch (e) { setErr(e.message); }
+  }
+
+  if (err && !data) return <div className="p-4 text-small text-danger">{err}</div>;
 
   return (
     <div className="flex flex-col h-full">
+      {composing && <Composer onCreate={onCreate} onClose={() => setComposing(false)} />}
+
+      {/* The undo. Sits until he dismisses it rather than timing out — a 5-second
+          toast is a delete he can't take back if he looks away, which makes the
+          delete button something he learns not to press. */}
+      {undo && (
+        <div className="px-3 h-8 flex items-center gap-2 border-b border-line bg-accent-soft flex-shrink-0">
+          <span className="text-mini text-ink flex-1">{undo.label}</span>
+          <button onClick={onUndo} className="text-mini font-medium text-accent hover:text-accent-hover">Undo</button>
+          <button onClick={() => setUndo(null)} className="text-mini text-ink-4 hover:text-ink">Dismiss</button>
+        </div>
+      )}
+
+      {/* A save/delete that failed while the board is still usable. Not a full-page
+          error — losing the board because one write 500'd would be worse than the bug. */}
+      {err && data && (
+        <div className="px-3 h-8 flex items-center gap-2 border-b border-line bg-danger-soft flex-shrink-0">
+          <span className="text-mini text-danger flex-1">{err}</span>
+          <button onClick={() => setErr(null)} className="text-mini text-ink-4 hover:text-ink">Dismiss</button>
+        </div>
+      )}
       <div className="flex items-center gap-2 px-3 h-8 border-b border-line-2 bg-ground flex-shrink-0">
         <span className="text-small font-semibold text-ink">Pipeline</span>
+        <button
+          onClick={() => setComposing(true)}
+          className="px-2 h-6 rounded text-mini font-medium bg-ground-4 text-ink hover:bg-line"
+          title="Add a company (N)"
+        >
+          + New
+        </button>
         <input
           className="input w-44 border-0 bg-transparent focus:ring-0 px-0 ml-2"
           placeholder="Filter…"
@@ -255,6 +414,7 @@ export default function Pipeline() {
             tracks={data.vocab?.tracks || []}
             onStageChange={onStageChange}
             onTracksChange={onTracksChange}
+            onDelete={onDelete}
           />
         </div>
       ) : (

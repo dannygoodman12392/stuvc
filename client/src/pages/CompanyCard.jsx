@@ -676,7 +676,16 @@ function Sources({ founderId, company }) {
               <span className="w-20 text-mini text-ink-3">
                 {s.signal_count ? `${s.signal_count} facts` : <span className="text-ink-4">not analysed</span>}
               </span>
-              <span className="w-28 flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition">
+              {/* Sources analyse themselves now (lib/extract-signals extractSoon), so
+                  "not analysed" should be a brief state or a real failure — not the
+                  resting state it used to be. It stayed the resting state for 35 of 37
+                  cards because the only cure was a button rendered at opacity-0 until
+                  you hovered the row. So: hidden while there's nothing to fix, VISIBLE
+                  the moment a source has no facts. An unanalysed source is the one
+                  thing on this row worth a click. */}
+              <span className={`w-28 flex justify-end gap-2 transition ${
+                s.signal_count ? 'opacity-0 group-hover:opacity-100' : ''
+              }`}>
                 <button
                   onClick={() => run('x' + s.id, () => api.extractSignals(founderId, s.id))}
                   className="text-micro text-accent hover:text-accent-hover"

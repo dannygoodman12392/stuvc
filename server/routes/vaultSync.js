@@ -227,9 +227,10 @@ router.post('/notes', (req, res) => {
 
   const { ingestNote } = require('../lib/ingest');
   const out = { created: 0, deduped: 0, skipped: [] };
+  const cards = allCards();
 
   for (const r of rows) {
-    const founderId = resolveFounderId(r);
+    const founderId = resolveFounderId(r, cards);
     if (!founderId) { out.skipped.push({ reason: 'no matching card', name: r.founder_name || r.company }); continue; }
     try {
       const w = ingestNote({
@@ -249,31 +250,157 @@ router.post('/notes', (req, res) => {
   res.json(out);
 });
 
-// Shared by /notes and /call-notes. Name first, then name+company, then company —
-// ids are meaningless across databases, so the name is the join key.
-function resolveFounderId(r) {
+// ══════════════════════════════════════════════════════════════════════════
+// Which card does this call belong to?
+//
+// Shared by /notes and /call-notes. IDs are meaningless across databases, so the
+// name is the join key — which makes this function the entire safety boundary for
+// Danny's most valuable data. Get it wrong and a real transcript lands on a
+// stranger's card, then fathers signals, with verbatim quotes, that verify
+// perfectly against the wrong company.
+//
+// ── WHY NORMALISED, AND WHY THAT ISN'T A LOOSENING ──
+// Exact match was losing real calls to cosmetic drift, measured against the live
+// board and 90 days of Granola titles:
+//
+//   Granola "Uptake AI"  vs card "Uptake AI"       -> fine
+//   Granola "Onnyx"      vs card "ONNYX Systesm"   -> MISSED (typo in the card)
+//   Granola "Kelvin"     vs card "Kelvon"          -> MISSED (typo somewhere)
+//
+// So we normalise. But normalising ALONE is how "Peak" starts matching "Peak Labs",
+// which is the exact failure resolve-company-linkedin.js and lib/edgar.js are both
+// built to refuse. The safety doesn't come from strictness — it comes from
+// REFUSING AMBIGUITY. Every query below returns ALL matches, and more than one
+// match is a refusal, not a coin flip.
+//
+// That's the bug this replaces: the old company fallback ended in `LIMIT 1`, so 18
+// cards named "Stealth" resolved to whichever row SQLite happened to return first.
+// The placeholder guard hid it for "Stealth" specifically and nothing else.
+// ══════════════════════════════════════════════════════════════════════════
+
+// Corporate/product filler that shouldn't decide identity. Same list as
+// lib/edgar.js and lib/hiring.js — one company-name vocabulary across the codebase.
+const NAME_NOISE = /\b(inc|llc|ltd|corp|corporation|co|company|technologies|technology|labs?|group|holdings|ai|io|hq|the|systems?)\b/g;
+
+function normCompany(s) {
+  return String(s || '').toLowerCase()
+    .normalize('NFKD').replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(NAME_NOISE, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// People are not companies: strip case and punctuation, never words. "Dan" must not
+// become the same token as "Daniel", and no part of a person's name is filler.
+function normPerson(s) {
+  return String(s || '').toLowerCase()
+    .normalize('NFKD').replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-z ]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// A name that identifies no one. "Stealth" is 18 cards; matching it files Danny's
+// note about one company onto a stranger's.
+const PLACEHOLDER_CO = /^(stealth|not yet|tbd|n\/a|na|unknown|none|new|company)$/i;
+
+// Read once per request and passed down. A sync pushes up to 100 notes, and
+// re-querying every card per note is how a 2s job becomes a 40s one. Never cached
+// across requests: a card created a moment ago must be matchable now.
+function allCards() {
+  return db.prepare(
+    'SELECT id, name, company FROM founders WHERE created_by = ? AND is_deleted = 0'
+  ).all(OWNER_ID);
+}
+
+// ── Reading a Granola title ──
+//
+// Danny's meeting titles carry the join key, but in no fixed order. Measured over
+// 90 days of real titles:
+//
+//   "Dan Preiss (Cadrian AI)"      Person (Company)
+//   "Concorda (Sam and Ke)"        Company (People)     <- the reverse
+//   "Hedge Insurance (Luke Button)"Company (Person)
+//   "Alex Wilson"                  Person, bare
+//   "Scaylor"                      Company, bare
+//   "Concorda <> GLG Call"         Company + meeting noise
+//
+// There is no rule that separates these — "Scaylor" and "Alex Wilson" are the same
+// shape. So we don't guess: we produce every reading and let resolveFounderId's
+// refusal rule sort it out. A reading that matches nothing costs nothing, and a
+// reading that matches something ambiguous is refused anyway.
+//
+// This lives on the SERVER rather than in the scheduled task on purpose. The
+// caller used to be responsible for parsing, which meant the join rules lived in a
+// prompt, were reimplemented per caller, and were untestable. Now the task can send
+// the raw Granola title and this decides — one implementation, under test.
+const MEETING_NOISE = /\s*<>.*$|\s+[—–-]\s+.*$|\s+pitch\b.*$|\s*\((?:\d{1,2}\/\d{1,2}(?:\/\d{2,4})?|\w+ \d{1,2},? \d{4})\)\s*$/gi;
+
+function parseMeetingTitle(title) {
+  const clean = String(title || '').replace(MEETING_NOISE, '').trim();
+  if (!clean) return [];
+  const m = /^\s*(.+?)\s*\((.+?)\)\s*$/.exec(clean);
+  if (m) {
+    const [, outer, inner] = m;
+    // Both orders. Whichever is real will match; the other almost never will.
+    return [
+      { founder_name: outer, company: inner },
+      { founder_name: inner, company: outer },
+    ];
+  }
+  // Bare. Could be either — "Scaylor" is a company, "Alex Wilson" is a person, and
+  // nothing in the string says which. Try both rather than assuming, which is the
+  // bug that lost Alex Wilson and Roy Grossberg on the first pass.
+  return [{ company: clean }, { founder_name: clean }];
+}
+
+/**
+ * @returns {number|null} the card id, or null when nothing matches OR when more
+ *   than one thing does. Ambiguity is a refusal — an unfiled note is a nuisance,
+ *   a misfiled transcript is a lie with quotes attached.
+ */
+function resolveFounderId(r, cards) {
   if (r.founder_id) return r.founder_id;
-  if (r.founder_name && r.company) {
-    const f = db.prepare(
-      'SELECT id FROM founders WHERE created_by = ? AND is_deleted = 0 AND LOWER(TRIM(name)) = LOWER(?) AND LOWER(TRIM(company)) = LOWER(?) LIMIT 1'
-    ).get(OWNER_ID, String(r.founder_name).trim(), String(r.company).trim());
-    if (f) return f.id;
+  const rows = cards || allCards();
+
+  // Nothing explicit to go on: read the meeting title instead. Each reading gets the
+  // full matcher, including its refusals, and the FIRST unambiguous hit wins.
+  if (!r.founder_name && !r.company && r.title) {
+    for (const cand of parseMeetingTitle(r.title)) {
+      const id = resolveFounderId({ ...cand }, rows);
+      if (id) return id;
+    }
+    return null;
   }
-  if (r.founder_name) {
-    const f = db.prepare(
-      'SELECT id FROM founders WHERE created_by = ? AND is_deleted = 0 AND LOWER(TRIM(name)) = LOWER(?) LIMIT 1'
-    ).get(OWNER_ID, String(r.founder_name).trim());
-    if (f) return f.id;
+
+  const wantPerson = normPerson(r.founder_name);
+  const wantCo = normCompany(r.company);
+  const coIsPlaceholder = !wantCo || PLACEHOLDER_CO.test(String(r.company || '').trim());
+
+  const only = (list) => (list.length === 1 ? list[0].id : null);
+
+  // 1. Both agree. The strongest evidence available, and the only one that can
+  //    safely disambiguate a placeholder company: "Alex Wilson (Stealth)" is a real
+  //    join when the NAME is what's carrying it.
+  if (wantPerson && wantCo) {
+    const both = rows.filter((c) => normPerson(c.name) === wantPerson && normCompany(c.company) === wantCo);
+    if (both.length) return only(both);
   }
-  // Company alone is a LAST resort and never for a placeholder: "Stealth" is shared
-  // by 18 founders and "Not Yet" by 3, so matching on it would file Danny's note
-  // about one company onto a stranger's card.
-  if (r.company && !/^(stealth|not yet|tbd|n\/a|unknown)/i.test(String(r.company).trim())) {
-    const f = db.prepare(
-      'SELECT id FROM founders WHERE created_by = ? AND is_deleted = 0 AND LOWER(TRIM(company)) = LOWER(?) LIMIT 1'
-    ).get(OWNER_ID, String(r.company).trim());
-    if (f) return f.id;
+
+  // 2. The person. Distinctive enough to stand alone — and unlike the company,
+  //    a founder's name is not shared by 18 cards.
+  if (wantPerson) {
+    const byPerson = rows.filter((c) => normPerson(c.name) === wantPerson);
+    if (byPerson.length) return only(byPerson);
   }
+
+  // 3. The company, last and never for a placeholder.
+  if (!coIsPlaceholder) {
+    const byCo = rows.filter((c) => normCompany(c.company) === wantCo);
+    if (byCo.length) return only(byCo);
+  }
+
   return null;
 }
 
@@ -284,6 +411,7 @@ router.post('/call-notes', (req, res) => {
 
   const { ingestGranolaNote } = require('../lib/ingest');
   const out = { created: 0, deduped: 0, skipped: [] };
+  const cards = allCards();
 
   for (const r of rows) {
     // Shared with /notes. The old inline version here fell back to company name with
@@ -292,9 +420,16 @@ router.post('/call-notes', (req, res) => {
     // back first, and file a real call transcript onto a stranger's card. The
     // transcript would then father signals, with quotes, that verify perfectly —
     // against the wrong company.
-    const founderId = resolveFounderId(r);
+    const founderId = resolveFounderId(r, cards);
     if (!founderId) {
-      out.skipped.push({ reason: 'no matching company', name: r.founder_name || r.company });
+      // Name the thing that didn't match, and say which way it failed. "no matching
+      // company" on 52 skipped rows is unactionable; this is a to-fix list.
+      out.skipped.push({
+        reason: 'no card matches, or more than one does',
+        title: r.title || null,
+        founder_name: r.founder_name || null,
+        company: r.company || null,
+      });
       continue;
     }
 
@@ -308,8 +443,14 @@ router.post('/call-notes', (req, res) => {
         userId: OWNER_ID,
       });
       if (w.error) out.skipped.push({ reason: w.error, title: r.title });
-      else if (w.created) out.created++;
-      else out.deduped++; // the same call pushed by seven consecutive nightly runs
+      else if (w.created) {
+        out.created++;
+        // The transcript is the point of this whole endpoint — a call that lands and
+        // says "not analysed" is the 28 conversations sitting outside the product all
+        // over again, one layer in. `created` gates it, so the nightly re-push of the
+        // same call costs nothing.
+        require('../lib/extract-signals').extractSoon(founderId, w.id, OWNER_ID);
+      } else out.deduped++; // the same call pushed by seven consecutive nightly runs
     } catch (e) {
       out.skipped.push({ reason: e.message, title: String(r.title || '').slice(0, 60) });
     }
@@ -405,3 +546,9 @@ router.post('/tasks', (req, res) => {
 module.exports = router;
 module.exports.timingSafeEqual = timingSafeEqual;
 module.exports.mapAgentOutputs = mapAgentOutputs;
+// Exported for test: this function is the entire safety boundary between Danny's
+// transcripts and the wrong company's card.
+module.exports.resolveFounderId = resolveFounderId;
+module.exports.normCompany = normCompany;
+module.exports.normPerson = normPerson;
+module.exports.parseMeetingTitle = parseMeetingTitle;

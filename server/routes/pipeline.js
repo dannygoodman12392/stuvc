@@ -568,9 +568,11 @@ const EDITABLE = [
 ];
 
 router.patch('/:id', (req, res) => {
-  const row = db.prepare('SELECT id FROM founders WHERE id = ? AND created_by = ? AND is_deleted = 0')
+  // website_url comes back too: the auto-read below fires on CHANGE, and without the
+  // old value every save of an untouched field would re-read the site.
+  const before = db.prepare('SELECT id, website_url FROM founders WHERE id = ? AND created_by = ? AND is_deleted = 0')
     .get(req.params.id, req.user.id);
-  if (!row) return res.status(404).json({ error: 'not found' });
+  if (!before) return res.status(404).json({ error: 'not found' });
 
   const fields = Object.keys(req.body).filter((k) => EDITABLE.includes(k));
   if (!fields.length) {
@@ -585,11 +587,67 @@ router.patch('/:id', (req, res) => {
   db.prepare(`UPDATE founders SET ${set}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`)
     .run(...vals, req.params.id);
 
+  // ── A card that reads itself ──
+  // Measured 2026-07-16: 79 cards carry a website, 3 had ever been read. The bulk
+  // /read-web path existed the whole time and nobody ran it, which is the actual
+  // lesson — a backfill you have to remember is a backfill that doesn't happen. So
+  // the moment Danny pastes a URL, the card goes and reads it.
+  //
+  // Fire-and-forget, deliberately. Exa takes several seconds and this is a blur
+  // handler: making him watch a spinner to save a text field would be a worse
+  // product than not reading the site at all.
+  if (fields.includes('website_url') && req.body.website_url !== before.website_url) {
+    readWebsiteSoon(req.params.id, req.body.website_url, req.user.id);
+  }
+
   // cardRow, not PIPELINE_SQL — the narrow board query would echo back a row
   // missing the field just saved, and the client would render the edit as lost.
   const updated = cardRow(req.user.id, req.params.id);
   res.json({ ...updated, funnel_stage: stageOf(updated) });
 });
+
+// Read a newly-saved website into the card's source log, out of band.
+//
+// Every failure here is swallowed to a log line on purpose: this is a side effect of
+// saving a text field, and a dead site, a missing Exa key, or a rate limit must never
+// surface as "your edit failed". The card shows what it managed to read; the Sources
+// block already renders an honest empty state when that's nothing.
+function readWebsiteSoon(founderId, rawUrl, userId) {
+  const url = String(rawUrl || '').trim();
+  if (!url) return;
+
+  setImmediate(async () => {
+    try {
+      const { ingestUrl, BLOCKED_HOSTS } = require('../lib/ingest');
+      // Founders paste more than one URL into the field; take the first.
+      let u = url.split(/\s+/)[0];
+      if (!/^https?:\/\//i.test(u)) u = 'https://' + u;
+
+      let host;
+      try { host = new URL(u).hostname; } catch { return; }
+      // linkedin.com/in/... lives in this field on the live board (LegalOS). Exa
+      // returns a login wall for it, and ingest refuses it anyway — don't spend the
+      // call to find out.
+      if (BLOCKED_HOSTS.some((re) => re.test(host))) return;
+
+      // Idempotent at the storage layer (content_hash), but checking first saves an
+      // Exa call on the common case of Danny editing the same field twice.
+      const seen = db.prepare(
+        "SELECT 1 FROM company_sources WHERE founder_id = ? AND kind = 'url' AND uri = ? LIMIT 1"
+      ).get(founderId, u);
+      if (seen) return;
+
+      const r = await ingestUrl({ founderId, url: u, userId });
+      if (r?.error) { console.warn('[AutoRead] %s -> %s', u, r.error); return; }
+      console.log('[AutoRead] read %s for founder %s', u, founderId);
+      // Reading it is half the job — a source nobody analysed is a row that says
+      // "not analysed".
+      if (r.created && r.id) require('../lib/extract-signals').extractSoon(founderId, r.id, userId);
+    } catch (e) {
+      console.warn('[AutoRead] %s failed: %s', url, e.message);
+    }
+  });
+}
 
 // ══════════════════════════════════════════════════════════════════════════
 // THE MERGED BOARD'S TWO WRITES — AND ONLY ONE OF THEM LEAVES STU
@@ -865,6 +923,99 @@ router.post('/:id/enrich', async (req, res) => {
     console.error('[Pipeline] enrich failed:', e.message);
     res.status(500).json({ error: 'Enrichment failed: ' + e.message });
   }
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// POST /api/pipeline — a new card, from the board.
+//
+// Danny: "these founder/company kanban cards in Pipeline need to be highly
+// editable, I need to be able to create and delete the cards themselves."
+//
+// POST /api/founders has existed the whole time, and /founders/new is a routed
+// page. Neither is reachable from Pipeline, which is where he actually lives — so
+// the capability may as well not have existed. This is the same write, at the
+// place the work happens.
+//
+// ── WHY BOTH NAMES ARE REQUIRED ──
+// `founders` is the spine, and a row on it is A PERSON. The March Airtable import
+// wrote COMPANY records into it with the company in the name column, which is why
+// isPerson() exists forty lines up and why the board still has rows called
+// "Gatsby Robotics" where a human should be. A composer that accepts a bare company
+// name would manufacture that exact junk at speed. Two fields, both required.
+//
+// ── WHY THIS DOES NOT TOUCH AIRTABLE ──
+// The board's rule, and Danny's: the STAGE publishes, nothing else does. Airtable is
+// team-visible and this is his private workbench, so a card he makes here is his
+// until he drags it. Verified the nightly sync can't punish that — neither
+// airtable-sync.js nor airtable-import.js soft-deletes rows it doesn't recognise,
+// and the import matches on name, so a founder he later adds to the team's base
+// links up to this card rather than duplicating it.
+router.post('/', (req, res) => {
+  const name = String(req.body?.name || '').trim();
+  const company = String(req.body?.company || '').trim();
+  const website = String(req.body?.website_url || '').trim();
+
+  if (!name) return res.status(400).json({ error: 'A founder name is required.', field: 'name' });
+  if (!company) {
+    return res.status(400).json({
+      error: 'A company name is required.',
+      detail: 'A card is a person AND their company — the board has rows where a company got typed into the founder field, and it can’t tell them apart afterwards.',
+      field: 'company',
+    });
+  }
+
+  // Don't let him create the duplicate he's about to regret. Same normalisation the
+  // note matcher uses, so "Cadrian" and "Cadrian AI" are recognised as the same board.
+  const dupe = db.prepare(
+    `SELECT id, name, company FROM founders
+      WHERE created_by = ? AND is_deleted = 0
+        AND LOWER(TRIM(name)) = LOWER(?) AND LOWER(TRIM(company)) = LOWER(?) LIMIT 1`
+  ).get(req.user.id, name, company);
+  if (dupe) {
+    return res.status(409).json({
+      error: `${dupe.name} at ${dupe.company} is already on the board.`,
+      founder_id: dupe.id,
+    });
+  }
+
+  const r = db.prepare(`
+    INSERT INTO founders (name, company, website_url, stage, status, pipeline_tracks, stage_status, created_by)
+    VALUES (?, ?, ?, 'Pre-seed', 'Sourced', ?, ?, ?)
+  `).run(name, company, website || null, req.body?.pipeline_tracks || 'investment', vocab.STAGES[1], req.user.id);
+
+  // A card that reads itself, the moment it exists. See readWebsiteSoon.
+  if (website) readWebsiteSoon(r.lastInsertRowid, website, req.user.id);
+
+  const created = cardRow(req.user.id, r.lastInsertRowid);
+  res.status(201).json({ ...created, funnel_stage: stageOf(created) });
+});
+
+// ── DELETE /api/pipeline/:id — take a card off the board ──
+//
+// Soft, like every other delete in this codebase. Not caution for its own sake: the
+// row is the join target for call transcripts, commitments, assessments and
+// decisions, and a hard delete would orphan all of it to save a few KB. It also
+// makes the undo in the UI a one-line restore rather than a re-import.
+router.delete('/:id', (req, res) => {
+  const row = db.prepare('SELECT id, name, company FROM founders WHERE id = ? AND created_by = ? AND is_deleted = 0')
+    .get(req.params.id, req.user.id);
+  if (!row) return res.status(404).json({ error: 'not found' });
+
+  db.prepare('UPDATE founders SET is_deleted = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(row.id);
+  // Airtable is untouched, deliberately — see POST above. Removing a company from
+  // his own board is not a statement to his team about the deal.
+  res.json({ removed: { id: row.id, name: row.name, company: row.company } });
+});
+
+// ── POST /api/pipeline/:id/restore — the undo ──
+// A delete Danny can't take back is a delete he won't use.
+router.post('/:id/restore', (req, res) => {
+  const row = db.prepare('SELECT id FROM founders WHERE id = ? AND created_by = ? AND is_deleted = 1')
+    .get(req.params.id, req.user.id);
+  if (!row) return res.status(404).json({ error: 'not found, or not deleted' });
+  db.prepare('UPDATE founders SET is_deleted = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(row.id);
+  const restored = cardRow(req.user.id, row.id);
+  res.json({ ...restored, funnel_stage: stageOf(restored) });
 });
 
 // ── POST /api/pipeline/:id/public — the free read: Form D + open roles ──

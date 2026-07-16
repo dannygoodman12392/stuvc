@@ -299,6 +299,11 @@ export const api = {
   // an edit that appears to have not saved.
   updatePipelineCompany: (id, body) =>
     after(request(`/pipeline/${id}`, { method: 'PATCH', body: JSON.stringify(body) }), '/pipeline'),
+  // Create / delete the cards themselves, from the board where the work happens.
+  createPipelineCompany: (body) => after(request('/pipeline', { method: 'POST', body: JSON.stringify(body) }), '/pipeline'),
+  deletePipelineCompany: (id) => after(request(`/pipeline/${id}`, { method: 'DELETE' }), '/pipeline'),
+  restorePipelineCompany: (id) => after(request(`/pipeline/${id}/restore`, { method: 'POST' }), '/pipeline'),
+
   enrichPipelineCompany: (id) => after(request(`/pipeline/${id}/enrich`, { method: 'POST' }), `/pipeline/${id}`),
   // The free read — Form D + open roles. Separate call from enrich because it
   // spends nothing and needs no LinkedIn URL.

@@ -42,6 +42,7 @@ router.post('/:id/sources/url', async (req, res) => {
   if (!req.body?.url) return res.status(400).json({ error: 'url required' });
   const r = await ingest.ingestUrl({ founderId: Number(req.params.id), url: req.body.url, userId: req.user.id });
   if (r.error) return res.status(400).json(r);
+  if (r.created && r.id) require('../lib/extract-signals').extractSoon(Number(req.params.id), r.id, req.user.id);
   res.json(r);
 });
 
@@ -53,6 +54,9 @@ router.post('/:id/sources/deck', upload.single('file'), async (req, res) => {
     fileName: req.file.originalname, userId: req.user.id,
   });
   if (r.error) return res.status(400).json(r);
+  // Analyse it without being asked. The upload stays the thing that can't fail; the
+  // extraction happens after the response, so a bad model call still leaves the deck.
+  if (r.created && r.id) require('../lib/extract-signals').extractSoon(Number(req.params.id), r.id, req.user.id);
   res.json(r);
 });
 
