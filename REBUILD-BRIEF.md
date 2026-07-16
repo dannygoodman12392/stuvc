@@ -125,6 +125,29 @@ Ran the new engine on **Cadrian AI** (Dan Preiss, a real live deal) with the rea
 
 ---
 
+## 4b. ⚠️ THE BIGGEST GAP — read this before anything else
+
+**Danny, at the end of the session:** *"So are the insights and notes from Granola, which I guess are also in Obsidian, also now in company cards? I'm not seeing the info and insights displayed in cards."*
+
+**No. And he's identified the most important problem in the product.**
+
+| | Companies | Content |
+|---|---|---|
+| **Vault** `Brain/08 Deals & Memos/` | **25** | Call Notes · First-Pitch Brief · Founder Assessment · Market Deep Dive — written nightly by `founder-call-auto-workup`, with cited web research and a 4-lens investor panel |
+| **Stu** (production) | **9** | agent JSON, mostly one batch from April |
+
+**The vault knows ~3× more companies than Stu, with far richer content, and Stu cannot see any of it.** The only thing that has ever flowed Granola → Stu is *commitments*, and only Cadrian's, because I pushed them by hand with curl.
+
+**And there is no company card.** Stu has Today (lanes), Pipeline (the old founders CRM), and an assessment detail page. Nothing that says *"here is everything we know about this company."* Danny is looking for something that does not exist.
+
+**Why it happened:** I said "Obsidian is the brain, Stu is the surface" — and never connected them. **A surface over a brain it can't read is just a different empty room.** The insights are markdown on his laptop; Stu runs on Railway and cannot reach his filesystem. So Stu can never *pull*. The task must **push**.
+
+**The fix, and it's ~an hour:** `POST /api/vault-sync/workup`, alongside the `/commitments` endpoint that already works (`routes/vaultSync.js`). `founder-call-auto-workup` already writes the workup — teach it to POST the same content. Then a company card has something to show: call notes, the assessment, the market read, the commitments, the decision — one page, one company, sourced from the task that already does the analysis well.
+
+**Do this before any redesign.** A beautifully designed card with nothing in it is the current problem with extra steps.
+
+---
+
 ## 5. What is WRONG right now — Danny's words
 
 > *"I hate the design and functionality right now."*
@@ -277,12 +300,13 @@ Other rules:
 
 ## 12. Suggested order
 
-0. **Verify `DATABASE_PATH` + the Railway volume.** Nothing else matters if prod data isn't persistent. `cp` the DB before any migration.
-1. **Run the scout once, free connectors only.** It has never run. Read the output. This decides whether sourcing is real — an afternoon, not a project.
-2. **The design system.** Ink ramp, weights, 32px rows, full-bleed, hairlines. Everything is built on it, so it goes first. Measure a real Affinity row before committing to 32px.
-3. **Pipeline as the front door.** One table, one record, connected to calls + commitments + reads. Today's lanes become filters.
-4. **The Assess page.** Two columns. *Danny's thoughts get a real home.* Blind-first.
-5. **Talent.** Same engine, flipped lens, shortlist out.
+0. **Verify `DATABASE_PATH` + the Railway volume.** Nothing else matters if prod data isn't persistent. `cp` the DB before any migration. *(Also: `VAULT_SYNC_SECRET` was rotated on 2026-07-15 — get the current value from Railway.)*
+1. **⚠️ Connect the vault to Stu (§4b).** `POST /api/vault-sync/workup`. Stu has 9 companies of April JSON; the vault has 25 with real analysis. **Everything below is decoration until Stu can see what the nightly task already knows.** ~1 hour.
+2. **Run the scout once, free connectors only.** It has never run. Read the output. This decides whether sourcing is real — an afternoon, not a project.
+3. **The design system.** Ink ramp, weights, 32px rows, full-bleed, hairlines. Everything is built on it, so it goes early. Measure a real Affinity row before committing to 32px.
+4. **Pipeline as the front door**, with a real **company card** — the thing Danny asked for and can't find. One record: call notes, assessment, market read, commitments, decision. Today's lanes become filters.
+5. **The Assess page.** Two columns. *Danny's thoughts get a real home.* Blind-first.
+6. **Talent.** Same engine, flipped lens, shortlist out.
 
 **Before writing code, confirm with Danny that Pipeline is the front door.** I guessed wrong twice; don't make it three.
 
