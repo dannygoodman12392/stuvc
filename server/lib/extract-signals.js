@@ -47,8 +47,14 @@ RULES
 - "quote" MUST be copied character-for-character from the document. Not tidied, not
   shortened, not corrected. It will be searched for in the source text; if it is not
   found the signal is discarded and your work is wasted.
-- "claim" is one plain sentence stating what the quote shows. It may not contain any
-  number that does not appear in the document.
+- "claim" is one plain sentence stating what the quote shows.
+- EVERY NUMBER IN YOUR CLAIM MUST APPEAR IN YOUR OWN QUOTE — not merely somewhere in
+  the document. If you claim "$15M post", the quote you attach must be the line that
+  says 15. Pick the line carrying the number, not a nearby line on the same topic.
+  A claim whose numbers aren't in its own quote is discarded and your work is wasted.
+- Shorthand is fine and expected: a founder saying "we're doing it at a 15 post"
+  supports the claim "$15M post-money", because the digits match. Do not round,
+  convert, or infer a magnitude the speaker didn't state.
 - Only what the document SAYS. Not what it implies, not what you know about the
   company, not context from elsewhere. If the document is a deck, remember a deck is
   a claim BY the founder, not a fact about the world — state it as what they say.

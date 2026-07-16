@@ -145,3 +145,45 @@ test('a failed agent is skipped, not crashed on', () => {
   const outputs = { team: { error: 'Agent failed' }, rubric: { error: 'Agent failed' } };
   assert.doesNotThrow(() => verifyAllAgents(outputs, TRANSCRIPT));
 });
+
+// ══════════════════════════════════════════════════════════════════════════
+// Notation drift: founders speak in shorthand, models write in notation.
+//
+// Found on the live Cadrian AI call (2026-07-14). Dan Preiss said "We're doing
+// it at a 15 post" and "500 committed, another 250 soft committed". The extractor
+// faithfully rendered those as "$15M post" and "$500k committed" — and the gate
+// discarded BOTH, because "$15m" is not the string "15". The two most important
+// facts on a live deal, dropped with the quotes sitting right there proving them.
+//
+// The mantissa check tolerates the notation while keeping the constraint that
+// matters: a claim asserting $15M must still find "15" in its own quote.
+// ══════════════════════════════════════════════════════════════════════════
+test('a claim may use notation the quote speaks in shorthand', () => {
+  const keep = [
+    ['The round is priced at a $15M post', "We're doing it at a 15 post"],
+    ['They have $500k committed', '500 committed, another 250 soft committed'],
+    ['Will take at most $1.25M', 'I think most I will take in is 1.25'],
+  ];
+  for (const [claim, quote] of keep) {
+    assert.deepEqual(
+      unsupportedNumbers(claim, buildContextIndex(quote)), [],
+      `"${claim}" is supported by "${quote}" — the digits are right there`
+    );
+  }
+});
+
+// The loosening must not open the door it was built to close.
+test('an invented number still dies, whatever its notation', () => {
+  const drop = [
+    ['Reached $60K ARR', 'we have zero revenue and no paying customers'],
+    ['Signed 42 customers', 'we closed our first two design partners'],
+    // The nastiest: right mantissa, wrong magnitude. "3 million" is not "$300M".
+    ['Raising $300M', 'we are raising 3 million dollars'],
+  ];
+  for (const [claim, quote] of drop) {
+    assert.ok(
+      unsupportedNumbers(claim, buildContextIndex(quote)).length > 0,
+      `"${claim}" must NOT survive "${quote}"`
+    );
+  }
+});
