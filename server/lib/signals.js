@@ -124,12 +124,28 @@ function recordSignals({ founderId, sourceId, candidates, model, createdBy }) {
         continue;
       }
 
-      // (2) Does the CLAIM assert a number the source never states? This is the
-      // highest-damage hallucination available — "$60K ARR" reads as a fact, and
-      // a verbatim quote elsewhere in the row does nothing to catch it.
-      const invented = unsupportedNumbers(c.claim, index);
+      // (2) Does the CLAIM's arithmetic live in ITS OWN QUOTE — not merely
+      // somewhere in the source?
+      //
+      // This was checked against the whole source and that was too loose. Caught
+      // live on 2026-07-16, reading permute.ai:
+      //
+      //   claim: "...observed across more than 100 companies"
+      //   quote: "Leadership is flying blind and can't adopt AI at scale"
+      //
+      // Both halves passed. The quote is verbatim; "100" does appear on the page —
+      // just nowhere near that sentence. So the row rendered a sourced-looking
+      // number whose receipt proves nothing, which is the precise laundering shape
+      // this file exists to stop, one level subtler than the one it already caught.
+      //
+      // The rule is now: a claim's numbers must appear in the line offered as
+      // proof of it. A receipt has to be a receipt FOR the thing.
+      const quoteIndex = buildContextIndex(c.quote);
+      const invented = unsupportedNumbers(c.claim, quoteIndex);
       if (invented.length) {
-        reasons.push(`dropped "${String(c.claim).slice(0, 48)}": invented ${invented.join(', ')}`);
+        reasons.push(
+          `dropped "${String(c.claim).slice(0, 44)}": the quote doesn't carry ${invented.join(', ')}`
+        );
         continue;
       }
 

@@ -89,7 +89,7 @@ test('a claim asserting a number the source never states is DROPPED', () => {
     }],
   });
   assert.equal(r.kept, 0, 'a real quote must not launder an invented number');
-  assert.match(r.reasons[0], /invented/);
+  assert.match(r.reasons[0], /doesn't carry/);
 });
 
 // A number that IS in the source passes.
@@ -187,4 +187,51 @@ test('every signal renders with its source and its line', () => {
 test('teardown', () => {
   for (const s of sourcesFor(founderId)) deleteSource(founderId, s.id);
   db.prepare('DELETE FROM founders WHERE id = ?').run(founderId);
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// The subtler laundering shape, caught LIVE reading permute.ai on 2026-07-16.
+//
+//   claim: "...observed across more than 100 companies"
+//   quote: "Leadership is flying blind and can't adopt AI at scale"
+//
+// Both halves passed the original gate: the quote WAS verbatim, and "100" DID
+// appear on the page — just nowhere near that sentence. The row rendered a
+// sourced-looking number whose receipt proved nothing.
+//
+// A receipt has to be a receipt FOR the thing.
+// ══════════════════════════════════════════════════════════════════════════
+test('a number in the source but NOT in the quote is dropped', () => {
+  const fid = db.prepare(`INSERT INTO founders (name, company, created_by) VALUES ('X','Quote Scope Co',1)`).run().lastInsertRowid;
+  const src = recordSource({
+    founderId: fid, kind: 'url', title: 'site',
+    // "100 companies" appears here — but far from the sentence quoted below.
+    contentText: 'We surveyed more than 100 companies last year. Separately: leadership is flying blind and cannot adopt AI at scale.',
+    addedBy: 1,
+  });
+
+  const bad = recordSignals({
+    founderId: fid, sourceId: src.id, createdBy: 1,
+    candidates: [{
+      kind: 'market',
+      claim: 'The problem was observed across more than 100 companies',
+      quote: 'leadership is flying blind and cannot adopt AI at scale', // verbatim, but silent on 100
+    }],
+  });
+  assert.equal(bad.kept, 0, 'the quote must carry the claim\'s numbers, not just the page');
+  assert.match(bad.reasons[0], /quote doesn't carry/);
+
+  // The honest version of the same claim — quoting the line that actually says it.
+  const good = recordSignals({
+    founderId: fid, sourceId: src.id, createdBy: 1,
+    candidates: [{
+      kind: 'market',
+      claim: 'They surveyed more than 100 companies',
+      quote: 'We surveyed more than 100 companies last year',
+    }],
+  });
+  assert.equal(good.kept, 1, 'quoting the line that carries the number must still pass');
+
+  for (const s of sourcesFor(fid)) deleteSource(fid, s.id);
+  db.prepare('DELETE FROM founders WHERE id = ?').run(fid);
 });
