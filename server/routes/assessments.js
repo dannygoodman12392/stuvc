@@ -115,6 +115,31 @@ router.get('/:id', (req, res) => {
   //   economics_agent_output= Market
   // A scar from a retired 6-agent schema. Renaming is a migration; carrying the
   // mapping in one place per file is the cheap correct move until then.
+  // ══════════════════════════════════════════════════════════════════════
+  // NOT BLIND. Danny's call, 2026-07-16:
+  //   "I understand but don't agree with the paradigm that I need to provide my
+  //    perspective on a company before it is scored. I should be able to add my
+  //    own notes, view, ratings, etc. But let's not make this so complicated."
+  //
+  // He's right and it was never his idea — it came from a handoff brief, and I
+  // built a gate he never asked for and then briefly enforced it server-side.
+  // Forcing a VC to type a verdict before he's allowed to read his own analysis
+  // is a tax on the person who owns the judgment.
+  //
+  // WHAT'S KEPT, because it costs him nothing: we record WHETHER the score was
+  // already visible when he decided. Not to nag — to keep the data honest.
+  // "When Stu and I disagreed, who was right?" only means something across rows
+  // where his view was formed independently. Now the calibration set can filter
+  // to those instead of silently averaging anchored and unanchored rows together
+  // and calling the result calibration.
+  //
+  // The red team caught that BOTH existing decisions were recorded after the
+  // score existed — one of them two minutes after. Without this flag that's
+  // invisible and the set is quietly poisoned. With it, it's just a column.
+  //
+  // The page still leads with his column, because leading with it is free. It
+  // just no longer stops him.
+  // ══════════════════════════════════════════════════════════════════════
   res.json({
     ...assessment,
     decision: decision || null,

@@ -195,11 +195,20 @@ router.post('/decisions', (req, res) => {
     if (a) { stu_band = a.conviction_band; stu_score = a.conviction_score; }
   }
 
+  // Was the score already computed when he ruled? If conviction_output exists on
+  // the assessment, it was on his screen — the client no longer hides it. Recorded
+  // as a fact so the calibration set can filter to independent judgements rather
+  // than averaging anchored rows in and calling the result calibration.
+  const sawFirst = assessment_id
+    ? (db.prepare('SELECT conviction_output IS NOT NULL AS seen FROM opportunity_assessments WHERE id = ?')
+         .get(assessment_id)?.seen ? 1 : 0)
+    : 0;
+
   const r = db.prepare(`
-    INSERT INTO decisions (founder_id, assessment_id, band, rationale, prediction, resolve_by, stu_band, stu_score, created_by)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO decisions (founder_id, assessment_id, band, rationale, prediction, resolve_by, stu_band, stu_score, saw_score_first, created_by)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(founder_id || null, assessment_id || null, band, rationale || null,
-         String(prediction).trim(), resolve_by, stu_band, stu_score, req.user.id);
+         String(prediction).trim(), resolve_by, stu_band, stu_score, sawFirst, req.user.id);
 
   const decision = db.prepare('SELECT * FROM decisions WHERE id = ?').get(r.lastInsertRowid);
   res.json({

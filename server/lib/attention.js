@@ -149,6 +149,43 @@ function touchSignalIsLive(uid) {
 // actually holds promises. Q10 is his self-declared best signal; this is the
 // only place in the stack where the delta between said and did becomes visible.
 // ══════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════
+// THIS DROPPED DANNY'S OWN COMMITMENTS ON THE FLOOR.
+//
+// commitments.due() returns { i_owe, they_owe }. This destructured only
+// they_owe — so the engine surfaced everyone's neglect except his.
+//
+// His own diagnosis is "a lot of it is neglect" and "sometimes I just don't feel
+// like following up". That's HIS neglect. Meanwhile, from the real Cadrian call,
+// he owes two things due 2026-07-18:
+//   "Send intro to Tom Elnik (Tegus/Alpha Science) and Bezod Surjanny"
+//   "Book the Cadrian demo and loop in Eric + Rob"
+// Neither appeared anywhere on Home. The second is him doing deal-leader
+// behaviour on the record — the exact thing this product exists to make possible
+// — and the engine dropped it.
+//
+// A red-team of investors found this in one read. It was one destructure.
+// ══════════════════════════════════════════════════════════════════════
+function owedByMe(uid) {
+  const { i_owe } = commitments.due({ userId: uid, withinDays: 3 });
+  return {
+    key: 'i_owe',
+    title: 'You owe them',
+    clean: 'You owe nobody anything',
+    count: i_owe.length,
+    action: 'Do it or say when',
+    rows: i_owe.map((c) => ({
+      id: c.id,
+      founder_id: c.founder_id,
+      company: c.founder_company,
+      primary: c.founder_company || c.founder_name || 'Unknown',
+      detail: c.commitment,
+      quote: c.quote,
+      meta: c.due_at ? (c.overdue ? `overdue since ${c.due_at}` : `due ${c.due_at}`) : null,
+    })),
+  };
+}
+
 function overduePromises(uid) {
   const { they_owe } = commitments.due({ userId: uid, withinDays: 0 });
   return {
@@ -332,7 +369,14 @@ function consideringNeverAssessed(uid) {
            f.deal_entered_at, f.created_at
     FROM founders f
     WHERE f.created_by = ? AND f.is_deleted = 0
-      AND f.deal_status = 'Under Consideration'
+      AND (
+        -- EVIDENCE of life, not a stale field. See the note above.
+        f.deal_status = 'Under Consideration'
+        OR EXISTS (SELECT 1 FROM company_sources cs WHERE cs.founder_id = f.id)
+        OR EXISTS (SELECT 1 FROM commitments cm WHERE cm.founder_id = f.id AND cm.status = 'open')
+        OR EXISTS (SELECT 1 FROM call_logs cl WHERE cl.founder_id = f.id)
+      )
+      AND COALESCE(f.investment_amount, 0) = 0
       AND COALESCE(f.investment_amount, 0) = 0
       AND NOT EXISTS (
         SELECT 1 FROM opportunity_assessments a
@@ -406,7 +450,14 @@ function goingCold(uid) {
            CAST(julianday('now') - julianday(${LAST_TOUCH_SQL}) AS INTEGER) AS days
     FROM founders f
     WHERE f.created_by = ? AND f.is_deleted = 0
-      AND f.deal_status = 'Under Consideration'
+      AND (
+        -- EVIDENCE of life, not a stale field. See the note above.
+        f.deal_status = 'Under Consideration'
+        OR EXISTS (SELECT 1 FROM company_sources cs WHERE cs.founder_id = f.id)
+        OR EXISTS (SELECT 1 FROM commitments cm WHERE cm.founder_id = f.id AND cm.status = 'open')
+        OR EXISTS (SELECT 1 FROM call_logs cl WHERE cl.founder_id = f.id)
+      )
+      AND COALESCE(f.investment_amount, 0) = 0
       -- A portfolio company going quiet is a portfolio-management question, not a
       -- deal that's slipping away. Same exclusion as rule 4, same reason.
       AND COALESCE(f.investment_amount, 0) = 0
@@ -475,9 +526,11 @@ function predictionsDue(uid) {
  */
 function checks(uid = 1) {
   const all = [
+    // HIS commitments lead. "A lot of it is neglect" — his words about his own
+    // follow-through — and until now the engine surfaced everyone's but his.
+    owedByMe(uid),
     overduePromises(uid),
     undecidedHighSignal(uid),
-    approvedNeverEntered(uid),
     consideringNeverAssessed(uid),
     goingCold(uid),
     predictionsDue(uid),

@@ -37,6 +37,44 @@ seedTeam();
 const { seedIfEmpty } = require('./seed-production');
 seedIfEmpty();
 
+// ══════════════════════════════════════════════════════════════════════════
+// REAP STRANDED RUNS. Nothing can legitimately be 'running' at boot.
+//
+// runManager (agents/runManager.js:5) is `new Map()` — process memory, nothing
+// else. So on every Railway redeploy:
+//   1. an in-flight assessment is sitting at status='running'
+//   2. the process dies; the Map evaporates with it
+//   3. the new container boots and nothing resets the row
+//   4. it stays 'running' FOREVER
+//
+// And it's unrecoverable through the UI: AssessmentDetail polls a spinner that
+// will never resolve, routes/assessments.js blocks a re-run while status is
+// 'running', and runManager.cancel() returns false because the Map is empty. The
+// user is wedged with no recourse but a direct DB write.
+//
+// The invariant is exact: the Map is empty at boot BY DEFINITION, so any row
+// claiming to be running is lying about a process that no longer exists. Marking
+// them 'error' is not a guess — it is the only true statement available.
+// ══════════════════════════════════════════════════════════════════════════
+try {
+  const dbi = require('./db');
+  const stranded = dbi.prepare(
+    `UPDATE opportunity_assessments
+       SET status = 'error',
+           context_notes = COALESCE(context_notes, '') ||
+             CASE WHEN COALESCE(context_notes,'') = '' THEN '' ELSE ' | ' END ||
+             'Interrupted: the server restarted mid-run. Re-run it.'
+     WHERE status IN ('running', 'synthesizing', 'processing_inputs')`
+  ).run();
+  if (stranded.changes) {
+    console.log(`[Boot] Reaped ${stranded.changes} run(s) stranded by a restart — they were unrecoverable spinners.`);
+    try { require('./services/health').recordJobRun('stale_run_reaper', 'ok', `${stranded.changes} stranded run(s) marked error`, 1); } catch { /* health is optional */ }
+  }
+} catch (e) {
+  // Never take the server down over housekeeping.
+  console.error('[Boot] Stale-run reaper failed (server continues):', e.message);
+}
+
 // One-time Airtable migration (idempotent — uses migration_flags table)
 (async () => {
   try {
@@ -419,6 +457,42 @@ app.listen(PORT, () => {
   // brief is ready each morning for anyone who has connected their Gmail label.
   {
     const cron = require('node-cron');
+    // ══════════════════════════════════════════════════════════════════
+    // BACKUP — 3:00am CT, before every other job touches the database.
+    //
+    // There were none. The recovery story was a March seed file containing
+    // founders and nothing else — so every assessment, decision, commitment,
+    // signal and note was one bad redeploy from gone, and seedIfEmpty() would
+    // have refilled the founder count so the loss looked healthy.
+    //
+    // First, before anything else, so the snapshot is of yesterday's finished
+    // state rather than a database mid-sourcing-run.
+    //
+    // Verified end-to-end 2026-07-16, not assumed: 1.8MB gz, restored into a
+    // scratch dir, 5,515 founders + 20 assessments + 2 decisions + the 4.8
+    // conviction score all intact. An unrestored backup is a rumour.
+    // ══════════════════════════════════════════════════════════════════
+    cron.schedule('0 3 * * *', async () => {
+      const { recordJobRun } = require('./services/health');
+      try {
+        const { runBackup } = require('./services/backup');
+        const r = await runBackup();
+        if (r.ok) {
+          recordJobRun('backup', 'ok', `${r.file} — ${Math.round(r.bytes / 1024)}KB, ${r.verified_assessments} assessments verified inside it, ${r.pruned} pruned`, 1);
+          console.log('[Cron][Backup]', r.file, `${Math.round(r.bytes / 1024)}KB`);
+        } else {
+          // A failed backup is an EMERGENCY, not a warning. It's the only job here
+          // whose failure is silent and permanent.
+          recordJobRun('backup', 'error', r.error, 1);
+          console.error('[Cron][Backup] FAILED:', r.error);
+        }
+      } catch (e) {
+        recordJobRun('backup', 'error', e.message, 1);
+        console.error('[Cron][Backup] FAILED:', e.message);
+      }
+    }, { timezone: 'America/Chicago' });
+    console.log('Nightly backup scheduled (3:00 AM CT — verified + pruned to 14)');
+
     // Airtable → Stu, once a day at 5:45am CT — before Danny opens the app, and
     // off the boot path where it was blocking his first requests for ~106ms.
     // Airtable is the team's CRM and the closest thing to source-of-truth on the

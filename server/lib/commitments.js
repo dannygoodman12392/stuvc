@@ -138,7 +138,16 @@ function due({ withinDays = 7, userId = 1 } = {}) {
 
   return {
     i_owe: mine.map((r) => ({ ...r, overdue: !!(r.due_at && r.due_at < today) })),
-    they_owe: theirs.map((r) => ({ ...r, overdue: true })),
+    // `overdue: true` was HARDCODED here while the query above selects
+    // `due_at <= today` — so a promise due TODAY came back overdue and rendered
+    // under a header reading "Promises past due", with meta "owed since
+    // 2026-07-16". The Cadrian deck is due today. It is not past due.
+    //
+    // Small, and it matters more than its size: this file's entire moral
+    // authority is that it does not overstate. A ledger that calls a live promise
+    // broken is the ledger crying wolf on day one — and the first thing Danny
+    // would do is stop believing the number.
+    they_owe: theirs.map((r) => ({ ...r, overdue: !!(r.due_at && r.due_at < today) })),
   };
 }
 

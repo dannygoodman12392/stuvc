@@ -1,8 +1,12 @@
 node_modules
 .env
+.env.supabase
 *.db
 *.db-shm
 *.db-wal
 dist
 .DS_Store
 .claude
+
+# Backup snapshots — they live on the persistent volume, never in git.
+server/backups/
