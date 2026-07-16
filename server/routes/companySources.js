@@ -87,6 +87,71 @@ router.post('/:id/sources/:sourceId/extract', async (req, res) => {
   res.json({ proposed: candidates.length, ...r });
 });
 
+// ══════════════════════════════════════════════════════════════════════════
+// POST /api/companies/:id/read — run a conviction read from the card's sources.
+//
+// Danny's ask, verbatim: "For companies that enter the pipeline and have a first
+// call, I will have call notes, likely a deck, and some URLs to use to evaluate
+// the opportunity."
+//
+// He shouldn't have to re-upload any of it. The card already holds every source;
+// this hands them to the engine in the shape it wants and returns the assessment
+// id so the UI can walk him to his own call.
+//
+// The mapping is load-bearing, not cosmetic. computeEvidenceRung() reads
+// input_type, and only 'transcript' (or notes that look like a meeting record)
+// reaches OBSERVED — the rung below which the engine REFUSES to score. So a
+// Granola call must arrive as a transcript or the read silently holds for lack of
+// evidence that is sitting right there.
+// ══════════════════════════════════════════════════════════════════════════
+router.post('/:id/read', async (req, res) => {
+  if (!owns(req.user.id, req.params.id)) return res.status(404).json({ error: 'not found' });
+
+  const sources = db.prepare(
+    'SELECT kind, title, content_text, occurred_at FROM company_sources WHERE founder_id = ? AND content_text IS NOT NULL'
+  ).all(req.params.id);
+
+  if (!sources.length) {
+    return res.status(400).json({
+      error: 'Nothing to read yet.',
+      detail: 'Add a deck, a URL, or a call note to this card first — the engine refuses to score what it cannot see.',
+    });
+  }
+
+  const inputs = {
+    decks: sources.filter((s) => s.kind === 'deck').map((s) => ({ label: s.title, content: s.content_text })),
+    // granola AND note both land here. A Granola call IS a record of a
+    // conversation, which is exactly what the OBSERVED rung means.
+    transcripts: sources
+      .filter((s) => s.kind === 'granola')
+      .map((s) => ({ label: `${s.title}${s.occurred_at ? ` (${s.occurred_at})` : ''}`, content: s.content_text })),
+    notes: sources.filter((s) => s.kind === 'note').map((s) => ({ label: s.title, content: s.content_text })),
+    urls: [],
+  };
+  // A URL's TEXT is already extracted and stored; re-fetching it would pay Exa
+  // twice for the same page. It rides in as a note with its origin in the label.
+  for (const s of sources.filter((s) => s.kind === 'url')) {
+    inputs.notes.push({ label: `Web — ${s.title}`, content: s.content_text });
+  }
+
+  try {
+    // Reuse the real intake rather than re-implementing it. One path in means the
+    // engine, the retries, the conviction write and the version history can't
+    // drift from what the Assess page does.
+    const r = await fetch(`http://127.0.0.1:${process.env.PORT || process.env.STU_PORT || 3002}/api/assessments`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: req.headers.authorization },
+      body: JSON.stringify({ founder_id: Number(req.params.id), assessment_type: 'assessment', inputs }),
+    });
+    const d = await r.json();
+    if (!r.ok) return res.status(r.status).json(d);
+    res.json({ ...d, used: { decks: inputs.decks.length, transcripts: inputs.transcripts.length, notes: inputs.notes.length } });
+  } catch (e) {
+    console.error('[Card] read failed:', e.message);
+    res.status(500).json({ error: 'Could not start the read: ' + e.message });
+  }
+});
+
 // The signals go with it. A claim must never outlive its evidence.
 router.delete('/:id/sources/:sourceId', (req, res) => {
   if (!owns(req.user.id, req.params.id)) return res.status(404).json({ error: 'not found' });

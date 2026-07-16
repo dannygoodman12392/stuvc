@@ -85,11 +85,7 @@ export default function CompanyCard() {
         />
         <Stage stage={c.funnel_stage} />
         <div className="flex-1" />
-        {c.assessments?.length > 0 && (
-          <Link to={`/assess/${c.assessments[0].id}`} className="text-mini text-accent hover:text-accent-hover">
-            Read →
-          </Link>
-        )}
+        <RunRead founderId={id} company={c} />
       </div>
 
       {err && (
@@ -185,6 +181,9 @@ export default function CompanyCard() {
               </>
             )}
           </Block>
+
+          {/* ══ WHAT STU HAS READ ══ */}
+          <Sources founderId={id} company={c} />
 
           {/* ══ NOTES — Granola + his own ══ */}
           <Notes founderId={id} notes={c.notes} onChange={load} />
@@ -289,6 +288,206 @@ function Sparkline({ curve }) {
         {pts[0].at} → {pts[pts.length - 1].at}
       </span>
     </div>
+  );
+}
+
+// ── The action the card was missing. ──
+// It linked to an EXISTING read and offered no way to start one — so running a
+// read on a company whose deck and calls were already on the card meant going to
+// /assess and re-uploading all of it. This hands the engine what's already here.
+function RunRead({ founderId, company: c }) {
+  const nav = useNavigate();
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+  const latest = c.assessments?.[0];
+
+  async function go() {
+    setBusy(true);
+    setErr(null);
+    try {
+      const r = await api.runCardRead(founderId);
+      nav(`/assess/${r.id}`);
+    } catch (e) {
+      setErr(e.detail ? `${e.message} ${e.detail}` : e.message);
+      setBusy(false);
+    }
+  }
+
+  return (
+    <span className="flex items-center gap-2">
+      {err && <span className="text-mini text-danger max-w-md truncate" title={err}>{err}</span>}
+      {latest && (
+        <Link to={`/assess/${latest.id}`} className="text-mini text-ink-3 hover:text-ink">
+          Last read {String(latest.created_at).slice(0, 10)}
+        </Link>
+      )}
+      <button onClick={go} disabled={busy} className="btn-primary">
+        {busy ? 'Reading…' : latest ? 'Re-read' : 'Run a read'}
+      </button>
+    </span>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// SOURCES + SIGNALS — the loop, closed.
+//
+// Danny: "This should be very automated but give me the ability to input and
+// modify wherever possible."
+//
+// So: automated where a machine is genuinely better (extract signals from a deck,
+// read the team off LinkedIn), manual everywhere he might disagree (add a source,
+// re-extract, delete a source and its claims, add his own note).
+//
+// The rule that shapes this block: EVERY SIGNAL SHOWS ITS RECEIPT. A claim renders
+// with the verbatim line that proves it, one hover away, and the source it came
+// from is named. If Danny can't check it in two seconds, it shouldn't be here —
+// that's what lib/signals.js enforces in the schema and this is where he sees it.
+// ══════════════════════════════════════════════════════════════════════════
+const SOURCE_LABEL = { deck: 'Deck', url: 'Web', granola: 'Call', note: 'Note', linkedin: 'LinkedIn', filing: 'Filing' };
+const KIND_ORDER = ['traction', 'customer', 'raise', 'team', 'product', 'market', 'risk'];
+
+function Sources({ founderId, company }) {
+  const [d, setD] = useState(null);
+  const [busy, setBusy] = useState(null);
+  const [err, setErr] = useState(null);
+  const [urlInput, setUrlInput] = useState('');
+  const [drag, setDrag] = useState(false);
+
+  const load = useCallback(() => {
+    api.getCompanySources(founderId).then(setD).catch((e) => setErr(e.message));
+  }, [founderId]);
+  useEffect(load, [load]);
+
+  async function run(label, fn) {
+    setBusy(label);
+    setErr(null);
+    try { await fn(); load(); }
+    catch (e) { setErr(e.detail ? `${e.message} — ${e.detail}` : e.message); }
+    finally { setBusy(null); }
+  }
+
+  const onDrop = (e) => {
+    e.preventDefault();
+    setDrag(false);
+    const f = e.dataTransfer.files?.[0];
+    if (f) run('deck', () => api.uploadDeck(founderId, f));
+  };
+
+  const sources = d?.sources || [];
+  const signals = d?.signals || [];
+  const byKind = KIND_ORDER.map((k) => [k, signals.filter((s) => s.kind === k)]).filter(([, v]) => v.length);
+
+  return (
+    <Block
+      label={`What Stu has read${sources.length ? ` · ${sources.length}` : ''}`}
+      right={
+        <label className="text-mini text-accent hover:text-accent-hover cursor-pointer">
+          {busy === 'deck' ? 'Reading…' : 'Upload a deck'}
+          <input
+            type="file"
+            accept="application/pdf"
+            className="hidden"
+            onChange={(e) => { const f = e.target.files?.[0]; if (f) run('deck', () => api.uploadDeck(founderId, f)); e.target.value = ''; }}
+          />
+        </label>
+      }
+    >
+      {err && (
+        <p className="text-mini text-danger mb-2 leading-relaxed">
+          {err} <button onClick={() => setErr(null)} className="text-ink-4 hover:text-ink ml-1">dismiss</button>
+        </p>
+      )}
+
+      {/* Drop target doubles as the URL box — one place to put things in. */}
+      <div
+        onDragOver={(e) => { e.preventDefault(); setDrag(true); }}
+        onDragLeave={() => setDrag(false)}
+        onDrop={onDrop}
+        className={`rounded border border-dashed px-2 py-2 mb-3 transition ${drag ? 'border-accent bg-accent-soft' : 'border-line-2'}`}
+      >
+        <div className="flex items-center gap-2">
+          <input
+            className="input flex-1 border-0 bg-transparent focus:ring-0 px-0"
+            placeholder={drag ? 'Drop the deck…' : 'Paste a URL — their site, a press piece…'}
+            value={urlInput}
+            onChange={(e) => setUrlInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && urlInput.trim()) {
+                const u = urlInput.trim();
+                setUrlInput('');
+                run('url', () => api.addSourceUrl(founderId, u));
+              }
+            }}
+          />
+          {busy === 'url' && <span className="text-mini text-ink-4">Reading…</span>}
+        </div>
+        <p className="text-micro text-ink-4 mt-1">
+          Drop a PDF, paste a URL, or press Enter. LinkedIn goes in the field on the right — it blocks crawlers.
+        </p>
+      </div>
+
+      {!sources.length ? (
+        <Empty>Nothing yet. A deck or a URL is enough to start.</Empty>
+      ) : (
+        <div className="-mx-2 mb-3">
+          {sources.map((s) => (
+            <div key={s.id} className="row px-2 group">
+              <span className="w-14 text-mini text-ink-3 flex-shrink-0">{SOURCE_LABEL[s.kind] || s.kind}</span>
+              <span className="flex-1 min-w-0 text-small text-ink truncate" title={s.title || ''}>{s.title}</span>
+              <span className="w-16 text-mini text-ink-4 num">{s.occurred_at ? String(s.occurred_at).slice(0, 10) : ''}</span>
+              <span className="w-20 text-mini text-ink-3">
+                {s.signal_count ? `${s.signal_count} signals` : <span className="text-ink-4">not read</span>}
+              </span>
+              <span className="w-28 flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition">
+                <button
+                  onClick={() => run('x' + s.id, () => api.extractSignals(founderId, s.id))}
+                  className="text-micro text-accent hover:text-accent-hover"
+                >
+                  {busy === 'x' + s.id ? 'reading…' : s.signal_count ? 're-read' : 'read it'}
+                </button>
+                {/* Deleting a source deletes its signals — a claim must never
+                    outlive its evidence. Said out loud rather than assumed. */}
+                <button
+                  onClick={() => { if (confirm(`Delete "${s.title}" and the ${s.signal_count || 0} signals it produced?`)) run('d' + s.id, () => api.deleteSource(founderId, s.id)); }}
+                  className="text-micro text-ink-4 hover:text-danger"
+                >
+                  delete
+                </button>
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {signals.length > 0 && (
+        <div className="space-y-3">
+          <div className="text-micro font-semibold uppercase text-ink-4">
+            What they said · {signals.length} verified
+          </div>
+          {byKind.map(([kind, rows]) => (
+            <div key={kind}>
+              <div className="text-mini text-ink-4 capitalize">{kind}</div>
+              {rows.map((s) => (
+                <div key={s.id} className="group py-0.5">
+                  <p className="text-small text-ink leading-relaxed">{s.claim}</p>
+                  {/* The receipt. Always present — the schema makes a signal
+                      without one impossible — and always one hover away. */}
+                  <p className="text-mini text-ink-3 leading-relaxed opacity-0 group-hover:opacity-100 transition">
+                    “{s.quote}”
+                    <span className="text-ink-4"> — {SOURCE_LABEL[s.source_kind] || s.source_kind}
+                      {s.verification === 'paraphrased' && ', paraphrased'}
+                    </span>
+                  </p>
+                </div>
+              ))}
+            </div>
+          ))}
+          <p className="text-micro text-ink-4 leading-relaxed">
+            Every line is checked against its own source. Anything that couldn’t be found there was dropped, not flagged.
+          </p>
+        </div>
+      )}
+    </Block>
   );
 }
 
