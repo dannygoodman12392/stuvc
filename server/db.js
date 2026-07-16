@@ -391,6 +391,30 @@ addColumn('founders', 'tracks_set_by_user_at', 'DATETIME');
 addColumn('founders', 'represented_by_founder_id', 'INTEGER REFERENCES founders(id)');
 db.exec(`CREATE INDEX IF NOT EXISTS idx_founders_represented_by ON founders(represented_by_founder_id);`);
 
+// ── "HAS THIS SOURCE BEEN READ?" IS NOT "DID IT PRODUCE SIGNALS?" ──
+// The extraction queue is "sources nothing has read yet". Defining that as "sources
+// with no rows in company_signals" is wrong in a way that costs money: a source that
+// legitimately yields NOTHING — a thin landing page, a note with no claims in it —
+// never gains a signal, so it never leaves the queue, so every run reads it again
+// forever.
+//
+// This column is the answer to the question actually being asked. Set once the
+// extractor has looked at a source, whatever came back. NULL means unread; a
+// timestamp means read, including "read, and there was nothing in it". Clearing it
+// is how a deliberate re-read is requested.
+addColumn('company_sources', 'signals_extracted_at', 'DATETIME');
+db.exec(`CREATE INDEX IF NOT EXISTS idx_sources_extracted ON company_sources(signals_extracted_at);`);
+
+// A source that already has signals was, self-evidently, read. Marking those closes
+// the gap for the 60 sources extracted before this column existed — without it the
+// first run after deploy would pay to read every one of them a second time.
+// Sources with no signals stay NULL and get read once, properly.
+db.exec(`
+  UPDATE company_sources SET signals_extracted_at = CURRENT_TIMESTAMP
+  WHERE signals_extracted_at IS NULL
+    AND EXISTS (SELECT 1 FROM company_signals g WHERE g.source_id = company_sources.id);
+`);
+
 // ── The company card's automated half (pipeline/company-enrich.js) ──
 // Danny: "company pages on LinkedIn show how many people work there and have been
 // hired at these companies over time... I'll pay for enrichment."

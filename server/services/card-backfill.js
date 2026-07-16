@@ -91,16 +91,34 @@ async function ingestWebsites({ userId = 1, limit = Infinity, offset = 0 } = {})
   return out;
 }
 
+// ── THIS ONE DOES NOT TAKE AN OFFSET, AND THAT IS THE POINT ──
+// The work list is "sources with no signals yet", so every source this reads DROPS
+// OUT of the list. The list shrinks as you consume it — a self-consuming queue.
+//
+// Paging that with ?offset is a bug, and it shipped: the run walked offset 0,4,8…
+// while `considered` fell 89 → 76 → 68 → 64 → 60, so the window advanced past
+// sources the shrinking list had shuffled backwards. 97 cards ended up with
+// evidence but only 41 with signals, and 56 sources were silently never read. The
+// job reported done=true, having skipped a third of the work.
+//
+// Offset is right for a STABLE list (enrich-backfill walks every live card, read or
+// not, so nothing moves under it). It is wrong for a queue that empties. So this
+// always takes from the head, and the caller just calls it again until `remaining`
+// stops falling. `done` now means the queue is empty — not "the window reached the
+// end of a list that was shrinking behind me".
 /** Step 2 — turn every unread source into categorized, quote-backed signals. */
-async function extractAll({ userId = 1, limit = Infinity, offset = 0, maxSpendUsd = 12 } = {}) {
+async function extractAll({ userId = 1, limit = Infinity, maxSpendUsd = 12 } = {}) {
   const out = {
     considered: 0, extracted: 0, sourcesWithSignals: 0,
     proposed: 0, kept: 0, droppedByGate: 0,
     failed: [], byKind: {}, gateReasons: {}, done: true, stoppedOnCap: false,
   };
 
-  // Only sources on board cards, and only ones nothing has read yet. Re-reading a
-  // source that already produced signals would pay Claude to reproduce them.
+  // Only sources on board cards, and only ones nothing has READ yet — which is
+  // `signals_extracted_at IS NULL`, not "has no signals". Those differ for the
+  // sources that matter: a thin landing page or a note with no claims in it yields
+  // nothing, would never gain a signal, and under the old definition would be
+  // re-read and re-billed on every run forever.
   const all = db.prepare(`
     SELECT s.id, s.founder_id, s.kind, s.title, s.content_text, s.occurred_at, f.company
     FROM company_sources s
@@ -109,16 +127,18 @@ async function extractAll({ userId = 1, limit = Infinity, offset = 0, maxSpendUs
       AND f.stage_status IS NOT NULL
       AND f.represented_by_founder_id IS NULL
       AND s.content_text IS NOT NULL AND LENGTH(s.content_text) >= 40
-      AND NOT EXISTS (SELECT 1 FROM company_signals g WHERE g.source_id = s.id)
+      AND s.signals_extracted_at IS NULL
     ORDER BY s.id
   `).all(userId);
 
+  // `considered` is the size of the QUEUE right now — how much is still unread.
   out.considered = all.length;
-  const end = limit === Infinity ? all.length : offset + limit;
-  out.done = end >= all.length;
+  // Always from the head. See the note above: this list empties as we read it.
+  const batch = limit === Infinity ? all : all.slice(0, limit);
+  out.done = all.length === 0;
 
   let spend = 0;
-  for (const s of all.slice(offset, end)) {
+  for (const s of batch) {
     // Rough, and deliberately pessimistic: ~4 chars/token in, and the output is
     // small. Stop BEFORE the call that would cross the ceiling.
     const est = Math.max(0.005, (s.content_text.length / 4) * 0.000003 + 0.004);
@@ -127,6 +147,8 @@ async function extractAll({ userId = 1, limit = Infinity, offset = 0, maxSpendUs
     try {
       const { candidates, error, model } = await extractFrom(s, { userId });
       spend += est;
+      // A transport error (no key, API down) is NOT "read" — leave it in the queue
+      // so a retry picks it up. Anything else counts as read, below.
       if (error) { out.failed.push({ company: s.company, kind: s.kind, reason: error }); continue; }
 
       out.extracted++;
@@ -148,6 +170,9 @@ async function extractAll({ userId = 1, limit = Infinity, offset = 0, maxSpendUs
         const k = String(reason).replace(/["'].*/, '').trim().slice(0, 60);
         out.gateReasons[k] = (out.gateReasons[k] || 0) + 1;
       }
+      // Read, whatever came back. A source with nothing in it must leave the queue,
+      // or it is re-read and re-billed on every run for the rest of time.
+      db.prepare('UPDATE company_sources SET signals_extracted_at = CURRENT_TIMESTAMP WHERE id = ?').run(s.id);
       if (r.kept > 0) out.sourcesWithSignals++;
       // Count KEPT signals by kind, not proposed — a category count that includes
       // claims the gate threw away describes a card that doesn't exist.
@@ -158,6 +183,21 @@ async function extractAll({ userId = 1, limit = Infinity, offset = 0, maxSpendUs
     }
   }
   out.estSpendUsd = Math.round(spend * 100) / 100;
+
+  // Re-ask the queue rather than infer. `remaining` is measured AFTER the writes, so
+  // it's the truth; `done` is derived from it. The previous version derived done from
+  // window arithmetic over a list that was moving, and reported done=true with 56
+  // sources unread. If a job says it's finished, that has to be a fact it checked.
+  out.remaining = db.prepare(`
+    SELECT COUNT(*) n FROM company_sources s
+    JOIN founders f ON f.id = s.founder_id
+    WHERE f.is_deleted = 0 AND f.created_by = ?
+      AND f.stage_status IS NOT NULL
+      AND f.represented_by_founder_id IS NULL
+      AND s.content_text IS NOT NULL AND LENGTH(s.content_text) >= 40
+      AND s.signals_extracted_at IS NULL
+  `).get(userId).n;
+  out.done = out.remaining === 0;
   return out;
 }
 

@@ -760,11 +760,12 @@ router.post('/read-web', async (req, res) => {
 router.post('/extract-signals', async (req, res) => {
   if (req.user.id !== 1) return res.status(403).json({ error: 'not available for your account' });
   try {
+    // No offset, deliberately — the queue empties as it's read, so a window that
+    // advances walks past work. Call it again until `done`. See card-backfill.js.
     const { extractAll } = require('../services/card-backfill');
     res.json(await extractAll({
       userId: req.user.id,
       limit: req.query.limit ? Number(req.query.limit) : undefined,
-      offset: req.query.offset ? Number(req.query.offset) : 0,
       maxSpendUsd: Number(req.query.maxSpend || 12),
     }));
   } catch (e) {
