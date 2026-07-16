@@ -313,6 +313,23 @@ addColumn('founders', 'sourced_from_id', 'INTEGER');  // back-ref to sourced_fou
 addColumn('founders', 'airtable_founder_record_id', 'TEXT');
 addColumn('founders', 'airtable_deal_record_id', 'TEXT');
 
+// ── Airtable's TWO axes, stored verbatim ──
+// Airtable tracks a founder on two orthogonal fields Danny maintains by hand:
+//   "Admission Status"      — the SSFI funnel  (Stage 1: Identified … Stage 5: Not Admitted)
+//   "Next Step Description" — the working state (Scheduling 1st Mtg, Active Evaluation, HOLD…)
+// mapAdmissionStatus() mashes both into Stu's single `admissions_status`, which
+// cannot represent them: "Stage 5: Not Admitted / 1st Mtg Scheduled" is a real and
+// common combination (Danny declined them, the courtesy meeting is still booked)
+// and it collapsed to the single word "Not Admitted" — or, before this sync
+// updated existing rows at all, to "First Call Scheduled", which read as live.
+//
+// These two columns hold Airtable's strings UNTRANSLATED. Nothing derives from
+// them yet; they exist so the mapping is auditable and so the board can render
+// Danny's own vocabulary instead of a lossy translation of it.
+addColumn('founders', 'airtable_admission_status', 'TEXT');
+addColumn('founders', 'airtable_next_step', 'TEXT');
+addColumn('founders', 'airtable_synced_at', 'DATETIME');
+
 // ── The company card's automated half (pipeline/company-enrich.js) ──
 // Danny: "company pages on LinkedIn show how many people work there and have been
 // hired at these companies over time... I'll pay for enrichment."

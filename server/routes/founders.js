@@ -195,12 +195,17 @@ router.delete('/:id', (req, res) => {
   res.json({ message: 'Founder removed' });
 });
 
-// POST /api/founders/sync-airtable — trigger incremental Airtable → Stu sync
+// POST /api/founders/sync-airtable — pull Airtable → Stu now, rather than at 5:45am.
+//
+// `?dry=1` returns the exact diff and writes nothing. Worth using: the dry run is
+// what caught this sync proposing to overwrite 93 rows of source attribution and
+// drop 17 companies off the investment board. A sync that moves 50 founders'
+// stages should be readable before it runs, not after.
 router.post('/sync-airtable', async (req, res) => {
   if (req.user.id !== 1) return res.status(403).json({ error: 'Airtable sync is not available for your account' });
   try {
     const { syncFromAirtable } = require('../services/airtable-import');
-    const result = await syncFromAirtable();
+    const result = await syncFromAirtable({ dryRun: req.query.dry === '1' });
     res.json(result);
   } catch (err) {
     console.error('[AirtableSync] Import failed:', err.message);
