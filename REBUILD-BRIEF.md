@@ -70,6 +70,32 @@ Plus **Claude Code scheduled tasks** (`~/.claude/scheduled-tasks/`) which are, r
 
 ## 3. Verified facts you must not re-derive
 
+### ⚠️ 2026-07-16 — I MADE THE LOCAL-DB MISTAKE AGAIN, WITH THIS WARNING ALREADY WRITTEN
+
+I read the paragraph below, then measured `server/superior-os.db` anyway and reported the numbers to Danny as fact. They were wrong by an order of magnitude:
+
+| | local said | prod actually |
+|---|---|---|
+| company LinkedIn URL | 2 | **25** |
+| enriched | 1 | **25** |
+| cards with a website read | 3 | **68** |
+| cards with notes | — | **73** |
+
+**Do not measure the local DB. Ever.** Read prod with a locally-minted JWT — Railway shares the `.env` `JWT_SECRET`, so this works and is the fastest path in:
+
+```js
+jwt.sign({id:1,email:'danny.eric.goodman@gmail.com'}, process.env.JWT_SECRET, {expiresIn:'2h'})
+// -> Authorization: Bearer <token> against https://www.stu.vc/api/...
+```
+`GET /api/pipeline` is the board; `GET /api/pipeline/:id` is one card with `enrichment` and `public_record` parsed. The vault-sync secret is **in the macOS Keychain**, not in any file: `security find-generic-password -s stu-vault-sync -w`.
+
+### Production, measured 2026-07-16 AFTER this session's backfills
+- **183 live cards** · 76 with a website · 68 with the site read · 73 with notes
+- **44 enriched** (was 25) · 42 with a roster + growth curve · **276 people on cards**
+- **142 with a public record** · **9 with a real Form D**
+- **0 cards with open roles** — see the hiring note in §4c
+- EnrichLayer: **961 credits left** (596 spent on the backfill, ~$7.60)
+
 **PRODUCTION HAS ITS OWN DATABASE.** `server/superior-os.db` on the laptop is a **stale snapshot**. I audited it for two days and every row count I reported was wrong.
 - Prod: **40 assessments across 9 companies**. Local: 18 across 6.
 - `db.js:5` — `process.env.DATABASE_PATH || path.join(__dirname,'superior-os.db')`. Railway persists only `/data`. April data survived several deploys, so `DATABASE_PATH` is *probably* set — **but verify** (`railway variables | grep DATABASE_PATH`). If it isn't set, prod's DB is on ephemeral disk. `seedIfEmpty()` and `syncFromAirtable()` re-populate `founders` on every boot, so founder counts would look healthy on a wiped disk. **Assessments are never re-seeded — they're the canary.**
@@ -88,6 +114,10 @@ Plus **Claude Code scheduled tasks** (`~/.claude/scheduled-tasks/`) which are, r
 **Stu is BYOK multi-tenant by design.** Danny: *"Stu is just me for right now, but it is setup for others... they need to upload their own keys. I don't want to be paying for other people's work."* **Keep auth, onboarding, settings, BYOK, Landing. Drop only Stripe/payments** (routes already commented out).
 
 **`HARMONIC_API_KEY`, `CLEARBIT_API_KEY`, `CRUNCHBASE_API_KEY` are in `.env` and no code calls them.** The Crunchbase one is a friend's account. Danny should pull them.
+
+**They are also all EMPTY STRINGS** (verified 2026-07-16 — `key len: 0`). They were never going to work. The real keys live per-user in `user_settings` (`api_key_exa`, `api_key_enrichlayer`) via `lib/providerKeys.js` — that's the BYOK design, not a bug. **Crunchbase v4 needs a paid enterprise license; a friend's *account* is a web login, not an API key.** Do not build on it. Use SEC EDGAR (`lib/edgar.js`) — free, no key, and at pre-seed it is *earlier* than Crunchbase because Form D is filed within 15 days of first sale while the press release comes whenever the founder feels like it.
+
+**EnrichLayer is alive** (Proxycurl's successor — LinkedIn sued Nubela and Proxycurl shut down July 2025, so check this assumption if enrichment ever dies). Verified 2026-07-16: real data, 961 credits. **Its `/api/v2/company/resolve?company_domain=X` endpoint is the single highest-leverage call in the stack** — ~1.3 credits, returns the LinkedIn company page from a domain, and works on 4-person companies the name-search resolver refuses to guess at.
 
 ---
 
@@ -124,6 +154,33 @@ The best thing in the codebase. **Don't erode it.**
 Ran the new engine on **Cadrian AI** (Dan Preiss, a real live deal) with the real deck + the real Granola transcript: **6.2 / Monitor**, charisma-over-substance flag fired with evidence — *"zero ARR, zero named customers, no data room, at a $15M post... Preiss is a former VC who knows how to pitch."* 12/12 quotes verbatim. The old engine said "Monitor" too — but because **29 of 40 assessments were Monitor (72%)**. The instrument had one answer.
 
 ---
+
+## 4c. Session 2026-07-16 — what shipped, and what it's actually worth
+
+All deployed to prod. **451 tests passing.**
+
+### Shipped
+| What | File | Verdict |
+|---|---|---|
+| **Domain → LinkedIn resolver** | `lib/resolve-company-linkedin.js` | **The big one.** Name-search resolved 0/93 on prod; the domain path resolved 20. Enrichment 25 → 44 cards. |
+| **SEC Form D reader** | `lib/edgar.js` | Free, no key. 9 real raises found (Scout Space $10.9M, responsiv $3.0M, ClearCOGS $1.9M, Auvi $101K…). |
+| **Hiring / open roles** | `lib/hiring.js` | Correct and **yields 0 of 183.** See below. |
+| **Granola → cards** | `routes/vaultSync.js` | Matcher rewritten; server now parses meeting titles. |
+| **Auto-read website on save** | `routes/pipeline.js` | Paste a URL, the card reads it. |
+| **Sources analyse themselves** | `lib/extract-signals.js` | `extractSoon()` on every ingest path. |
+| **Create / delete cards** | `routes/pipeline.js` + `Pipeline.jsx` | Composer + soft delete + undo. |
+
+### Honest verdicts — do not oversell these to Danny
+- **Hiring found 0 open roles across the entire book**, and that is not a bug. Pre-seed companies don't run an ATS, and their careers pages are client-rendered. 17 cards have a careers page we found and can't parse (`bolto.com/careers` is real, 613 words, roles in the HTML, no ATS). The module will start paying as his companies grow. **It never says "not hiring"** — no board found means unknown, which is the truth.
+- **Form D at pre-seed is ~5% coverage** (9 of 183). Real, free, and permanently low-recall — most pre-seed rounds are SAFEs that file no Form D or file late. Its edge is *latency*, not coverage: the filing lands within 15 days of first sale, months before any press.
+- **The remaining 48 unresolvable cards are legitimate refusals**: 12 stealth (no company to resolve), 21 one-word names with no website on the card. The fix is data, not code — **put a website on the card and the domain resolver does the rest.**
+
+### The competitive read (researched 2026-07-16, sources in the session log)
+- **Harmonic's public OpenAPI spec is unauthenticated**: `https://api.harmonic.ai/openapi.json`. 224 schemas. Read it rather than their marketing.
+- Their `FundingAttributeNullStatus` distinguishes `EXISTS_BUT_UNDISCLOSED` from `NONE_ANNOUNCED`. **Steal this.** At pre-seed most fields are empty, so the null taxonomy IS the product: *unknown* / *known-absent* / *known-but-undisclosed* / *asked-and-founder-declined*. That last one only exists if you have transcripts.
+- Harmonic has ~100 **person**-level highlight categories and only 5 company-level. At pre-seed a company IS its people.
+- **Proxycurl was sued by LinkedIn and shut down July 2025.** The LinkedIn headcount panel every one of these tools rests on has no cheap legal source anymore. That asymmetry is why they cost $25K+/yr.
+- **The whole category treats a meeting as a timestamp.** Attio's entire interaction record is `{interaction_type, interacted_at, owner_actor}` — not what was said. Affinity's transcripts API is Enterprise-gated beta. **Danny's ~28 transcripts/month are the one asset none of them can buy.** Harmonic's answer to pre-seed is `founder_story` — *a form they beg the founder to fill in*. Danny gets that unprompted, dated, with follow-up questions attached.
 
 ## 4b. ⚠️ THE BIGGEST GAP — read this before anything else
 
