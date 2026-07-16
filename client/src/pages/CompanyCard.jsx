@@ -322,7 +322,7 @@ function RunRead({ founderId, company: c }) {
         </Link>
       )}
       <button onClick={go} disabled={busy} className="btn-primary">
-        {busy ? 'Reading…' : latest ? 'Re-read' : 'Run a read'}
+        {busy ? 'Assessing…' : latest ? 'Assess again' : 'Assess this company'}
       </button>
     </span>
   );
@@ -379,10 +379,10 @@ function Sources({ founderId, company }) {
 
   return (
     <Block
-      label={`What Stu has read${sources.length ? ` · ${sources.length}` : ''}`}
+      label={`Everything on this company${sources.length ? ` · ${sources.length}` : ''}`}
       right={
         <label className="text-mini text-accent hover:text-accent-hover cursor-pointer">
-          {busy === 'deck' ? 'Reading…' : 'Upload a deck'}
+          {busy === 'deck' ? 'Reading the deck…' : 'Upload a deck'}
           <input
             type="file"
             accept="application/pdf"
@@ -436,14 +436,14 @@ function Sources({ founderId, company }) {
               <span className="flex-1 min-w-0 text-small text-ink truncate" title={s.title || ''}>{s.title}</span>
               <span className="w-16 text-mini text-ink-4 num">{s.occurred_at ? String(s.occurred_at).slice(0, 10) : ''}</span>
               <span className="w-20 text-mini text-ink-3">
-                {s.signal_count ? `${s.signal_count} signals` : <span className="text-ink-4">not read</span>}
+                {s.signal_count ? `${s.signal_count} facts` : <span className="text-ink-4">not analysed</span>}
               </span>
               <span className="w-28 flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition">
                 <button
                   onClick={() => run('x' + s.id, () => api.extractSignals(founderId, s.id))}
                   className="text-micro text-accent hover:text-accent-hover"
                 >
-                  {busy === 'x' + s.id ? 'reading…' : s.signal_count ? 're-read' : 'read it'}
+                  {busy === 'x' + s.id ? 'analysing…' : s.signal_count ? 'analyse again' : 'pull the facts'}
                 </button>
                 {/* Deleting a source deletes its signals — a claim must never
                     outlive its evidence. Said out loud rather than assumed. */}
@@ -462,7 +462,7 @@ function Sources({ founderId, company }) {
       {signals.length > 0 && (
         <div className="space-y-3">
           <div className="text-micro font-semibold uppercase text-ink-4">
-            What they said · {signals.length} verified
+            What they told you · {signals.length} verified
           </div>
           {byKind.map(([kind, rows]) => (
             <div key={kind}>

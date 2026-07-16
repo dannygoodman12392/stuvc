@@ -438,6 +438,7 @@ app.listen(PORT, () => {
 
     cron.schedule('0 6 * * *', async () => {
       console.log('[Cron] Starting daily newsletter brief...');
+      const { recordJobRun } = require('./services/health');
       try {
         const dbi = require('./db');
         const { fetchAndProcess, fetchAllSources } = require('./services/newsletter');
@@ -479,6 +480,7 @@ app.listen(PORT, () => {
     const cron = require('node-cron');
     cron.schedule('0 7 * * *', async () => {
       console.log('[Cron] Running daily signal monitors...');
+      const { recordJobRun } = require('./services/health');
       try {
         const { runAllMonitors } = require('./pipeline/monitor-engine');
         const r = await runAllMonitors();
@@ -604,6 +606,7 @@ app.listen(PORT, () => {
     const cron = require('node-cron');
     cron.schedule('0 7 * * 5', async () => {
       console.log('[Cron] Sending weekly founder digest...');
+      const { recordJobRun } = require('./services/health');
       try {
         const { sendFounderDigest } = require('./services/founder-digest');
         const r = await sendFounderDigest(1, {});
@@ -626,17 +629,41 @@ app.listen(PORT, () => {
     const cron = require('node-cron');
     const { runSourcingEngine } = require('./pipeline/sourcing-engine');
 
-    cron.schedule('0 12 * * *', async () => {
+    // ══════════════════════════════════════════════════════════════════
+    // The daily sourcing run — the single biggest recurring line on Danny's bill
+    // (~$29.80/mo: 27 Exa queries + ~37 LLM calls), and until now it recorded
+    // NOTHING. It logged to console, which on Railway scrolls away in minutes.
+    //
+    // That is exactly why he said "I would click Find Founders and it wouldn't
+    // really work": the only durable record was sourcing_runs, written by this
+    // engine alone, while the connectors that actually produced rows wrote
+    // nowhere. Thirty dollars a month with no evidence it ran.
+    //
+    // Timezone added. It was bare `0 12 * * *` — 12:00 UTC — while the boot log
+    // announced "6:00 AM CT". Off by an hour in summer, and a log that lies about
+    // when a job runs is the same defect as one that lies about whether it did.
+    // ══════════════════════════════════════════════════════════════════
+    cron.schedule('0 8 * * *', async () => {
       console.log('[Cron] Starting daily sourcing run...');
+      const { recordJobRun } = require('./services/health');
       try {
-        const result = await runSourcingEngine();
+        const result = await runSourcingEngine({ userId: 1 });
+        const errs = result.errors?.length || 0;
+        recordJobRun(
+          'sourcing_run',
+          errs ? 'partial' : 'ok',
+          `+${result.totalAdded || 0} added, ${result.totalFiltered || 0} filtered by the gates` +
+            `${errs ? `, ${errs} errors — ${String(result.errors[0]).slice(0, 80)}` : ''}`,
+          1
+        );
         console.log(`[Cron] Sourcing complete: ${result.totalAdded} new founders`);
       } catch (err) {
         console.error('[Cron] Sourcing failed:', err.message);
+        recordJobRun('sourcing_run', 'error', err.message, 1);
       }
-    });
+    }, { timezone: 'America/Chicago' });
 
-    console.log('Daily sourcing engine scheduled (6:00 AM CT)');
+    console.log('Daily sourcing engine scheduled (8:00 AM CT)');
 
     // Daily talent sourcing — source EACH open role against its own function + JD, so
     // marketing/product/CS roles get fresh candidates automatically (not just engineering).
@@ -645,14 +672,31 @@ app.listen(PORT, () => {
       const dbi = require('./db');
       const roles = dbi.prepare("SELECT id, user_id, title FROM talent_roles WHERE is_deleted = 0 AND status = 'open' ORDER BY user_id, updated_at DESC LIMIT 25").all();
       console.log(`[Cron] Daily talent sourcing across ${roles.length} open role(s)`);
+      const { recordJobRun } = require('./services/health');
+      if (!roles.length) {
+        // `nothing` is a first-class outcome. A ledger that only fills on success
+        // is the bug it was built to fix — silence must mean "I looked".
+        recordJobRun('talent_sourcing', 'nothing', 'no open roles', 1);
+        return;
+      }
+      let added = 0, failed = 0;
       for (const role of roles) {
         try {
           const r = await runTalentEngine({ userId: role.user_id, roleId: role.id });
+          added += r.candidatesAdded || 0;
           console.log(`[Cron][Talent] role ${role.id} "${role.title}": found ${r.candidatesFound}, added ${r.candidatesAdded}, ${r.matchesCreated} matches`);
         } catch (err) {
+          failed++;
           console.error(`[Cron][Talent] role ${role.id} failed:`, err.message);
         }
       }
+      // This fans out one full engine run PER ROLE, up to 25. One open role today,
+      // so it's ~free — but the cost is linear in roles and nothing recorded it,
+      // so a day with 12 open reqs would have been a surprise on the invoice.
+      recordJobRun(
+        'talent_sourcing', failed ? 'partial' : 'ok',
+        `${roles.length} role(s), +${added} candidates${failed ? `, ${failed} failed` : ''}`, 1
+      );
     });
     console.log('Daily talent sourcing engine scheduled (6:30 AM CT, per open role)');
 
@@ -664,6 +708,7 @@ app.listen(PORT, () => {
       try {
         const result = await runFilingsSource({ userId: 1, days: 30 });
         console.log('[Cron] Filings pull complete:', result);
+        recordJobRun('sec_filings', 'ok', JSON.stringify(result).slice(0, 200), 1);
       } catch (err) {
         console.error('[Cron] Filings pull failed:', err.message);
       }
