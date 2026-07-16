@@ -64,16 +64,63 @@ async function enrichProfiles(userId, profiles, { context = '', feature = 'enric
     signals: (p.matched_signals || []).map(s => s.key),
   }));
 
-  let parsed;
-  try {
-    const resp = await client.messages.create({
-      model: MODEL, max_tokens: 4096, system: SYSTEM,
-      messages: [{ role: 'user', content: buildPrompt(items, context) }],
-    });
-    parsed = parseJsonArray(resp.content?.[0]?.text || '');
-  } catch {
-    return null; // degrade to deterministic on any LLM/parse failure
+  // ══════════════════════════════════════════════════════════════════════
+  // CHUNK. This call used to send EVERY profile in one request at
+  // max_tokens: 4096 — and paid full price to throw the answer away.
+  //
+  // The database proves it, with a split so clean it reads like a controlled
+  // experiment (measured 2026-07-16 from usage_events + sourced_founders):
+  //
+  //   source            rows  enriched  output_tokens   cost      outcome
+  //   yc_directory       144      0     4096 (CAPPED)   $0.0927   all discarded
+  //   a16z_speedrun      317      0     4096 (CAPPED)   $0.1699   all discarded
+  //   pre_program         61      0     4096 (CAPPED)   $0.0730   all discarded
+  //   thiel_fellows       28     28     3440            $0.0571   worked
+  //   emergent_ventures   24     24     3045            $0.0507   worked
+  //   z_fellows           23     23     2887            $0.0477   worked
+  //   neo_scholars        13     13     1645            $0.0278   worked
+  //   the_residency       11     11     1375            $0.0233   worked
+  //
+  // Every batch under ~30 fit and succeeded. Every batch over ~60 hit the ceiling
+  // EXACTLY, parseJsonArray got truncated JSON, returned null, and the whole
+  // batch was dropped. $0.34 spent for zero rows, and 525 of 647 sourced founders
+  // sat unenriched despite having been paid for.
+  //
+  // The failure was invisible because it degrades "gracefully": the caller falls
+  // back to deterministic output, so the pipeline keeps working and nobody sees
+  // that the LLM half never lands. A silent fallback around a paid call is how
+  // you buy nothing, repeatedly, and never find out.
+  //
+  // 25 is deliberately below the ~30 where the observed failures start — the
+  // measured ceiling is a property of these bios, and a wide margin costs one
+  // extra request rather than an entire batch.
+  const CHUNK = 25;
+  const chunks = [];
+  for (let i = 0; i < items.length; i += CHUNK) chunks.push(items.slice(i, i + CHUNK));
+
+  const parsedAll = [];
+  for (const chunk of chunks) {
+    let part;
+    try {
+      const resp = await client.messages.create({
+        model: MODEL,
+        max_tokens: 4096,
+        // 0, like every other extraction path. Unpinned, this re-samples on every
+        // run — and since ingestAll re-reads the same sources nightly, that was
+        // paying for a different answer to an identical question.
+        temperature: 0,
+        system: SYSTEM,
+        messages: [{ role: 'user', content: buildPrompt(chunk, context) }],
+      });
+      part = parseJsonArray(resp.content?.[0]?.text || '');
+    } catch {
+      part = null; // one bad chunk must not discard the ones that worked
+    }
+    if (part) parsedAll.push(...part);
+    else console.warn(`[Enrich] chunk of ${chunk.length} failed to parse — those rows fall back to deterministic`);
   }
+
+  const parsed = parsedAll.length ? parsedAll : null;
   if (!parsed) return null;
 
   const byIndex = new Map(parsed.filter(x => x && Number.isInteger(x.i)).map(x => [x.i, x]));

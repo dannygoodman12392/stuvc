@@ -62,7 +62,38 @@ async function ingest(key, { userId, since = null, enrich = true, persist = true
   const watchRows = watchOptIn ? rejected : [];
   const geoKept = pipelineRows.length;
 
-  // 4. Enrich + score on the user's key (skipped if no key — degrades to raw records).
+  // ══════════════════════════════════════════════════════════════════════
+  // 4. DEDUP FIRST, THEN ENRICH. The order here is the whole cost story.
+  //
+  // This used to enrich everything and THEN check for duplicates at persist —
+  // paying an LLM to describe 144 YC founders every night, then discarding all
+  // 144 because they were already in the table from the night before.
+  //
+  // Only a16z-speedrun.js had a DB-level seen-check. yc-directory and
+  // pre-program build a `seen` Set that is within-batch only — it never queries
+  // sourced_founders — and il-school-discovery, cohort-rosters and
+  // uspto-trademark have none at all. So once the sources saturate (they have:
+  // 647 rows), the 11:30 cron was ~$0.55/day of Anthropic spend buying zero new
+  // rows. $16.50/month, forever, for nothing.
+  //
+  // Now the dupe check runs BEFORE the money. The lookups are the same three
+  // prepared statements persist uses — hoisted, so there is exactly one
+  // definition of "already have this" and the two can't drift apart.
+  // ══════════════════════════════════════════════════════════════════════
+  const byLinkedin = db.prepare('SELECT id FROM sourced_founders WHERE user_id = ? AND LOWER(linkedin_url) = LOWER(?)');
+  const byWebsite = db.prepare('SELECT id FROM sourced_founders WHERE user_id = ? AND LOWER(website_url) = LOWER(?)');
+  const byIdentity = db.prepare("SELECT id FROM sourced_founders WHERE user_id = ? AND source = ? AND LOWER(name) = LOWER(?) AND LOWER(IFNULL(company,'')) = LOWER(?)");
+  const isDupe = (p) => {
+    if (p.linkedin_url) return !!byLinkedin.get(userId, p.linkedin_url);
+    if (p.website_url) return !!byWebsite.get(userId, p.website_url);
+    return !!byIdentity.get(userId, c.key, p.name || p.company || 'Unknown', p.company || '');
+  };
+
+  const pipelineNew = pipelineRows.filter((p) => !isDupe(p));
+  const watchNew = watchRows.filter((p) => !isDupe(p));
+  const skippedAsDupe = (pipelineRows.length - pipelineNew.length) + (watchRows.length - watchNew.length);
+
+  // 5. Enrich + score on the user's key — ONLY the rows we're actually keeping.
   //    Pipeline and watch are enriched independently so their scope tags stay 1:1.
   let enriched = false;
   async function enrichGroup(rows) {
@@ -71,24 +102,17 @@ async function ingest(key, { userId, since = null, enrich = true, persist = true
     if (e) { enriched = true; return e; }
     return rows;
   }
-  const pipelineEnriched = await enrichGroup(pipelineRows);
-  const watchEnriched = await enrichGroup(watchRows);
+  const pipelineEnriched = await enrichGroup(pipelineNew);
+  const watchEnriched = await enrichGroup(watchNew);
 
-  // 5. Dedup (by linkedin, else website, else source+name+company so the daily cron never
-  //    re-inserts the same roster company) + persist, tagged by scope.
+  // 6. Persist, tagged by scope. isDupe still runs here as well as above — the
+  //    two calls are cheap SELECTs, and re-checking closes the window where a
+  //    concurrent run inserted the same row while we were paying to enrich it.
   let persisted = 0, watchlisted = 0;
   if (persist) {
     const insert = db.prepare(`INSERT INTO sourced_founders
       (user_id, name, company, role, headline, linkedin_url, website_url, source, status, builder_signals, signal_captured_at, unicorn_score, enrichment, company_one_liner, chicago_connection, location_type, list_scope, breakout_score, breakout_signals)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, CURRENT_TIMESTAMP, ?, ?, ?, ?, ?, ?, ?, ?)`);
-    const byLinkedin = db.prepare('SELECT id FROM sourced_founders WHERE user_id = ? AND LOWER(linkedin_url) = LOWER(?)');
-    const byWebsite = db.prepare('SELECT id FROM sourced_founders WHERE user_id = ? AND LOWER(website_url) = LOWER(?)');
-    const byIdentity = db.prepare("SELECT id FROM sourced_founders WHERE user_id = ? AND source = ? AND LOWER(name) = LOWER(?) AND LOWER(IFNULL(company,'')) = LOWER(?)");
-    const isDupe = (p) => {
-      if (p.linkedin_url) return !!byLinkedin.get(userId, p.linkedin_url);
-      if (p.website_url) return !!byWebsite.get(userId, p.website_url);
-      return !!byIdentity.get(userId, c.key, p.name || p.company || 'Unknown', p.company || '');
-    };
     const persistRows = db.transaction((rows, scope) => {
       let n = 0;
       for (const p of rows) {
@@ -113,7 +137,15 @@ async function ingest(key, { userId, since = null, enrich = true, persist = true
     watchlisted = persistRows(watchEnriched, 'watchlist');
   }
 
-  return { source: key, fetched: raw.length, geoKept, watchlisted, enriched, persisted, results: pipelineEnriched.slice(0, limit) };
+  // `skippedAsDupe` is reported so the saving is VISIBLE. Once a source
+  // saturates, a healthy run looks like "fetched 144, skipped 144, spent $0" —
+  // and without that number it's indistinguishable from a broken connector. The
+  // cron writes this into its ledger line.
+  return {
+    source: key, fetched: raw.length, geoKept, watchlisted, enriched, persisted,
+    skippedAsDupe,
+    results: pipelineEnriched.slice(0, limit),
+  };
 }
 
 // Run every registered connector for a user (used by the daily cron). Dormant connectors

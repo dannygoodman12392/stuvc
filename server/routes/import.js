@@ -56,7 +56,7 @@ router.post('/upload', upload.single('file'), async (req, res) => {
         return res.status(400).json({ error: 'An Anthropic API key is required for PDF import. Add it in Settings.' });
       }
 
-      const rows = await extractFromPDF(req.file.buffer, apiKey);
+      const rows = await extractFromPDF(req.file.buffer, apiKey, req.user.id);
       return res.json({
         type: 'pdf',
         fileName: req.file.originalname,

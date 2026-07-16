@@ -36,7 +36,11 @@ const MODEL = process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-6';
 // Approx claude-sonnet-4 list price (USD/token). Used only for soft spend caps and
 // usage transparency — NOT an invoice. Cheap to keep roughly current.
 const PRICE = { input: 3 / 1e6, output: 15 / 1e6 };
-const DEFAULT_DAILY_CAP_USD = Number(process.env.DEFAULT_DAILY_SPEND_CAP_USD || 10);
+// $25/day. Measured headroom, not a guess: a normal day is ~$2.30 of crons plus
+// ~$0.42 per assessment, so this clears real usage by ~10x while stopping a
+// runaway fan-out before it becomes an invoice. A cap that fires on legitimate
+// work gets disabled, which is precisely how the old one ended up at Infinity.
+const DEFAULT_DAILY_CAP_USD = Number(process.env.DEFAULT_DAILY_SPEND_CAP_USD || 25);
 
 class SpendCapError extends Error {
   constructor(message) { super(message); this.name = 'SpendCapError'; this.code = 'spend_cap_exceeded'; this.status = 402; }
@@ -107,8 +111,30 @@ function spentTodayUsd(userId) {
   } catch { return 0; }
 }
 
+// ══════════════════════════════════════════════════════════════════════════
+// THE CAP WAS INVERTED — it exempted the only person who pays.
+//
+// This read:
+//     if (isOwner(userId)) return Infinity;  // the owner is uncapped — it's his
+//                                            // platform key
+//
+// `users` has exactly one row: id=1, Danny, role=admin. He IS the owner. So
+// dailyCapUsd returned Infinity for the only account that exists, which made
+// every assertWithinBudget() call in the codebase a no-op, and DEFAULT_DAILY_CAP
+// of $10 has never applied to a single request in the product's life.
+//
+// The comment's logic is exactly backwards. BYOK's whole premise is that the key
+// is Danny's and every call is on his card — that's the argument for capping him,
+// not exempting him. The cap was protecting hypothetical future tenants from
+// spending his money while leaving him unprotected from spending it himself.
+//
+// He now gets the same cap as everyone, settable in Settings, and it's the one
+// thing standing between a runaway fan-out and his credit card. Raised to $25
+// because a legitimate day (one assessment ~$0.42 + the crons ~$2.30) must never
+// trip it — a cap that fires on normal use gets raised to Infinity within a week,
+// which is how we got here.
+// ══════════════════════════════════════════════════════════════════════════
 function dailyCapUsd(userId) {
-  if (isOwner(userId)) return Infinity; // the owner (Danny) is uncapped — it's his platform key
   const raw = readUserKey(userId, 'spend_cap_daily_usd');
   const n = raw == null ? NaN : Number(raw);
   // Allow 0 (a hard stop). Only fall back to the default when unset/invalid.
