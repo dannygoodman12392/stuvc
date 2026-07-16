@@ -89,6 +89,15 @@ jwt.sign({id:1,email:'danny.eric.goodman@gmail.com'}, process.env.JWT_SECRET, {e
 ```
 `GET /api/pipeline` is the board; `GET /api/pipeline/:id` is one card with `enrichment` and `public_record` parsed. The vault-sync secret is **in the macOS Keychain**, not in any file: `security find-generic-password -s stu-vault-sync -w`.
 
+### ⚠️ DO NOT SWEEP THE BOARD TO MEASURE IT
+`/api` is rate limited to **200 requests / 15 min** (`index.js:386`). The board is 183 cards, so **one N+1 sweep of `/companies/:id/sources` nearly exhausts the window.** I did this repeatedly while a backfill and a subagent were running, and:
+- 63 of 183 probes came back non-JSON and I counted the survivors as if they were the whole board — reporting "0 Granola notes" from a broken sample.
+- I left a background watcher doing the same sweep **every 45 seconds**, which starved the very backfill agent I was waiting on. The agent's pushes were being 429'd and I was diagnosing it as a code problem.
+
+Also: **the limit behaves per-instance.** A POST 429'd while a GET seconds later reported `ratelimit-remaining: 113` — consistent with multiple Railway replicas each holding their own in-memory `express-rate-limit` counter. So headroom is unreliable and **429 is normal**: pace requests and retry with backoff rather than treating it as failure. `429` returns plain text, not JSON — any bare `json.load()` on a response will throw.
+
+There is no bulk read for per-card sources. If you need board-wide counts often, add one rather than sweeping.
+
 ### Production, measured 2026-07-16 AFTER this session's backfills
 - **183 live cards** · 76 with a website · 68 with the site read · 73 with notes
 - **44 enriched** (was 25) · 42 with a roster + growth curve · **276 people on cards**
