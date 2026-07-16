@@ -354,26 +354,53 @@ function Verdict({ conv }) {
   );
 }
 
+// The two movements that SET the score. The other two can only move it ±1.
+const LOAD_BEARING = ['earned_insight', 'execution_velocity'];
+
 function Movements({ conv }) {
+  // ── movements is an OBJECT keyed by movement name, not an array. ──
+  // Found by running the engine for real: my first pass called .map() on it and
+  // would have crashed the page — a bug that could ONLY ever appear on a
+  // determinate score, which had never existed in this database until today.
+  // Zero tests would have caught it, because there was no data shaped like this
+  // to test against.
+  //
+  // Each value is { label, blurb, weight, evidence_strength, needs_rung, score,
+  // scorable, fault, reason, evidence } — and `evidence` is the good part: the
+  // engine's argument for the number, quoting the source.
+  const entries = Object.entries(conv.movements || {});
+  if (!entries.length) return null;
+
   return (
-    <div>
+    <div className="border-t border-line pt-3">
       <div className="text-micro font-semibold uppercase text-ink-4 mb-2">The four movements</div>
-      <div className="-mx-2">
-        {(conv.movements || []).map((m) => (
-          <div key={m.key} className="row px-2">
-            <span className="flex-1 min-w-0">
-              <span className={m.load_bearing ? 'text-ink font-medium' : 'text-ink-2'}>{m.label}</span>
-              {m.load_bearing && <span className="text-micro text-ink-4 ml-2">sets the score</span>}
-            </span>
-            <span className="num w-10 text-right">
-              {m.value == null ? <span className="text-ink-4">—</span> : <span className="text-ink">{m.value}</span>}
-            </span>
-          </div>
-        ))}
+      <div className="space-y-3">
+        {entries.map(([key, m]) => {
+          const lb = LOAD_BEARING.includes(key);
+          return (
+            <div key={key}>
+              <div className="flex items-baseline gap-2">
+                <span className={`text-small ${lb ? 'text-ink font-medium' : 'text-ink-2'}`}>{m.label}</span>
+                {lb && <span className="text-micro text-ink-4">sets the score</span>}
+                <div className="flex-1" />
+                <span className="num text-small">
+                  {m.score == null ? <span className="text-ink-4">—</span> : <span className="text-ink">{m.score}</span>}
+                </span>
+              </div>
+              {/* The engine's reasoning, with its receipts. This is the whole
+                  reason to read a score rather than just see it. */}
+              {m.evidence && <p className="text-mini text-ink-3 leading-relaxed mt-0.5">{m.evidence}</p>}
+              {!m.scorable && m.reason && (
+                <p className="text-mini text-ink-3 leading-relaxed mt-0.5">Not scored — {m.reason}</p>
+              )}
+            </div>
+          );
+        })}
       </div>
       {conv.unscorable?.length > 0 && (
-        <p className="text-mini text-ink-3 mt-2 leading-relaxed">
-          {conv.unscorable.length} unscored — the engine abstains rather than defaulting to 5.
+        <p className="text-mini text-ink-4 mt-2 leading-relaxed">
+          {conv.unscorable.length} unscored. The engine abstains rather than defaulting to 5 — the rubric says
+          default, the engine refuses, and the engine is right.
         </p>
       )}
     </div>
@@ -381,18 +408,33 @@ function Movements({ conv }) {
 }
 
 function Docks({ conv }) {
-  const docks = (conv.docks || []).filter((d) => d.applied);
+  // ── Shape: { key, amount, why }. NOT { applied, reason }. ──
+  // My first pass filtered on `.applied` — undefined, therefore falsy — so it
+  // silently dropped the only dock on the first real run: bear -1.1. The score
+  // read 4.8 with "docks -1.1" in the calculation string and no docks shown.
+  //
+  // Third shape I guessed wrong on this page (movements, docks, memo fields),
+  // all three found the moment the engine produced a determinate score for the
+  // first time. Writing a UI against an output shape that has never existed is
+  // writing fiction; there was no data to check against until now.
+  const docks = (conv.docks || []).filter((d) => d && d.amount);
   if (!docks.length) return null;
   return (
-    <div>
+    <div className="border-t border-line pt-3">
       <div className="text-micro font-semibold uppercase text-ink-4 mb-2">Docks</div>
       {docks.map((d, i) => (
-        <div key={i} className="flex items-baseline gap-2 py-1">
-          <span className="num text-ink w-10">{d.amount}</span>
-          <span className="text-small text-ink-2 flex-1 leading-relaxed">{d.reason}</span>
+        <div key={i} className="flex items-baseline gap-2 py-0.5">
+          <span className="num text-small text-ink w-10">{d.amount}</span>
+          <span className="text-small text-ink-2 flex-1 leading-relaxed">{d.why || d.key}</span>
         </div>
       ))}
-      {conv.dock_capped && <p className="text-micro text-ink-4 mt-1">Capped — docks can't overrule two bands of evidence.</p>}
+      {/* The engine's own arithmetic, stated. Danny should never have to trust
+          the number — he should be able to check it. */}
+      {conv.calculation && <p className="text-mini text-ink-3 mt-2 leading-relaxed">{conv.calculation}</p>}
+      {conv.dock_capped && (
+        <p className="text-micro text-ink-4 mt-1">Capped — docks can't overrule two bands of evidence.</p>
+      )}
+      {conv.dock_note && <p className="text-micro text-ink-4 mt-1">{conv.dock_note}</p>}
     </div>
   );
 }
