@@ -328,8 +328,52 @@ router.get('/stats', (req, res) => {
 
 // ── GET /api/pipeline/:id — one company, everything attached to it ──
 // The detail page's substrate. Same record, more of it.
+// ── The card selects f.*, the BOARD does not. This asymmetry is deliberate. ──
+// PIPELINE_SQL lists columns explicitly because it runs over 187 rows and its
+// payload is already 136KB — widening it to carry deck URLs and enrichment blobs
+// nobody reads on a board would be paid 187 times per page load.
+//
+// But that narrowness is a trap, and this file documents its own scar: omitting
+// investment_amount once made every portfolio company render as "met", because
+// `undefined > 0` is false. I hit the identical bug building this card — the team
+// block read "add the company LinkedIn URL" for a record that had one, because
+// company_linkedin_url wasn't in the list. Then again on PATCH, which echoed back
+// a row missing the very field it had just saved.
+//
+// So the card gets f.* — one row, every column, and no list to forget. It lives
+// in one function precisely so GET and PATCH cannot drift apart.
+function cardRow(userId, id) {
+  return db.prepare(`
+    SELECT f.*,
+      (SELECT a.conviction_score FROM opportunity_assessments a
+        WHERE a.founder_id = f.id AND a.is_deleted = 0 AND a.assessment_type = 'assessment'
+          AND a.status IN ('complete','partial')
+        ORDER BY a.created_at DESC, a.version_number DESC LIMIT 1) AS stu_score,
+      (SELECT a.conviction_band FROM opportunity_assessments a
+        WHERE a.founder_id = f.id AND a.is_deleted = 0 AND a.assessment_type = 'assessment'
+          AND a.status IN ('complete','partial')
+        ORDER BY a.created_at DESC, a.version_number DESC LIMIT 1) AS stu_band,
+      (SELECT d.band FROM decisions d WHERE d.founder_id = f.id
+        ORDER BY d.decided_at DESC LIMIT 1) AS my_band
+    FROM founders f
+    WHERE f.created_by = ? AND f.is_deleted = 0 AND f.id = ?
+  `).get(userId, id);
+}
+
 router.get('/:id', (req, res) => {
-  const row = db.prepare(`${PIPELINE_SQL} AND f.id = ?`).get(req.user.id, req.params.id);
+  // PIPELINE_SQL lists columns explicitly because it runs over 187 rows and its
+  // payload is already 136KB — widening it to carry deck URLs and enrichment
+  // blobs nobody reads on a board would be paid 187 times per page load.
+  //
+  // But that narrowness is a trap, and this file documents its own scar: omitting
+  // investment_amount once made every portfolio company render as "met", because
+  // `undefined > 0` is false. I hit the identical bug building this card — the
+  // team block read "add the company LinkedIn URL" for a record that had one,
+  // because company_linkedin_url wasn't in the list.
+  //
+  // So the card gets f.* — one row, every column, no list to forget to update
+  // the next time someone adds a field.
+  const row = cardRow(req.user.id, req.params.id);
   if (!row) return res.status(404).json({ error: 'not found' });
 
   res.json({
@@ -351,7 +395,126 @@ router.get('/:id', (req, res) => {
     notes: db
       .prepare(`SELECT * FROM founder_notes WHERE founder_id = ? ORDER BY created_at DESC`)
       .all(req.params.id),
+
+    // The automated half — the team, their tenure, where they worked before, and
+    // the arrival curve. Parsed here so the client never has to know it's stored
+    // as a JSON blob. Null until enrichment runs; the card renders honest empty
+    // states rather than pretending a company has no team.
+    enrichment: (() => {
+      if (!row.company_enrichment) return null;
+      try { return JSON.parse(row.company_enrichment); } catch { return null; }
+    })(),
   });
+});
+
+// ══════════════════════════════════════════════════════════════════════
+// PATCH /api/pipeline/:id — Danny edits the card.
+//
+// "These should all be fields I can enter and edit too... I need add/edit/delete
+// control on everything really."
+//
+// Strict allowlist. Two reasons it isn't a generic spread of req.body:
+//   1. company_enrichment is MACHINE-owned. If Danny could write it, a re-fetch
+//      would clobber him — and if a fetch could write his fields, it would erase
+//      his typing. The split is the whole schema design: he owns columns, the
+//      machine owns the blob, neither touches the other.
+//   2. is_deleted / created_by / id are not "fields", and a PUT that lets the
+//      client set them is how a bug becomes a data loss.
+// ══════════════════════════════════════════════════════════════════════
+const EDITABLE = [
+  'name', 'company', 'role', 'email', 'linkedin_url', 'company_linkedin_url',
+  'website_url', 'github_url', 'twitter',
+  'company_one_liner', 'domain', 'stage', 'location_city', 'location_state',
+  'deal_status', 'admissions_status', 'pipeline_tracks', 'next_action',
+  'deck_url', 'data_room_url',
+  'arr', 'monthly_burn', 'runway_months', 'valuation', 'round_size',
+  'investment_amount', 'security_type', 'deal_lead', 'chicago_connection',
+];
+
+router.patch('/:id', (req, res) => {
+  const row = db.prepare('SELECT id FROM founders WHERE id = ? AND created_by = ? AND is_deleted = 0')
+    .get(req.params.id, req.user.id);
+  if (!row) return res.status(404).json({ error: 'not found' });
+
+  const fields = Object.keys(req.body).filter((k) => EDITABLE.includes(k));
+  if (!fields.length) {
+    return res.status(400).json({
+      error: 'nothing editable in that payload',
+      editable: EDITABLE,
+    });
+  }
+
+  const set = fields.map((f) => `${f} = ?`).join(', ');
+  const vals = fields.map((f) => (req.body[f] === '' ? null : req.body[f]));
+  db.prepare(`UPDATE founders SET ${set}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`)
+    .run(...vals, req.params.id);
+
+  // cardRow, not PIPELINE_SQL — the narrow board query would echo back a row
+  // missing the field just saved, and the client would render the edit as lost.
+  const updated = cardRow(req.user.id, req.params.id);
+  res.json({ ...updated, funnel_stage: stageOf(updated) });
+});
+
+// ── POST /api/pipeline/:id/enrich — fetch the team from LinkedIn, on demand ──
+// Costs real credits (2 + 4/employee), so it is never automatic on page load.
+// Danny presses it, or the nightly job does it in bulk.
+router.post('/:id/enrich', async (req, res) => {
+  const row = db.prepare('SELECT id, company, company_linkedin_url FROM founders WHERE id = ? AND created_by = ?')
+    .get(req.params.id, req.user.id);
+  if (!row) return res.status(404).json({ error: 'not found' });
+  if (!row.company_linkedin_url) {
+    // Say WHICH field is missing and what to do — an "enrichment failed" toast
+    // that doesn't name the cause is how a feature gets abandoned.
+    return res.status(400).json({
+      error: 'No company LinkedIn URL on this card.',
+      detail: `Add the company's LinkedIn page URL (not the founder's profile) and enrich again.`,
+      field: 'company_linkedin_url',
+    });
+  }
+
+  try {
+    const { enrichCompany, saveCompanyEnrichment } = require('../pipeline/company-enrich');
+    const blob = await enrichCompany(row.company_linkedin_url, { userId: req.user.id });
+    if (!blob) {
+      return res.status(502).json({
+        error: 'LinkedIn returned nothing for that URL.',
+        detail: 'Check the URL points at a company page, or that your EnrichLayer key has credits.',
+      });
+    }
+    saveCompanyEnrichment(row.id, blob);
+    res.json(blob);
+  } catch (e) {
+    console.error('[Pipeline] enrich failed:', e.message);
+    res.status(500).json({ error: 'Enrichment failed: ' + e.message });
+  }
+});
+
+// ── Notes: add / edit / delete. His words, his rows. ──
+router.post('/:id/notes', (req, res) => {
+  const { content, source } = req.body;
+  if (!content || !String(content).trim()) return res.status(400).json({ error: 'content required' });
+  const r = db.prepare(
+    `INSERT INTO founder_notes (founder_id, content, source, created_by) VALUES (?, ?, ?, ?)`
+  ).run(req.params.id, String(content).trim(), source || 'manual', req.user.id);
+  res.json(db.prepare('SELECT * FROM founder_notes WHERE id = ?').get(r.lastInsertRowid));
+});
+
+router.patch('/:id/notes/:noteId', (req, res) => {
+  const n = db.prepare('SELECT * FROM founder_notes WHERE id = ? AND founder_id = ?')
+    .get(req.params.noteId, req.params.id);
+  if (!n) return res.status(404).json({ error: 'not found' });
+  const { content } = req.body;
+  if (!content || !String(content).trim()) return res.status(400).json({ error: 'content required' });
+  db.prepare('UPDATE founder_notes SET content = ? WHERE id = ?').run(String(content).trim(), n.id);
+  res.json(db.prepare('SELECT * FROM founder_notes WHERE id = ?').get(n.id));
+});
+
+router.delete('/:id/notes/:noteId', (req, res) => {
+  const n = db.prepare('SELECT * FROM founder_notes WHERE id = ? AND founder_id = ?')
+    .get(req.params.noteId, req.params.id);
+  if (!n) return res.status(404).json({ error: 'not found' });
+  db.prepare('DELETE FROM founder_notes WHERE id = ?').run(n.id);
+  res.json({ id: n.id, deleted: true });
 });
 
 module.exports = router;

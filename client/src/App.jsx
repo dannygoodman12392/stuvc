@@ -24,6 +24,11 @@ import Pipeline from './pages/Pipeline';
 const Landing = lazy(() => import('./pages/Landing'));
 const Signup = lazy(() => import('./pages/Signup'));
 const Onboarding = lazy(() => import('./pages/Onboarding'));
+// The company card — the destination from Pipeline. Replaces FounderDetail,
+// which was built around a founder row rather than the company Danny is tracking.
+// FounderDetail stays on disk and routed at /founders/legacy/:id until he
+// confirms nothing in its 720 lines is worth salvaging.
+const CompanyCard = lazy(() => import('./pages/CompanyCard'));
 const FounderDetail = lazy(() => import('./pages/FounderDetail'));
 const AddFounder = lazy(() => import('./pages/AddFounder'));
 const Assess = lazy(() => import('./pages/Assess'));
@@ -123,7 +128,8 @@ function AppRoutes() {
       <Route path="/pipeline" element={<ProtectedRoute><Pipeline /></ProtectedRoute>} />
       <Route path="/discover" element={<Navigate to="/sourcing" replace />} />
       <Route path="/founders/new" element={<ProtectedRoute><AddFounder /></ProtectedRoute>} />
-      <Route path="/founders/:id" element={<ProtectedRoute><FounderDetail /></ProtectedRoute>} />
+      <Route path="/founders/:id" element={<ProtectedRoute><CompanyCard /></ProtectedRoute>} />
+      <Route path="/founders/legacy/:id" element={<ProtectedRoute><FounderDetail /></ProtectedRoute>} />
       <Route path="/assess" element={<ProtectedRoute><Assess /></ProtectedRoute>} />
       <Route path="/assess/:id" element={<ProtectedRoute><AssessmentDetail /></ProtectedRoute>} />
       <Route path="/portfolio" element={<ProtectedRoute><Placeholder title="Portfolio" /></ProtectedRoute>} />

@@ -265,6 +265,12 @@ addColumn('founders', 'company_linkedin_url', 'TEXT');
 addColumn('founders', 'deck_url', 'TEXT');
 addColumn('founders', 'data_room_url', 'TEXT');
 
+// Where a note came from: 'manual' (Danny typed it), 'granola' (a call), 'agent'.
+// Granola's rule, applied to the card: HIS words render dark, the machine's grey.
+// Without this column every note looks equally authored, which is precisely how a
+// transcript summary ends up being read as his own judgment six months later.
+addColumn('founder_notes', 'source', "TEXT DEFAULT 'manual'");
+
 // Airtable sync audit log
 db.exec(`
   CREATE TABLE IF NOT EXISTS airtable_sync_log (
