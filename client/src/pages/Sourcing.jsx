@@ -41,13 +41,99 @@ import { api } from '../utils/api';
 // "at Floracene…" and "prev @ two sigma…" — sentences beginning mid-clause, which
 // reads worse than the noise it removed. "Founder at Floracene (YC S26)" is fine.
 // Cosmetic only: the raw headline is on hover, and nothing here feeds the tie gate.
-function signalOf(r) {
-  const raw = (r.headline || r.company_one_liner || '').trim();
-  const dup = raw.match(/^(.{3,40}?)\s+\1(?=\s|\b)/i);
-  return dup ? raw.slice(dup[1].length).trim() : raw;
+const parseArr = (s) => { try { const v = JSON.parse(s || '[]'); return Array.isArray(v) ? v : []; } catch { return []; } };
+
+const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+// ══════════════════════════════════════════════════════════════════════════
+// WHY IS THIS STRANGER IN FRONT OF ME?
+//
+// The most important column on this screen, and it was rendering the person's
+// name back at them. `headline || company_one_liner` looks obviously right and is
+// wrong on the data: measured 2026-07-16, 22 of 23 exa-sourced rows have
+// headline === name. So the top of the queue — which is now, after the sort fix,
+// exactly where Danny's S/A-tier founders live — read:
+//
+//   Rodrigo Mosqueira   |   Rodrigo Mosqueira
+//   Jason Zhan          |   Jason Zhan
+//
+// Twelve of the top thirteen rows. The real signal was sitting in
+// company_one_liner the whole time ("LeanLog — AI-powered operations management
+// platform"), losing a || race to a field that repeats the name.
+//
+// This is the one-primary-ink rule failing at the data layer rather than the CSS
+// layer: two identical strings on one row makes the eye compare them, find
+// nothing, and move on.
+// ══════════════════════════════════════════════════════════════════════════
+// Is this string just the person's name wearing a different hat?
+// Not exact equality — that missed "Amrit Kanesa-thasan" for name "Amrit Kanesa",
+// which sailed through and rendered the name in the signal column anyway. Either
+// string containing the other is the test that actually holds.
+function isJustTheName(s, name) {
+  const a = norm(s), b = norm(name);
+  if (!a || !b) return false;
+  return a === b || a.startsWith(b) || b.startsWith(a);
 }
 
-const parseArr = (s) => { try { const v = JSON.parse(s || '[]'); return Array.isArray(v) ? v : []; } catch { return []; } };
+function signalOf(r) {
+  const h = String(r.headline || '').trim();
+  const raw = h && !isJustTheName(h, r.name) ? h : String(r.company_one_liner || '').trim();
+  if (!raw) return null;
+
+  // Retained from the original: some headlines repeat their own opening clause
+  // ("Founder Founder at Amulet…"). Strip the echo. Cosmetic only — the raw
+  // headline is on hover and nothing here feeds the tie gate.
+  const dup = raw.match(/^(.{3,40}?)\s+\1(?=\s|\b)/i);
+  let out = dup ? raw.slice(dup[1].length).trim() : raw;
+
+  // The one-liner opens with the company name ("LeanLog — AI-powered operations
+  // management platform"), and the company already has its own column two inches
+  // to the left. Printing it twice on one row is the one-primary-ink rule failing
+  // at the data layer: the eye compares two identical strings, learns nothing, and
+  // the row costs a beat for free. Strip the echo and let the sentence start where
+  // the information does.
+  const co = companyOf(r);
+  if (co) {
+    const re = new RegExp(`^${co.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*[—–-]\\s*`, 'i');
+    out = out.replace(re, '');
+  }
+  // If stripping left nothing, the one-liner WAS the company name — say nothing
+  // rather than an empty cell pretending to be a signal.
+  return out.trim() || null;
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// The company field is polluted on exa rows: "LeanLog. Before this",
+// "just in time for all those last" — sentence fragments the extractor tore out
+// of prose. But company_one_liner reliably starts with the real name and an em
+// dash ("LeanLog — AI-powered operations..."), so the truth is recoverable.
+//
+// Cleaned at RENDER, not in the database. Danny owns his data; a display
+// heuristic that guesses wrong should cost him a glance, not a row. If this
+// proves out, it belongs in the extractor.
+// ══════════════════════════════════════════════════════════════════════════
+function companyOf(r) {
+  const c = String(r.company || '').trim();
+  // The one-liner reliably opens "CompanyName — what they do", so the real name is
+  // recoverable even when the company column is garbage.
+  const fromLiner = String(r.company_one_liner || '').split(/\s+[—–]\s+/)[0].trim();
+  const linerUsable = fromLiner && fromLiner.length <= 32 && fromLiner.split(/\s+/).length <= 4;
+
+  // Prose tells on itself. Real company names are short and don't contain verbs:
+  //   good:  "LeanLog"  "Rise Reforming"  "Remix (YC W26)"
+  //   prose: "AviaryAI builds AI voice a…"  "Co-CEO of Greyscalegorilla (merged…"
+  //          "just in time for all those last"  "LeanLog. Before this"
+  // Two independent tells, either sufficient: too many words, or an embedded verb
+  // phrase. Both are things a name never has.
+  const wordy = c.split(/\s+/).length > 3;
+  const verby = /\b(builds?|building|is|are|was|helps?|makes?|powers?|enables?|of|for|with|and|the)\b/i.test(c);
+  const sentence = /\.\s/.test(c);
+
+  if (c && (wordy || sentence || (verby && c.split(/\s+/).length > 2)) && linerUsable) return fromLiner;
+  if (c && sentence) return c.replace(/\.\s.*$/, '').trim(); // "LeanLog. Before this" -> "LeanLog"
+  if (c && !wordy) return c;
+  return linerUsable ? fromLiner : c || null;
+}
 
 export default function Sourcing() {
   const nav = useNavigate();
@@ -258,7 +344,7 @@ export default function Sourcing() {
             >
               <span className="flex-[2] min-w-0 flex items-baseline gap-2">
                 <span className="row-primary flex-none max-w-[150px]">{r.name}</span>
-                {r.company && <span className="row-meta min-w-0">{r.company}</span>}
+                {companyOf(r) && <span className="row-meta min-w-0">{companyOf(r)}</span>}
               </span>
 
               {/* The reason this stranger is in front of him. Without it the row is
