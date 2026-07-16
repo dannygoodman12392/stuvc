@@ -150,7 +150,7 @@ function YourCall({ assessment: a, onDecided }) {
       </div>
 
       <div>
-        <label className="label">Your band</label>
+        <label className="label">Your verdict</label>
         <div className="space-y-1">
           {BANDS.map((b) => (
             <button
@@ -210,7 +210,7 @@ function YourCall({ assessment: a, onDecided }) {
         disabled={saving || !band}
         className="btn-primary w-full justify-center"
       >
-        {saving ? 'Recording…' : 'Record my call and show me Stu’s'}
+        {saving ? 'Recording…' : 'Record my verdict and show me Stu’s'}
       </button>
       <p className="text-micro text-ink-4">
         Recorded first, so the disagreement means something. You can't un-see a score.
@@ -269,7 +269,7 @@ function TheRead({ assessment: a, locked }) {
       <div className="flex items-center justify-center p-8">
         <div className="max-w-xs text-center">
           <p className="text-small text-ink-3 leading-relaxed">
-            Stu's read is here. It stays covered until you've recorded yours — otherwise
+            Stu's assessment is here. It stays covered until you've recorded yours — otherwise
             the disagreement measures how much you anchor, not who was right.
           </p>
         </div>
