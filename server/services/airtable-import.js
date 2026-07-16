@@ -193,6 +193,10 @@ const AUTHORITATIVE = [
   'stage', 'previous_companies',
   'admissions_status', 'status',
   'airtable_admission_status', 'airtable_next_step',
+  // The merged board's stage axis. For an Airtable-backed founder this is just
+  // airtable_admission_status under the name the board reads — Danny: "Use
+  // Airtable right now as the source of truth for the correct stage."
+  'stage_status',
 ];
 
 // Fields Airtable may fill but must never clobber. See FIELD OWNERSHIP above.
@@ -243,6 +247,7 @@ function desiredFrom(f) {
     status,
     airtable_admission_status: rawAdm,
     airtable_next_step: rawNext,
+    stage_status: rawAdm,
     // fill-if-empty half
     email: f['Email'] || null,
     linkedin_url: f['LinkedIn'] || null,

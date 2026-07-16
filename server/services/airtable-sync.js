@@ -67,6 +67,73 @@ function gatedOut(opts, founder, kind) {
   return true;
 }
 
+// ══════════════════════════════════════════════════════════════════════════
+// THE MERGED BOARD'S WRITE PATH (2026-07-16)
+//
+// Danny chose this explicitly when asked what a drag inside Stu should do:
+// "Drag in Stu, and it writes to Airtable" — so the board he works in and the
+// base his team reads never disagree, and tomorrow's 5:45am sync finds its own
+// answer already there instead of reverting him.
+//
+// This does NOT loosen the standing rule. The rule is that no AGENT writes to the
+// team's base — nothing scheduled, nothing inferred, nothing fired off in the
+// background. Every writer below still refuses without { explicit: true }, and the
+// only callers that pass it are the two endpoints behind a human drag. A cron can
+// never reach these.
+//
+// Unlike the two legacy pushers above, these send Airtable's OWN vocabulary
+// straight through (lib/airtableVocab) — no stuAdmissionsToAirtable() translation,
+// because the board now speaks Airtable's words natively. Nothing to mistranslate.
+// Field IDs, not names, so a rename in Airtable's UI can't silently 422 us.
+// ══════════════════════════════════════════════════════════════════════════
+
+const vocab = require('../lib/airtableVocab');
+
+// `opts.patch` exists so the PAYLOAD can be tested without writing to the team's
+// shared base. The rule is that agents don't touch Airtable, and that includes the
+// agent writing this file: the live round-trip is Danny's to make by dragging a
+// card. What is testable offline is the thing most likely to be wrong — that we
+// send the right field id and a value Airtable will actually accept.
+/** Push the merged board's stage. `stage` must already be a valid Airtable option. */
+async function pushStage(founder, stage, opts = {}) {
+  if (gatedOut(opts, founder, 'stage')) return { skipped: 'not_explicit' };
+  const recordId = founder.airtable_founder_record_id;
+  // The 26 Investment-Pipeline orphans have no Founder Ecosystem record. Their
+  // stage is Stu-local and that is correct — this is not an error to shout about.
+  if (!recordId) return { skipped: 'no_airtable_record' };
+  if (!vocab.isStage(stage)) return { skipped: 'not_a_valid_stage', stage };
+
+  const patch = opts.patch || patchAirtableRecord;
+  try {
+    await patch(vocab.FOUNDER_TABLE, recordId, { [vocab.FIELD.ADMISSION_STATUS]: stage });
+    logSync(founder.id, 'founder_ecosystem', 'Admission Status', founder.stage_status, stage, recordId, 'success', null);
+    return { pushed: true, stage };
+  } catch (err) {
+    logSync(founder.id, 'founder_ecosystem', 'Admission Status', founder.stage_status, stage, recordId, 'failed', err.message);
+    console.error(`[AirtableSync] ✗ ${founder.name} stage push failed:`, err.message);
+    return { error: err.message };
+  }
+}
+
+/** Push the Resident/Investment badge. `tracks` is an array of vocab.TRACKS. */
+async function pushTracks(founder, tracks, opts = {}) {
+  if (gatedOut(opts, founder, 'tracks')) return { skipped: 'not_explicit' };
+  const recordId = founder.airtable_founder_record_id;
+  if (!recordId) return { skipped: 'no_airtable_record' };
+
+  const clean = (tracks || []).filter((t) => vocab.TRACKS.includes(t));
+  const patch = opts.patch || patchAirtableRecord;
+  try {
+    await patch(vocab.FOUNDER_TABLE, recordId, { [vocab.FIELD.PIPELINE]: clean });
+    logSync(founder.id, 'founder_ecosystem', 'Pipeline', founder.pipeline_tracks, clean.join(','), recordId, 'success', null);
+    return { pushed: true, tracks: clean };
+  } catch (err) {
+    logSync(founder.id, 'founder_ecosystem', 'Pipeline', founder.pipeline_tracks, clean.join(','), recordId, 'failed', err.message);
+    console.error(`[AirtableSync] ✗ ${founder.name} tracks push failed:`, err.message);
+    return { error: err.message };
+  }
+}
+
 /**
  * Push admissions_status change to Airtable Founder Ecosystem table.
  * GATED: only runs when called with { explicit: true } (publish-to-team).
@@ -134,4 +201,4 @@ async function pushDealChange(founder, oldStatus, opts = {}) {
   }
 }
 
-module.exports = { pushAdmissionsChange, pushDealChange };
+module.exports = { pushAdmissionsChange, pushDealChange, pushStage, pushTracks };

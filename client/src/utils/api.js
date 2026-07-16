@@ -88,6 +88,22 @@ async function cachedGet(path, { onUpdate } = {}) {
 
   if (hit && age < FRESH_MS) return hit.data;
 
+  // ── A COLD ENTRY IN FLIGHT IS NOT A "WARM BUT STALE" ENTRY ──
+  // The cold path below parks { at: 0, data: undefined, inflight } in the cache and
+  // returns the promise. A second caller arriving before it lands used to find that
+  // entry, compute age = Date.now() - 0 (i.e. 56 years, definitively stale), fall
+  // into the revalidate branch below, and return `hit.data` — which is undefined,
+  // because the first request hasn't come back yet.
+  //
+  // React StrictMode double-invokes effects in dev, so the SECOND call is the one
+  // whose .then() survives the cleanup. It set the page's state to undefined and the
+  // Pipeline board sat on its skeleton forever, over a request that returned 200.
+  //
+  // Same shape as every other bug in this codebase: a record that claims to describe
+  // something ("here is the cached data") while describing nothing. Dedupe onto the
+  // inflight promise instead — which is what the cold path already intended.
+  if (hit && hit.inflight && hit.data === undefined) return hit.inflight;
+
   if (hit) {
     // Warm but stale: hand back what we have, refresh underneath.
     if (!hit.inflight) {
@@ -262,6 +278,15 @@ export const api = {
   // Cached: toggling track or bouncing Home <-> Pipeline must not repaint through
   // a skeleton to arrive at rows we already had. 136KB a visit, now 0 when warm.
   getPipeline: (params, opts) => cachedGet('/pipeline?' + new URLSearchParams(params || {}), opts),
+
+  // ── The merged board's two writes ──
+  // Separate from updateFounder because these are not field edits: each one also
+  // pushes to the team's Airtable base and returns what Airtable said. The caller
+  // has to be able to read `.airtable` and tell Danny if the push was refused.
+  setPipelineStage: (id, stage) =>
+    after(request(`/pipeline/${id}/stage`, { method: 'PATCH', body: JSON.stringify({ stage }) }), '/pipeline'),
+  setPipelineTracks: (id, tracks) =>
+    after(request(`/pipeline/${id}/tracks`, { method: 'PATCH', body: JSON.stringify({ tracks }) }), '/pipeline'),
   getPipelineCompany: (id, opts) => cachedGet(`/pipeline/${id}`, opts),
   // The card's writes. Each invalidates the card AND the board — editing a
   // company name or stage changes both, and a cache that forgets that shows him

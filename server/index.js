@@ -134,6 +134,21 @@ try {
       db.prepare("INSERT INTO migration_flags (key) VALUES ('airtable_backfill_ids_v1')").run();
       console.log('[Migration] Airtable ID backfill complete.');
     }
+
+    // ── Give every pipeline card a stage in Airtable's vocabulary ──
+    // The merged board has one axis, `stage_status`. The daily sync mirrors it from
+    // Airtable for the 161 founders that have a record there; this covers the 26
+    // that came from Airtable's separate Investment Pipeline table and would
+    // otherwise sit stage-less forever. Only ever fills a NULL, so it cannot stomp
+    // a stage Danny has since dragged — but it is flagged anyway, because an
+    // unflagged migration is one bad WHERE clause away from being a nightly rewrite.
+    const stageFlag = db.prepare("SELECT * FROM migration_flags WHERE key = 'stage_status_backfill_v1'").get();
+    if (!stageFlag) {
+      const backfillStageStatus = require('./backfill-stage-status');
+      const r = backfillStageStatus();
+      db.prepare("INSERT INTO migration_flags (key) VALUES ('stage_status_backfill_v1')").run();
+      console.log(`[Migration] stage_status: ${r.mirrored} mirrored, ${r.derived} derived, ${r.unresolved.length} left without a stage (untriaged sourcing output — correct).`);
+    }
     // ── Incremental Airtable → Stu sync ──
     // This used to run on EVERY startup, unflagged, while every migration around
     // it is flag-guarded. It's fired without await so it doesn't delay listen(),

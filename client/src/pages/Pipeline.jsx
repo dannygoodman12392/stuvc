@@ -15,13 +15,25 @@ import KanbanBoard from '../components/KanbanBoard';
 // AND separate surfaces. So sourcing moved to its own screen and this one does
 // one job: move companies you know through your deal stages.
 //
-// ── WHY THE KANBAN GROUPS BY deal_status, NOT THE DERIVED FUNNEL ──
+// ── ONE BOARD (2026-07-16) ──
+// Danny: "Let's merge Investment and Admissions pipelines, consolidating.
+// Investment and/or Admissions Pipeline should be a badge I can edit on each card,
+// similar to what I have in Airtable."
+//
+// There were two boards over two different stage axes, and a toggle between them.
+// Now there is one board over `stage_status` — Airtable's Admission Status,
+// verbatim — and the Resident/Investment track is a chip on the card. That is how
+// Airtable itself models it: one stage field, one Pipeline multi-select. The
+// Investment/Resident buttons in the header are a FILTER over the one board, not
+// a mode that swaps it.
+//
+// ── WHY THE KANBAN GROUPS BY stage_status, NOT THE DERIVED FUNNEL ──
 // There are two different "stage" ideas in this product and they must not be
 // confused:
 //
-//   deal_status    — YOUR workflow. Editable. Under Consideration -> First
-//                    Meeting -> Partner Call -> Memo Draft -> IC Review ->
-//                    Committed / Passed. This is what a card DRAGS between.
+//   stage_status   — WHERE THEY STAND, in Airtable's words. Editable: this is what
+//                    a card DRAGS between, and the drag writes through to the
+//                    team's Airtable base so the two can't disagree.
 //   funnel_stage   — DERIVED from evidence (found/met/assessed/decided/invested).
 //                    Read-only by construction: you cannot drag a card to make a
 //                    company "assessed" — either an assessment exists or it
@@ -29,28 +41,26 @@ import KanbanBoard from '../components/KanbanBoard';
 //
 // So the kanban is the workflow, and the derived read lives in the table view and
 // on Home. A board you can drag has to write something real.
+//
+// `deal_status` is no longer an axis here. It survives on the card as history and
+// as what backfill-stage-status derived the 26 Investment-Pipeline orphans from.
 // ══════════════════════════════════════════════════════════════════════════
 
 // ══════════════════════════════════════════════════════════════════════════
-// The stages that EXIST, measured against the real board (2026-07-16):
-//   Under Consideration 42 · Passed 35 · (empty) 25 · Family office 3
-// First Meeting, Partner Call, Memo Draft, IC Review and Committed had ZERO rows
-// each — five of seven columns were permanent placeholders. A board that is 70%
-// empty scaffolding reads as a board with nothing on it.
+// THE STAGE LIST USED TO LIVE HERE. It doesn't anymore — the server sends it
+// (routes/pipeline.js → `vocab`), read from Airtable's own schema via
+// lib/airtableVocab. Danny: "Use Airtable right now as the source of truth for the
+// correct stage." A copy of the list in the client is a copy that drifts, and
+// drift in exactly this list is what put 22 declined founders back on the board.
 //
-// FAMILY OFFICE is Danny's own category, from his pipeline dump: "likely a family
-// office opportunity vs. Superior." It isn't a pass — it's the wrong door. Brandon's
-// family office invests Series A through pre-IPO; Superior writes $150-400K at
-// pre-seed. A company raising a Series A in Q1 2027 is a real opportunity for the
-// building and a bad fit for the fund, and the board had no word for that. Filing
-// those as "Passed" would have been a lie about three live relationships.
-//
-// The middle stages return when a deal actually reaches one. An empty column you
-// can't drag into is worse than no column: it implies a process that isn't running.
-const DEAL_STAGES = [
-  'Under Consideration', 'Memo Draft', 'IC Review', 'Committed',
-  'Family office', 'Passed',
-];
+// Worth recording what the deleted constants claimed, because it is the lesson:
+// the comment above DEAL_STAGES asserted "First Meeting, Partner Call, Memo Draft,
+// IC Review and Committed had ZERO rows each" and "Family office 3". Measured
+// against production the day it was deleted: Committed 8, IC Review 4, First
+// Meeting 3 — and Family office ZERO. Every number was wrong, and inverted. A
+// hand-maintained list of what the data looks like starts rotting the moment it's
+// written; the data is right there and can simply be asked.
+// ══════════════════════════════════════════════════════════════════════════
 
 const BAND_LABEL = { anchor: 'Anchor', memo: 'Memo', monitor: 'Monitor', pass: 'Pass', indeterminate: 'Held' };
 
@@ -72,31 +82,29 @@ export default function Pipeline() {
   const [data, setData] = useState(null);
   const [err, setErr] = useState(null);
   const [view, setView] = useState(() => localStorage.getItem('stu_pipeline_view') || 'kanban');
-  const [track, setTrack] = useState('investment');
+  // '' = the whole board. There is one board now; Investment/Resident narrow it.
+  const [track, setTrack] = useState('');
   const [q, setQ] = useState('');
   const [cursor, setCursor] = useState(0);
   const stage = params.get('stage') || '';
 
   useEffect(() => { localStorage.setItem('stu_pipeline_view', view); }, [view]);
 
-  // ── Stale-while-revalidate. Do NOT setData(null) here. ──
-  // Danny: "Pipeline took awhile to load." Blanking to a skeleton on every track
-  // toggle turns a 20ms cached response into a visible cold load — the UI throws
-  // away a perfectly good board, shows bones, then paints the same rows back.
-  // Keeping the old rows on screen while the new ones fetch is the entire
-  // difference between "instant" and "laggy" at identical network cost.
-  //
-  // The response is cached per-track in a module-level Map (see api.js), so
-  // toggling back to a track you've already seen is 0 requests and 0 flicker.
+  // ── One fetch, not one per track ──
+  // This used to refetch whenever the track flipped, because the two tracks were
+  // two different boards over two different stage axes. They're one board now, so
+  // the track is a filter over rows already in memory: zero requests, zero flicker,
+  // and no stale-while-revalidate dance to get wrong.
   useEffect(() => {
     let dead = false;
-    api.getPipeline({ track }).then((d) => !dead && setData(d)).catch((e) => !dead && setErr(e.message));
+    api.getPipeline({}).then((d) => !dead && setData(d)).catch((e) => !dead && setErr(e.message));
     return () => { dead = true; };
-  }, [track]);
+  }, []);
 
   const rows = useMemo(() => {
     if (!data) return [];
     let out = data.rows;
+    if (track) out = out.filter((r) => (r.tracks || []).includes(track));
     if (stage) out = out.filter((r) => r.funnel_stage === stage);
     if (q) {
       const n = q.toLowerCase();
@@ -107,7 +115,7 @@ export default function Pipeline() {
       );
     }
     return out;
-  }, [data, stage, q]);
+  }, [data, stage, q, track]);
 
   useEffect(() => {
     if (view !== 'list') return;
@@ -123,15 +131,42 @@ export default function Pipeline() {
     return () => window.removeEventListener('keydown', onKey);
   }, [rows, cursor, nav, view]);
 
-  // Dragging writes deal_status — the real workflow field. Optimistic, because a
-  // drag that waits on a round trip feels broken.
+  // ── The two writes on this board ──
+  // Both are optimistic, and both RE-FETCH on failure rather than leaving the
+  // optimistic state on screen. Danny drags a card, Stu writes it, and Stu pushes
+  // it to Airtable (his call: "Drag in Stu, and it writes to Airtable"). If the
+  // push fails, the card must snap back — showing a move that didn't happen is the
+  // exact bug that let this board lie for four months.
   async function onStageChange(founderId, newStage) {
+    const prev = data;
     setData((d) => ({
       ...d,
-      rows: d.rows.map((r) => (r.id === founderId ? { ...r, deal_status: newStage } : r)),
+      rows: d.rows.map((r) => (r.id === founderId ? { ...r, stage_status: newStage } : r)),
     }));
-    try { await api.updateFounder(founderId, { deal_status: newStage }); }
-    catch (e) { setErr(e.message); api.getPipeline({ track }).then(setData); }
+    try {
+      const r = await api.setPipelineStage(founderId, newStage);
+      // The write landed in Stu but Airtable refused it. Say so — a silent
+      // divergence between the board and the team's base is how this rots.
+      if (r?.airtable?.error) setErr(`Saved in Stu, but Airtable rejected it: ${r.airtable.error}`);
+    } catch (e) {
+      setErr(e.message);
+      setData(prev);
+    }
+  }
+
+  async function onTracksChange(founderId, nextTracks) {
+    const prev = data;
+    setData((d) => ({
+      ...d,
+      rows: d.rows.map((r) => (r.id === founderId ? { ...r, tracks: nextTracks } : r)),
+    }));
+    try {
+      const r = await api.setPipelineTracks(founderId, nextTracks);
+      if (r?.airtable?.error) setErr(`Saved in Stu, but Airtable rejected it: ${r.airtable.error}`);
+    } catch (e) {
+      setErr(e.message);
+      setData(prev);
+    }
   }
 
   if (err) return <div className="p-4 text-small text-danger">{err}</div>;
@@ -157,16 +192,25 @@ export default function Pipeline() {
         )}
         <div className="flex-1" />
 
+        {/* ── The track toggle is gone, on purpose ──
+            It used to switch between two boards over two different stage axes.
+            Danny: "Let's merge Investment and Admissions pipelines, consolidating."
+            The track is now a badge on the card, so this is a FILTER, not a mode:
+            "All" is the real board and these narrow it. Same rows either way. */}
         <div className="flex items-center gap-px">
-          {['investment', 'admissions'].map((t) => (
+          {[
+            { k: '', label: 'All' },
+            { k: 'Investment', label: 'Investment' },
+            { k: 'Resident', label: 'Resident' },
+          ].map((t) => (
             <button
-              key={t}
-              onClick={() => setTrack(t)}
-              className={`px-2 h-6 rounded text-mini font-medium capitalize transition ${
-                track === t ? 'bg-ground-4 text-ink' : 'text-ink-3 hover:text-ink hover:bg-ground-3'
+              key={t.k || 'all'}
+              onClick={() => setTrack(t.k)}
+              className={`px-2 h-6 rounded text-mini font-medium transition ${
+                track === t.k ? 'bg-ground-4 text-ink' : 'text-ink-3 hover:text-ink hover:bg-ground-3'
               }`}
             >
-              {t}
+              {t.label}
             </button>
           ))}
         </div>
@@ -205,9 +249,12 @@ export default function Pipeline() {
         <div className="flex-1 overflow-auto p-3">
           <KanbanBoard
             founders={rows}
-            stages={track === 'investment' ? DEAL_STAGES : ADMISSIONS_STAGES}
-            track={track}
+            // The stage list comes from the server, which reads it from Airtable's
+            // own schema. The client keeping its own copy is how the two drift.
+            stages={data.vocab?.stages || []}
+            tracks={data.vocab?.tracks || []}
             onStageChange={onStageChange}
+            onTracksChange={onTracksChange}
           />
         </div>
       ) : (
@@ -265,15 +312,3 @@ export default function Pipeline() {
   );
 }
 
-// 'Density Resident' has 21 rows and was NOT in this list — so the biggest single
-// cohort on the admissions board fell through to KanbanBoard's fallback and
-// rendered AFTER the canonical stages, out of lifecycle order. Measured:
-//   Hold/Nurture 40 · Density Resident 21 · Not Admitted 20 · Sourced 18 ·
-//   Outreach 17 · First Call Complete 17 · First Call Scheduled 14 ·
-//   Active Resident 9 · Second Call Scheduled 6
-// 'Admitted', 'Alumni' and 'Second Call Complete' have zero and are dropped.
-const ADMISSIONS_STAGES = [
-  'Sourced', 'Outreach', 'First Call Scheduled', 'First Call Complete',
-  'Second Call Scheduled', 'Density Resident', 'Active Resident',
-  'Hold/Nurture', 'Not Admitted',
-];

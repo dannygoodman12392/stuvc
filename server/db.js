@@ -330,6 +330,25 @@ addColumn('founders', 'airtable_admission_status', 'TEXT');
 addColumn('founders', 'airtable_next_step', 'TEXT');
 addColumn('founders', 'airtable_synced_at', 'DATETIME');
 
+// ── THE MERGED BOARD'S ONE STAGE COLUMN ──
+// Danny: "Let's merge Investment and Admissions pipelines, consolidating.
+// Investment and/or Admissions Pipeline should be a badge I can edit on each
+// card... Use Airtable right now as the source of truth for the correct stage."
+//
+// So the board has ONE stage axis, spelled in Airtable's words (lib/airtableVocab
+// STAGES), and the Resident/Investment track becomes a badge — which is exactly
+// how Airtable itself models it: one Admission Status, one Pipeline multi-select.
+//
+// Why this is not just `airtable_admission_status`: that column means "what
+// Airtable literally says", and 26 cards have no Founder Ecosystem record at all
+// (they came from Airtable's SEPARATE Investment Pipeline table). Writing a stage
+// into the mirror column for a row Airtable has never heard of would be a lie in
+// the one place built to be auditable. `stage_status` is the board's answer for
+// EVERY card: mirrored from Airtable where a record exists, derived from the old
+// deal_status where one doesn't.
+addColumn('founders', 'stage_status', 'TEXT');
+db.exec(`CREATE INDEX IF NOT EXISTS idx_founders_stage_status ON founders(stage_status);`);
+
 // ── The company card's automated half (pipeline/company-enrich.js) ──
 // Danny: "company pages on LinkedIn show how many people work there and have been
 // hired at these companies over time... I'll pay for enrichment."

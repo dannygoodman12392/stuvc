@@ -21,17 +21,39 @@ import { useNavigate } from 'react-router-dom';
 //     information printed twice. Gone.
 //
 // ── THE (NO STAGE) COLUMN IS NOT A STYLE CHOICE ──
-// 31 of 105 companies on the investment track have deal_status = NULL. The old
-// board did `f[stageField] || stages[0]` and silently dumped every one of them
-// into "Under Consideration" — which is why that column read 71 when only 40
-// companies actually carry that status. That is the same failure as a going-cold
-// clock computed off an import date: an absence rendered as a definite state.
-// They get their own column, and it says what they are.
+// The old board did `f[stageField] || stages[0]` and silently dumped every
+// stage-less company into the first column — which is how a column read 71 when
+// only 40 companies actually carried that status. That is the same failure as a
+// going-cold clock computed off an import date: an absence rendered as a definite
+// state. It kept its own column, and that column said what it was.
+//
+// It is now almost always empty, and deliberately so: the server only sends cards
+// that HAVE a stage (routes/pipeline.js), because a card with no stage is not an
+// opportunity — it's untriaged sourcing output, and it belongs in Sourcing. The
+// column stays for the case the server is wrong. An empty lane costs one hairline.
+//
+// ── ONE BOARD, ONE AXIS, AND A BADGE ──
+// Danny: "Let's merge Investment and Admissions pipelines, consolidating.
+// Investment and/or Admissions Pipeline should be a badge I can edit on each card,
+// similar to what I have in Airtable."
+//
+// So `stage_status` is the only axis, spelled in Airtable's words, and the
+// Resident/Investment track moved from being a whole separate BOARD to a chip on
+// the card. This mirrors how Airtable models it — one Admission Status field, one
+// Pipeline multi-select — which is the point: the tool should read like the base
+// he actually maintains.
 // ══════════════════════════════════════════════════════════════════════════
 
 const NO_STAGE = '(no stage)';
 
-export default function KanbanBoard({ founders, stages, track, onStageChange }) {
+// A stage nobody is in AND nobody moves INTO on purpose. Airtable's option list
+// carries history — "Stage 0: Legacy (Density)" predates the fund, and the two
+// Resident-Only Stage 3s were never adopted. Rendering an empty lane for each
+// would put four dead columns between Danny and the deals he's working.
+// An empty lane he might legitimately drag into (Stage 2, Stage 4) still shows.
+const isDeadEnd = (s) => /^Stage 0:/.test(s) || /^Stage 5:/.test(s);
+
+export default function KanbanBoard({ founders, stages, tracks, onStageChange, onTracksChange }) {
   const [activeId, setActiveId] = useState(null);
   const nav = useNavigate();
 
@@ -40,7 +62,7 @@ export default function KanbanBoard({ founders, stages, track, onStageChange }) 
     useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 8 } })
   );
 
-  const stageField = track === 'investment' ? 'deal_status' : 'admissions_status';
+  const stageField = 'stage_status';
 
   const { columns, order } = useMemo(() => {
     const grouped = { [NO_STAGE]: [] };
@@ -51,8 +73,13 @@ export default function KanbanBoard({ founders, stages, track, onStageChange }) 
       else if (grouped[s]) grouped[s].push(f);
       else grouped[s] = [f]; // a stage not in the canonical list still shows itself
     }
-    const keys = Object.keys(grouped).filter((k) => k !== NO_STAGE);
-    // Unstaged leads only when it has something in it — it's a prompt, not a lane.
+    // 12 stages is a lot of horizontal travel, and Airtable's list carries options
+    // Danny's book has never used (Stage 0, the two Resident-Only Stage 3s). Show a
+    // lane if it holds anything; otherwise show it only if it's a live stage he
+    // could plausibly drag into. Terminal stages with nothing in them are noise.
+    const keys = Object.keys(grouped)
+      .filter((k) => k !== NO_STAGE)
+      .filter((k) => grouped[k].length > 0 || !isDeadEnd(k));
     return { columns: grouped, order: grouped[NO_STAGE].length ? [NO_STAGE, ...keys] : keys };
   }, [founders, stages, stageField]);
 
@@ -82,6 +109,8 @@ export default function KanbanBoard({ founders, stages, track, onStageChange }) 
             id={stage}
             rows={columns[stage]}
             unstaged={stage === NO_STAGE}
+            allTracks={tracks}
+            onTracksChange={onTracksChange}
             onOpen={(id) => nav(`/founders/${id}`)}
           />
         ))}
@@ -92,7 +121,7 @@ export default function KanbanBoard({ founders, stages, track, onStageChange }) 
   );
 }
 
-function Column({ id, rows, unstaged, onOpen }) {
+function Column({ id, rows, unstaged, onOpen, allTracks, onTracksChange }) {
   const { setNodeRef, isOver } = useDroppable({ id });
   return (
     <div
@@ -119,7 +148,7 @@ function Column({ id, rows, unstaged, onOpen }) {
           </p>
         )}
         {rows.map((r) => (
-          <Card key={r.id} row={r} onOpen={onOpen} />
+          <Card key={r.id} row={r} onOpen={onOpen} allTracks={allTracks} onTracksChange={onTracksChange} />
         ))}
         {!rows.length && !unstaged && (
           <div className="h-8 flex items-center justify-center text-mini text-ink-4">—</div>
@@ -131,7 +160,52 @@ function Column({ id, rows, unstaged, onOpen }) {
 
 const BAND_LABEL = { anchor: 'Anchor', memo: 'Memo', monitor: 'Monitor', pass: 'Pass', indeterminate: 'Held' };
 
-function Card({ row, onOpen, dragging }) {
+// ── THE TRACK BADGE ──
+// Danny: "a badge I can edit on each card, similar to what I have in Airtable."
+//
+// Two chips, R and I. Lit = on that track. Click toggles, and the toggle writes
+// through to Airtable's Pipeline multi-select (routes/pipeline.js PATCH /:id/tracks).
+//
+// Why single letters: the card is 220px and the company name is the one primary
+// ink on it. "Resident" and "Investment" spelled out would be two more strings
+// competing with the name for the same eye. The title attribute carries the word.
+//
+// Why onPointerDown stops propagation: this chip sits inside a draggable card. The
+// drag sensor claims the pointer at 8px of travel, so without this a click that
+// wobbles becomes a drag and the badge silently never toggles.
+function TrackBadge({ row, allTracks, onTracksChange }) {
+  const on = new Set(row.tracks || []);
+  const opts = allTracks && allTracks.length ? allTracks : ['Resident', 'Investment'];
+
+  return (
+    <div className="flex items-center gap-0.5" onPointerDown={(e) => e.stopPropagation()}>
+      {opts.map((t) => {
+        const lit = on.has(t);
+        return (
+          <button
+            key={t}
+            title={lit ? `${t} — click to remove` : `Add to ${t}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              if (!onTracksChange) return;
+              const next = lit ? [...on].filter((x) => x !== t) : [...on, t];
+              onTracksChange(row.id, next);
+            }}
+            className={`w-4 h-4 rounded-sm text-micro font-semibold leading-none transition ${
+              lit
+                ? 'bg-ink-2 text-ground border border-ink-2'
+                : 'bg-transparent text-ink-4 border border-line-2 hover:border-line-3 hover:text-ink-3'
+            }`}
+          >
+            {t[0]}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function Card({ row, onOpen, dragging, allTracks, onTracksChange }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: String(row.id) });
 
   return (
@@ -157,26 +231,38 @@ function Card({ row, onOpen, dragging }) {
 
       {row.person && <div className="text-mini text-ink-3 truncate">{row.person}</div>}
 
-      {(row.stu_band || row.my_band || row.they_owe > 0) && (
-        <div className="flex items-center gap-2 mt-1">
-          {/* Bands are typographic. A colored verdict tells him what to think before
-              he has read the evidence. His call outranks Stu's read. */}
-          {row.my_band ? (
-            <span className={`band band-${row.my_band}`}>{BAND_LABEL[row.my_band]}</span>
-          ) : row.stu_band ? (
-            <span className={`band band-${row.stu_band} opacity-60`} title="Stu's read — your call is still open">
-              {BAND_LABEL[row.stu_band]}
-            </span>
-          ) : null}
-          <div className="flex-1" />
-          {/* Urgency is a promotion up the ink ramp, not a new hue. */}
-          {row.they_owe > 0 && (
-            <span className="num text-micro text-ink font-medium" title={`${row.they_owe} owed to you`}>
-              {row.they_owe} owed
-            </span>
-          )}
+      {/* Airtable's OTHER axis. The stage says where they stand; this says what is
+          physically next ("Scheduling 2nd Mtg", "Active Evaluation"). Stu used to
+          mash both into one status field and destroy this one — "Stage 5: Not
+          Admitted / 1st Mtg Scheduled" collapsed to a single word. It's the most
+          actionable string on the card, so it gets its own line. */}
+      {row.airtable_next_step && (
+        <div className="text-micro text-ink-4 truncate mt-0.5" title={row.airtable_next_step}>
+          {row.airtable_next_step}
         </div>
       )}
+
+      <div className="flex items-center gap-2 mt-1">
+        <TrackBadge row={row} allTracks={allTracks} onTracksChange={onTracksChange} />
+
+        {/* Bands are typographic. A colored verdict tells him what to think before
+            he has read the evidence. His call outranks Stu's read. */}
+        {row.my_band ? (
+          <span className={`band band-${row.my_band}`}>{BAND_LABEL[row.my_band]}</span>
+        ) : row.stu_band ? (
+          <span className={`band band-${row.stu_band} opacity-60`} title="Stu's read — your call is still open">
+            {BAND_LABEL[row.stu_band]}
+          </span>
+        ) : null}
+
+        <div className="flex-1" />
+        {/* Urgency is a promotion up the ink ramp, not a new hue. */}
+        {row.they_owe > 0 && (
+          <span className="num text-micro text-ink font-medium" title={`${row.they_owe} owed to you`}>
+            {row.they_owe} owed
+          </span>
+        )}
+      </div>
     </div>
   );
 }

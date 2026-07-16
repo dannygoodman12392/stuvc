@@ -40,6 +40,8 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../db');
+const vocab = require('../lib/airtableVocab');
+const airtableSync = require('../services/airtable-sync');
 
 // One query. Every stage of the funnel joined to the spine.
 //
@@ -50,6 +52,8 @@ const PIPELINE_SQL = `
   SELECT
     f.id, f.name, f.company, f.company_one_liner, f.stage, f.status,
     f.deal_status, f.admissions_status, f.pipeline_tracks, f.source,
+    -- The merged board's axis and badge, plus the Airtable link the card offers.
+    f.stage_status, f.airtable_next_step, f.airtable_founder_record_id,
     f.chicago_connection, f.caliber_tier, f.next_action, f.arr,
     f.deal_entered_at, f.created_at,
     -- Load-bearing: stageOf() derives the invested stage from this. Omitting it
@@ -143,7 +147,32 @@ router.get('/', (req, res) => {
     q,
   } = req.query;
 
-  let out = rows.map((r) => ({ ...r, funnel_stage: stageOf(r), person: personName(r) }));
+  let out = rows.map((r) => ({
+    ...r,
+    funnel_stage: stageOf(r),
+    person: personName(r),
+    // Airtable's words for the badge, derived from Stu's storage. The client never
+    // parses the CSV — it would have to know Stu spells "Resident" as "admissions".
+    tracks: vocab.tracksFromStu(r.pipeline_tracks),
+  }));
+
+  // ── WHO IS ON THE MERGED BOARD ──
+  // A card is an opportunity if it has a stage. Airtable gives 161 of them one;
+  // backfill-stage-status derives one for the 26 that came from Airtable's separate
+  // Investment Pipeline table. Everything else is not pipeline.
+  //
+  // That "everything else" is 109 rows, and they are worth naming: all created
+  // 2026-03-17/18 by the March bulk import, all source='exa', and NOT ONE has a
+  // sourced_from_id — meaning not one was ever approved through the Sourcing inbox.
+  // Their company names are scraper wreckage ("Kairos\n\nCo", "Chicago Inno 25
+  // Under 25\n\nCo", "Full"). They sat in an admissions column called "Sourced",
+  // inflating the board with 109 things Danny had never looked at.
+  //
+  // The fix is NOT to hand them a stage. "Stage 1: Identified" would be a lie —
+  // nobody identified them — and it is exactly the pipeline inflation Danny refuses
+  // to let this product do. Untriaged sourcing output belongs in Sourcing.
+  // `?all=1` still returns them, so nothing is hidden, only un-promoted.
+  if (req.query.all !== '1') out = out.filter((r) => !!r.stage_status);
 
   if (track) out = out.filter((r) => (r.pipeline_tracks || '').includes(track));
   if (geo === 'il') out = out.filter((r) => !!r.chicago_connection);
@@ -166,6 +195,11 @@ router.get('/', (req, res) => {
 
   res.json({
     rows: out,
+    // The board's vocabulary rides with the board. The client does NOT keep its own
+    // copy of the stage list: a second list is a second thing to drift out of sync
+    // with Airtable, and drift is precisely what put 22 declined founders back on
+    // this board as live prospects. One list, defined once, in lib/airtableVocab.
+    vocab: { stages: vocab.STAGES, tracks: vocab.TRACKS, terminal: vocab.TERMINAL_STAGES },
     counts: {
       // Stage counts describe the board so it can be filtered. They are NOT a
       // scoreboard and no view rolls them into a "pipeline size" number —
@@ -491,6 +525,101 @@ router.patch('/:id', (req, res) => {
   // missing the field just saved, and the client would render the edit as lost.
   const updated = cardRow(req.user.id, req.params.id);
   res.json({ ...updated, funnel_stage: stageOf(updated) });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// THE MERGED BOARD'S TWO WRITES
+//
+// Danny: "Let's merge Investment and Admissions pipelines, consolidating.
+// Investment and/or Admissions Pipeline should be a badge I can edit on each
+// card, similar to what I have in Airtable."
+//
+// So there is ONE board with ONE stage axis in Airtable's words, and the
+// Resident/Investment track is a badge. Exactly two things move: the stage (drag)
+// and the badge (click). Both live here, and both push to Airtable — his choice,
+// asked and answered: "Drag in Stu, and it writes to Airtable", so the base his
+// team reads never disagrees with the board he works in, and the 5:45am sync finds
+// its own answer rather than reverting him.
+//
+// These are the ONLY two callers in the codebase that pass { explicit: true }.
+// Every scheduled job is still refused by the gate in services/airtable-sync.js.
+// A human pressing a card is not an agent; that distinction is the whole rule.
+//
+// The push is AWAITED and its outcome is returned. Fire-and-forget would let Stu
+// report a move that Airtable rejected — which is this codebase's oldest bug, a
+// status message decoupled from the thing it describes. If Airtable refuses, the
+// response says so and names the reason.
+// ══════════════════════════════════════════════════════════════════════════
+
+// PATCH /api/pipeline/:id/stage  { stage: "Stage 2: Interviewed" }
+router.patch('/:id/stage', async (req, res) => {
+  const founder = db.prepare('SELECT * FROM founders WHERE id = ? AND created_by = ? AND is_deleted = 0')
+    .get(req.params.id, req.user.id);
+  if (!founder) return res.status(404).json({ error: 'not found' });
+
+  const stage = req.body?.stage;
+  if (!vocab.isStage(stage)) {
+    return res.status(400).json({
+      error: 'Not a stage Airtable knows.',
+      detail: 'The board may only use options that exist on Airtable\'s Admission Status field — anything else would 422 on the way up.',
+      allowed: vocab.STAGES,
+    });
+  }
+
+  const before = founder.stage_status;
+  if (before === stage) return res.json({ ...cardRow(req.user.id, founder.id), airtable: { skipped: 'unchanged' } });
+
+  db.prepare('UPDATE founders SET stage_status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+    .run(stage, founder.id);
+
+  // Keep the mirror column honest: it means "what Airtable says", so it may only
+  // move once Airtable has actually accepted the write.
+  let airtable = { skipped: 'no_airtable_record' };
+  try {
+    airtable = await airtableSync.pushStage(founder, stage, { explicit: true });
+    if (airtable && airtable.pushed) {
+      db.prepare('UPDATE founders SET airtable_admission_status = ?, airtable_synced_at = CURRENT_TIMESTAMP WHERE id = ?')
+        .run(stage, founder.id);
+    }
+  } catch (e) {
+    airtable = { error: e.message };
+  }
+
+  const updated = cardRow(req.user.id, founder.id);
+  res.json({ ...updated, funnel_stage: stageOf(updated), airtable });
+});
+
+// PATCH /api/pipeline/:id/tracks  { tracks: ["Resident","Investment"] }
+router.patch('/:id/tracks', async (req, res) => {
+  const founder = db.prepare('SELECT * FROM founders WHERE id = ? AND created_by = ? AND is_deleted = 0')
+    .get(req.params.id, req.user.id);
+  if (!founder) return res.status(404).json({ error: 'not found' });
+
+  const tracks = Array.isArray(req.body?.tracks) ? req.body.tracks : null;
+  if (!tracks || tracks.some((t) => !vocab.TRACKS.includes(t))) {
+    return res.status(400).json({
+      error: 'tracks must be an array of Airtable Pipeline options',
+      allowed: vocab.TRACKS,
+    });
+  }
+
+  const csv = vocab.tracksToStu(tracks);
+  db.prepare('UPDATE founders SET pipeline_tracks = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+    .run(csv, founder.id);
+
+  // Pushing matters more here than it looks. The nightly sync UNIONS tracks, so a
+  // badge Danny switches off in Stu would be switched straight back on tomorrow by
+  // an Airtable record that still says Investment. Sending the change up is what
+  // makes turning a badge OFF stick at all.
+  let airtable = { skipped: 'no_airtable_record' };
+  try {
+    airtable = await airtableSync.pushTracks(founder, tracks, { explicit: true });
+  } catch (e) {
+    airtable = { error: e.message };
+  }
+
+  const updated = cardRow(req.user.id, founder.id);
+  res.json({ ...updated, funnel_stage: stageOf(updated), airtable });
 });
 
 // ── POST /api/pipeline/:id/enrich — fetch the team from LinkedIn, on demand ──
