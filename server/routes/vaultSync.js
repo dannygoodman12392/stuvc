@@ -250,6 +250,91 @@ router.post('/call-notes', (req, res) => {
   res.json(out);
 });
 
+// ══════════════════════════════════════════════════════════════════════════
+// POST /api/vault-sync/tasks — the agentic half of the daily list.
+//
+// Danny: "Agents should comb through my sourcing, pipeline, and the rest of the
+// product and offer relevant priority tasks. And I need to be able to
+// add/modify/delete them, including any that I create."
+//
+// The nightly workup is the only agent with real input — it reads every Granola
+// call. So it writes tasks here, and Danny owns them the moment they land.
+//
+// ── THE THREE RULES THAT KEEP THIS FROM BECOMING NOISE ──
+//
+// 1. EVERY TASK CARRIES ITS QUOTE. `quote` is required. "Send the deck" is a nag
+//    that costs nothing to ignore and reappears tomorrow looking identical.
+//    "My next step, I guess, is I'll send you some slides" — Dan Preiss, July 14
+//    — is a fact he can act on without re-deriving anything. The quote is the
+//    difference between a task and a chore, and it's why the agent must have READ
+//    something to be allowed to write here.
+//
+// 2. DEDUPE_KEY IS MANDATORY. The task re-reads the same week every night, so the
+//    same suggestion arrives ~7 times. Without idempotency the list fills with
+//    duplicates and he stops opening it by Thursday. Same reason the commitment
+//    ledger has one.
+//
+// 3. A DISMISSED TASK STAYS DEAD. today_items.dismissed_at is a tombstone and
+//    DELETE tombstones agent rows rather than removing them (routes/today.js:154).
+//    So a re-run CANNOT resurrect something he threw away — the single most common
+//    way this pattern dies. This endpoint checks the tombstone before inserting.
+//
+// What this endpoint deliberately does NOT do: send anything, write to Airtable,
+// or email a founder. Danny's hard constraint — "Just nudge me to follow up."
+// ══════════════════════════════════════════════════════════════════════════
+router.post('/tasks', (req, res) => {
+  const rows = Array.isArray(req.body?.tasks) ? req.body.tasks : null;
+  if (!rows) return res.status(400).json({ error: 'body must be { tasks: [...] }' });
+  if (rows.length > 50) return res.status(400).json({ error: 'max 50 per call' });
+
+  const out = { created: 0, deduped: 0, dismissed: 0, skipped: [] };
+
+  const findByName = db.prepare(
+    'SELECT id FROM founders WHERE created_by = ? AND is_deleted = 0 AND LOWER(name) = LOWER(?) LIMIT 1'
+  );
+  const findByCompany = db.prepare(
+    'SELECT id FROM founders WHERE created_by = ? AND is_deleted = 0 AND LOWER(company) = LOWER(?) LIMIT 1'
+  );
+  const existing = db.prepare('SELECT id, dismissed_at FROM today_items WHERE dedupe_key = ?');
+  const insert = db.prepare(`
+    INSERT INTO today_items (origin, lane, title, detail, quote, founder_id, due_at, dedupe_key, created_by)
+    VALUES ('agent', 'mine', ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  for (const t of rows) {
+    const title = String(t.title || '').trim();
+    if (!title) { out.skipped.push({ reason: 'no title' }); continue; }
+
+    // The quote is the price of admission. An agent that hasn't read anything
+    // doesn't get to add to his day.
+    const quote = String(t.quote || '').trim();
+    if (!quote) { out.skipped.push({ reason: 'no quote — a task without its line is a nag', title }); continue; }
+
+    let founderId = t.founder_id || null;
+    if (!founderId && t.founder_name) founderId = findByName.get(OWNER_ID, String(t.founder_name).trim())?.id || null;
+    if (!founderId && t.company) founderId = findByCompany.get(OWNER_ID, String(t.company).trim())?.id || null;
+
+    // Stable across nightly runs: same founder + same task = same key.
+    const key = t.dedupe_key || `agent:${founderId || 'none'}:${title.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().slice(0, 80)}`;
+
+    const hit = existing.get(key);
+    if (hit) {
+      // He threw it away. It does not come back.
+      if (hit.dismissed_at) out.dismissed++;
+      else out.deduped++;
+      continue;
+    }
+
+    try {
+      insert.run(title, t.detail || null, quote, founderId, t.due_at || null, key, OWNER_ID);
+      out.created++;
+    } catch (e) {
+      out.skipped.push({ reason: e.message, title: title.slice(0, 60) });
+    }
+  }
+  res.json(out);
+});
+
 module.exports = router;
 module.exports.timingSafeEqual = timingSafeEqual;
 module.exports.mapAgentOutputs = mapAgentOutputs;
