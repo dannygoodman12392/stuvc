@@ -205,6 +205,19 @@ function TrackBadge({ row, allTracks, onTracksChange }) {
   );
 }
 
+// Airtable's one-liner field is a working field, so it holds working notes — seen on
+// the real board: "(Exited Founder) To be added", rendered as if it were an insight.
+// A placeholder is not a claim about the company; it's an empty field with words in it.
+// Show nothing rather than dress a TODO as a thesis.
+const PLACEHOLDER = /^\s*(\(.*\)\s*)?(to be added|tbd|n\/?a|todo|coming soon|—|-)\s*$/i;
+
+function insightOf(row) {
+  if (row.stu_read) return row.stu_read;
+  const c = (row.company_one_liner || '').trim();
+  if (!c || PLACEHOLDER.test(c) || c.length < 12) return null;
+  return c;
+}
+
 function Card({ row, onOpen, dragging, allTracks, onTracksChange }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: String(row.id) });
 
@@ -230,6 +243,25 @@ function Card({ row, onOpen, dragging, allTracks, onTracksChange }) {
       </div>
 
       {row.person && <div className="text-mini text-ink-3 truncate">{row.person}</div>}
+
+      {/* THE INSIGHT. Danny, looking at this board: "I just want insights posted
+          there." The card carried company / person / next step — the SHAPE of the
+          pipeline, and nothing Stu had ever learned about them.
+
+          Stu's read wins over Airtable's one-liner when it exists, because they are
+          different kinds of thing: Airtable's is the founder's pitch about themselves
+          ("Netflix for AI-created content"), Stu's is the read after listening to them
+          ("Young founder with strong velocity... but synthesized insight and unclear
+          team composition"). A claim vs a judgment. The board should carry judgment,
+          and fall back to the claim only when there's no judgment yet. */}
+      {insightOf(row) && (
+        <div
+          className={`text-micro mt-1 leading-snug line-clamp-2 ${row.stu_read ? 'text-ink-3' : 'text-ink-4 italic'}`}
+          title={insightOf(row)}
+        >
+          {insightOf(row)}
+        </div>
+      )}
 
       {/* Airtable's OTHER axis. The stage says where they stand; this says what is
           physically next ("Scheduling 2nd Mtg", "Active Evaluation"). Stu used to

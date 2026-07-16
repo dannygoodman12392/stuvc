@@ -84,6 +84,25 @@ const PIPELINE_SQL = `
         AND a.status IN ('complete','partial')
       ORDER BY a.created_at DESC, a.version_number DESC LIMIT 1) AS assessment_id,
 
+    -- THE INSIGHT. Danny, looking at the board: "I just want insights posted there."
+    -- The card had a company, a person, and a next step — the shape of the pipeline,
+    -- and nothing Stu had ever LEARNED. The band says how much conviction; this says
+    -- what the conviction is ABOUT, which is the part he can act on at a glance.
+    --
+    -- Note this is the synthesis one_liner, NOT f.company_one_liner. Airtable's is the
+    -- founder's pitch about themselves ("The trust layer of agentic commerce: Plaid
+    -- meets Verisign"). Stu's is the read after listening to them ("Domain insider
+    -- building the neutral trust graph... structurally correct thesis"). One is a
+    -- claim, the other is a judgment. The card should carry the judgment.
+    --
+    -- Extracted in SQL rather than by parsing the blob in JS: synthesis_output runs to
+    -- hundreds of KB, and a board of 184 rows would ship megabytes of agent JSON to
+    -- render one sentence per card.
+    (SELECT json_extract(a.synthesis_output, '$.one_liner') FROM opportunity_assessments a
+      WHERE a.founder_id = f.id AND a.is_deleted = 0 AND a.assessment_type = 'assessment'
+        AND a.status IN ('complete','partial') AND a.synthesis_output IS NOT NULL
+      ORDER BY a.created_at DESC, a.version_number DESC LIMIT 1) AS stu_read,
+
     -- THE CALL. Danny's. Never computed, never inferred, never defaulted.
     (SELECT d.band FROM decisions d WHERE d.founder_id = f.id
       ORDER BY d.decided_at DESC LIMIT 1) AS my_band,
