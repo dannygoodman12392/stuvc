@@ -94,8 +94,158 @@ router.get('/:id', (req, res) => {
     WHERE a.id = ? AND a.is_deleted = 0 AND a.created_by = ?
   `).get(req.params.id, req.user.id);
   if (!assessment) return res.status(404).json({ error: 'Assessment not found' });
-  res.json(assessment);
+
+  // ── Danny's call, if he's made one. ──
+  // Load-bearing for the Read page: his decision is what UNLOCKS Stu's column.
+  // Blind-first isn't decoration — if he reads a 7.8 and then types his view,
+  // the disagreement record measures how much he anchors, not who was right.
+  const decision = db.prepare(
+    'SELECT * FROM decisions WHERE assessment_id = ? AND created_by = ? ORDER BY decided_at DESC LIMIT 1'
+  ).get(assessment.id, req.user.id);
+
+  // The 7-M, assembled server-side from the agent outputs that already exist.
+  // No LLM call — it's a FORMATTER, which is why it can't disagree with the
+  // engine or sample a different answer on a re-render. Danny asked for
+  // "pretty close to a memo"; this has been built the whole time, 1,200 lines
+  // deep in a component nobody scrolled to.
+  //
+  // NOTE THE COLUMN LIE, third re-derivation in this codebase:
+  //   founder_agent_output  = Team
+  //   market_agent_output   = Product
+  //   economics_agent_output= Market
+  // A scar from a retired 6-agent schema. Renaming is a migration; carrying the
+  // mapping in one place per file is the cheap correct move until then.
+  res.json({
+    ...assessment,
+    decision: decision || null,
+    memo_7m: buildMemo7M(assessment),
+    defensibility: buildDefensibility(assessment),
+  });
 });
+
+// The 7-M: Recommendation · Management · Model · Market · Momentum · Malfeasance
+// · Conditions. Canon per Brain/04 Fund & Systems.
+//
+// Two sections carry an honest `note` rather than pretending: Model has no
+// dedicated unit-economics agent, and Conditions has no deal-terms agent. Both
+// are assembled from adjacent outputs. Labelling the seam beats a confident
+// section built from nothing — this whole product exists because a deck once
+// talked itself into an Invest.
+// ══════════════════════════════════════════════════════════════════════════
+// Flatten an agent field to prose. Agent output is NOT uniformly strings.
+//
+// Caught by the screen going blank: React error #31, "objects are not valid as a
+// React child", on an object with keys {assessment, defensible, adjustment} —
+// bear.bundling_risk. My txt() handled strings and arrays and shrugged at
+// objects, so the raw object went down the wire and killed the page.
+//
+// The agents emit at least four shapes for a "field": a string, an array of
+// strings, an array of objects, and an object with a prose field plus scoring
+// metadata. Rather than special-case each, walk it: pull the prose, drop the
+// scoring scaffolding (booleans, numbers, adjustments), never stringify an object
+// into "[object Object]" on Danny's screen.
+// ══════════════════════════════════════════════════════════════════════════
+const PROSE_KEYS = ['assessment', 'summary', 'text', 'detail', 'description', 'reason', 'body', 'risk', 'note', 'title'];
+
+function flatten(v, depth = 0) {
+  if (v == null || depth > 3) return null;
+  if (typeof v === 'string') return v.trim() || null;
+  if (typeof v === 'number') return String(v);
+  if (typeof v === 'boolean') return null; // a flag is not prose
+  if (Array.isArray(v)) {
+    const parts = v.map((x) => flatten(x, depth + 1)).filter(Boolean);
+    return parts.length ? parts.join('\n\n') : null;
+  }
+  if (typeof v === 'object') {
+    // Prefer a known prose field; fall back to the longest string on the object.
+    for (const k of PROSE_KEYS) {
+      if (typeof v[k] === 'string' && v[k].trim()) return v[k].trim();
+    }
+    const strings = Object.entries(v)
+      .filter(([, x]) => typeof x === 'string' && x.trim().length > 20)
+      .map(([, x]) => x.trim());
+    if (strings.length) return strings.sort((a, b) => b.length - a.length)[0];
+    // Nothing readable — say nothing rather than dump JSON at him.
+    return null;
+  }
+  return null;
+}
+
+function buildMemo7M(a) {
+  const j = (s) => { try { return typeof s === 'string' ? JSON.parse(s) : s; } catch { return null; } };
+  const team = j(a.founder_agent_output);      // NOT founder — Team
+  const product = j(a.market_agent_output);    // NOT market — Product
+  const market = j(a.economics_agent_output);  // NOT economics — Market
+  const bear = j(a.bear_agent_output);
+  const syn = j(a.synthesis_output);
+  if (!syn && !team) return [];
+
+  const txt = flatten;
+  // ── The field names below are MEASURED, not guessed. ──
+  // My first pass invented plausible ones (summary, assessment, moat, risks) and
+  // produced 1 section of 7 against a real assessment. The actual shapes:
+  //   synthesis : executive_summary, one_liner, overall_signal, score_calculation
+  //   team      : verdict, the_read, snapshot, subcategories, key_quotes, risks
+  //   product   : product_thesis, build_vs_buy_risk, vision_gap, subcategories
+  //   market    : why_now, competitive_moat, kill_shot_risk, subcategories
+  //   bear      : primary_risks, twelve_month_kill, bundling_risk, deck_omissions,
+  //               failure_scenarios, kill_shot_risk, assumptions_required
+  const out = [
+    { key: 'rec', title: 'I. Recommendation', body: txt(syn?.executive_summary || syn?.one_liner) },
+    { key: 'mgmt', title: 'II. Management', body: txt(team?.the_read || team?.verdict || team?.snapshot) },
+    {
+      key: 'model', title: 'III. Model',
+      note: 'No dedicated unit-economics agent — assembled from the product thesis and the build-vs-buy risk.',
+      body: txt([product?.product_thesis, product?.build_vs_buy_risk].filter(Boolean)),
+    },
+    { key: 'market', title: 'IV. Market', body: txt([market?.why_now, market?.kill_shot_risk].filter(Boolean)) },
+    { key: 'momentum', title: 'V. Momentum', body: txt(team?.snapshot || product?.vision_gap) },
+    {
+      key: 'malfeasance', title: 'VI. Malfeasance',
+      body: txt([bear?.primary_risks, bear?.twelve_month_kill, bear?.deck_omissions].filter(Boolean)),
+    },
+    {
+      key: 'conditions', title: 'VII. Conditions',
+      note: 'No deal-terms agent — assembled from open questions and the Bear’s required assumptions.',
+      body: txt([bear?.assumptions_required, team?.open_questions, market?.key_questions].filter(Boolean)),
+    },
+  ];
+  return out.filter((s) => s.body && String(s.body).trim());
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// DEFENSIBILITY — Danny's most common kill, computed since April, shown nowhere.
+//
+// Verbatim: "Most of the time, founders are building technically cool but
+// relatively easy and INDEFENSIBLE things." It's his highest-frequency reason for
+// passing, it's readable from a deck before he's spent a meeting, and I grepped
+// every screen in this app for it: three hits, all in COMMENTS describing the
+// kill, zero in rendered output.
+//
+// Meanwhile the agents have been emitting `competitive_moat`, `build_vs_buy_risk`
+// and `kill_shot_risk` on every assessment for four months. The data was never
+// missing. It was buried 1,200 lines deep in a component nobody scrolled to, and
+// only reachable at memo time — long after the ten-second reflex it should inform.
+//
+// So it goes near the top of the read, on its own, before the movements. Not a
+// score: the three sentences, as written, with their seams visible.
+// ══════════════════════════════════════════════════════════════════════════
+function buildDefensibility(a) {
+  const j = (s) => { try { return typeof s === 'string' ? JSON.parse(s) : s; } catch { return null; } };
+  const product = j(a.market_agent_output);    // NOT market — Product
+  const market = j(a.economics_agent_output);  // NOT economics — Market
+  const bear = j(a.bear_agent_output);
+  const txt = flatten;
+
+  const parts = [
+    { label: 'Moat', body: txt(market?.competitive_moat) },
+    { label: 'Build vs buy', body: txt(product?.build_vs_buy_risk) },
+    { label: 'Kill shot', body: txt(market?.kill_shot_risk || bear?.kill_shot_risk) },
+    { label: 'Gets bundled', body: txt(bear?.bundling_risk) },
+  ].filter((p) => p.body && String(p.body).trim());
+
+  return parts.length ? parts : null;
+}
 
 // ── GET /api/assessments/:id/inputs — all inputs for an assessment ──
 router.get('/:id/inputs', (req, res) => {

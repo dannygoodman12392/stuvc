@@ -32,6 +32,12 @@ const CompanyCard = lazy(() => import('./pages/CompanyCard'));
 const FounderDetail = lazy(() => import('./pages/FounderDetail'));
 const AddFounder = lazy(() => import('./pages/AddFounder'));
 const Assess = lazy(() => import('./pages/Assess'));
+// The Read — two columns that never merge, blind-first. Replaces AssessmentDetail,
+// which was 1,541 lines with zero inputs and a "Personal conviction / Unanswered"
+// slot that rendered the same on every assessment forever. The old page stays
+// routed at /assess/:id/full until Danny confirms nothing in it is worth keeping —
+// it holds the depth layer and the materials list this doesn't surface yet.
+const Read = lazy(() => import('./pages/Read'));
 const AssessmentDetail = lazy(() => import('./pages/AssessmentDetail'));
 const AskStu = lazy(() => import('./pages/AskStu'));
 // Discover is gone — /discover redirects to /sourcing. It was a search box you had
@@ -131,7 +137,8 @@ function AppRoutes() {
       <Route path="/founders/:id" element={<ProtectedRoute><CompanyCard /></ProtectedRoute>} />
       <Route path="/founders/legacy/:id" element={<ProtectedRoute><FounderDetail /></ProtectedRoute>} />
       <Route path="/assess" element={<ProtectedRoute><Assess /></ProtectedRoute>} />
-      <Route path="/assess/:id" element={<ProtectedRoute><AssessmentDetail /></ProtectedRoute>} />
+      <Route path="/assess/:id" element={<ProtectedRoute><Read /></ProtectedRoute>} />
+      <Route path="/assess/:id/full" element={<ProtectedRoute><AssessmentDetail /></ProtectedRoute>} />
       <Route path="/portfolio" element={<ProtectedRoute><Placeholder title="Portfolio" /></ProtectedRoute>} />
       <Route path="/fund" element={<ProtectedRoute><Placeholder title="Fund Analytics" /></ProtectedRoute>} />
       <Route path="/brief" element={<ProtectedRoute><Brief /></ProtectedRoute>} />
