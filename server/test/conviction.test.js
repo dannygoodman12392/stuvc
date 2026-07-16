@@ -596,3 +596,56 @@ test('FUZZ: structurally_dead docks on the string "true" — it must not fail op
     assert.ok(!c.docks.some((d) => d.key === 'market'), `structurally_dead=${JSON.stringify(falsey)} must not dock`);
   }
 });
+
+// ══════════════════════════════════════════════════════════════════════════
+// THE GATE'S ACTUAL OUTPUT — pinned, because I misquoted my own file.
+//
+// conviction.js carries a comment contrasting the old weighted mean's failure
+// (10,10,1,1 -> 6.4 "Monitor") with the gate that replaced it. Briefing a review
+// panel, I quoted the OLD numbers as if they were the gate's. The panel came back
+// with "you pitched us the pathology as the product" — and they were right about
+// the quote, wrong about the code.
+//
+// A comment can be misread. A test cannot. These assert what the code DOES.
+// ══════════════════════════════════════════════════════════════════════════
+const mv4 = (a, b, c, d) => ({
+  earned_insight: { score: a, evidence: 'e' },
+  execution_velocity: { score: b, evidence: 'e' },
+  nonconsensus_vision: { score: c, evidence: 'e' },
+  talent_magnetism: { score: d, evidence: 'e' },
+});
+
+test('the gate does NOT invert the rubric — this is the whole design', () => {
+  // Perfect on both load-bearing movements, terrible on the two the rubric calls
+  // MIXED. The old mean tracked this founder at 6.4. The gate must not.
+  const strong = computeConviction({ movements: mv4(10, 10, 1, 1), rung: 4 });
+  assert.equal(strong.determinate, true);
+  assert.equal(strong.score, 9);
+  assert.equal(strong.band.key, 'anchor');
+
+  // Middling on both load-bearing, perfect on the differentiators. The old mean
+  // carried this founder to a memo at 7.0. The gate must cap them.
+  const carried = computeConviction({ movements: mv4(5, 5, 10, 10), rung: 4 });
+  assert.equal(carried.determinate, true);
+  assert.equal(carried.score, 6);
+  assert.equal(carried.band.key, 'monitor');
+
+  // The invariant, stated plainly: a founder strong where the evidence is strong
+  // must outrank one who is merely well-liked.
+  assert.ok(strong.score > carried.score, 'the load-bearing movements must set the score');
+});
+
+test('the differentiators can move a score by at most ±1', () => {
+  // Measure the SPREAD, not the distance from 5,5. My first version of this test
+  // compared against mv4(7,7,5,5) — which is 6.9, because 5,5 already carries a
+  // -0.1 differentiator — and then complained that the lift was 1.1. The baseline
+  // was the bug. Hold the load-bearing pair fixed and swing the other two through
+  // their whole range: the total spread is the ±1 band, doubled.
+  const worst = computeConviction({ movements: mv4(7, 7, 1, 1), rung: 4 }).score;   // 6.0
+  const best = computeConviction({ movements: mv4(7, 7, 10, 10), rung: 4 }).score;  // 8.0
+  assert.ok(best - worst <= 2.01, `differentiators swing the score by ${best - worst}, max is 2 (±1)`);
+
+  // And the band must hold: two movements the rubric calls MIXED cannot carry a
+  // founder from Monitor to Anchor on their own.
+  assert.ok(best < 9, 'the differentiators must never reach anchor-grade alone');
+});

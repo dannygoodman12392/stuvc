@@ -246,12 +246,13 @@ function undecidedHighSignal(uid) {
       AND status IN ('complete','partial') AND conviction_output IS NOT NULL
   `).get(uid).n;
 
+  const legacy = db.prepare(`
+    SELECT COUNT(*) n FROM opportunity_assessments
+    WHERE created_by = ? AND is_deleted = 0 AND assessment_type = 'assessment'
+      AND status IN ('complete','partial') AND conviction_output IS NULL
+  `).get(uid).n;
+
   if (!scored) {
-    const legacy = db.prepare(`
-      SELECT COUNT(*) n FROM opportunity_assessments
-      WHERE created_by = ? AND is_deleted = 0 AND assessment_type = 'assessment'
-        AND status IN ('complete','partial')
-    `).get(uid).n;
     return {
       key: 'undecided_high_signal',
       title: 'Memo-grade reads with no decision',
@@ -287,10 +288,28 @@ function undecidedHighSignal(uid) {
     ORDER BY a.conviction_score DESC
   `).all(uid, HIGH_SIGNAL);
 
+  // ── The check can only speak for what it can SEE. ──
+  // The guard above asks "has the engine ever run"; this check's claim requires
+  // "has it run on the things this check is about". Measured 2026-07-16: 2 of 40
+  // assessments are scored, so the moment ONE ran the check unblocked and rendered
+  // a green "✓ Every memo-grade read has your call on it" — computed over 2 deals
+  // and silent about 38. That's the same false-by-silence failure this file's own
+  // header describes fixing, reintroduced by a guard that was too coarse.
+  //
+  // So a clean result now states its scope. "Clean" that quietly means "clean
+  // across 5% of your pipeline" is a lie of omission, and this file's whole
+  // premise is that it doesn't tell those.
+  const scopeNote = legacy
+    ? `across the ${scored} assessment${scored === 1 ? '' : 's'} the engine has scored — ${legacy} predate it and can't be checked`
+    : null;
+
   return {
     key: 'undecided_high_signal',
     title: 'Memo-grade reads with no decision',
-    clean: 'Every memo-grade read has your call on it',
+    clean: legacy
+      ? `No memo-grade read is missing your call — ${scopeNote}`
+      : 'Every memo-grade read has your call on it',
+    scope_note: scopeNote,
     count: rows.length,
     action: 'Make the call',
     rows: rows.map((r) => ({
