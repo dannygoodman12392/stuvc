@@ -722,6 +722,57 @@ router.patch('/:id/represented-by', (req, res) => {
   res.json(cardRow(req.user.id, row.id));
 });
 
+// ══════════════════════════════════════════════════════════════════════════
+// The other three inputs — the ones that don't need a LinkedIn URL.
+//
+// Danny: "We can enrich records with free internet data (LinkedIn, Crunchbase, etc),
+// Granola data you have access to, and the notes I just gave you on all these
+// companies... I want Harmonic-level insight in the cards."
+//
+// EnrichLayer needs company_linkedin_url and resolves for ~26% of the book, which is
+// where coverage stalled. His notes (/api/vault-sync/notes), his Granola calls
+// (/api/vault-sync/call-notes) and the open web need no such thing. These two
+// endpoints finish the job:
+//
+//   read-web  — ingest each card's own website through Exa as a `url` source
+//   extract   — turn EVERY unread source into typed, quote-backed signals
+//
+// Both page (?limit&offset) for the same reason the enricher does: one synchronous
+// pass over ~250 sources is minutes of work and the platform proxy 502s long before.
+// Both return { done } so the caller knows when to stop.
+// ══════════════════════════════════════════════════════════════════════════
+
+router.post('/read-web', async (req, res) => {
+  if (req.user.id !== 1) return res.status(403).json({ error: 'not available for your account' });
+  try {
+    const { ingestWebsites } = require('../services/card-backfill');
+    res.json(await ingestWebsites({
+      userId: req.user.id,
+      limit: req.query.limit ? Number(req.query.limit) : undefined,
+      offset: req.query.offset ? Number(req.query.offset) : 0,
+    }));
+  } catch (e) {
+    console.error('[ReadWeb]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.post('/extract-signals', async (req, res) => {
+  if (req.user.id !== 1) return res.status(403).json({ error: 'not available for your account' });
+  try {
+    const { extractAll } = require('../services/card-backfill');
+    res.json(await extractAll({
+      userId: req.user.id,
+      limit: req.query.limit ? Number(req.query.limit) : undefined,
+      offset: req.query.offset ? Number(req.query.offset) : 0,
+      maxSpendUsd: Number(req.query.maxSpend || 12),
+    }));
+  } catch (e) {
+    console.error('[ExtractSignals]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── POST /api/pipeline/enrich-backfill — resolve + enrich the whole live board ──
 //
 // The per-card enrich below is Danny pressing a button on one company. This is the
