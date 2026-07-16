@@ -6,6 +6,91 @@
 
 const RELEASES = [
   {
+    version: 'v5.0.0',
+    date: 'July 16, 2026',
+    time: '3:30 AM CT',
+    title: 'The rebuild — one connected record, and a machine that refuses to guess',
+    highlights: [
+      // ── The structural change ──
+      {
+        product: 'Everything',
+        change:
+          'Stu had four screens pretending it had four objects: a sourced founder, a founder, and an assessment were three tables that didn\'t know about each other, so approving someone from Discover turned them into a different record and nothing carried forward. It now has ONE object — a company — moving through stages: found → met → assessed → decided → invested. Sourcing is its inbox, the card is its detail page, Assess is the verdict. The stage is DERIVED from what has actually happened, never stored, because a stored stage drifts: all 7 of your portfolio companies still said "Under Consideration" months after the money moved.',
+        benefit: 'Approve a founder in Sourcing and they arrive on the board as the same record, with the source chain intact.',
+      },
+      {
+        product: 'Assess',
+        change:
+          'Two columns that never merge. YOUR CALL on the left — your verdict, your reasoning, and a dated falsifiable prediction (required; without one it stays undecided). STU\'S ASSESSMENT on the right, covered until you\'ve recorded yours. Blind-first isn\'t a gimmick: read a 7.8 and then type your view and that\'s priming, not calibration — the disagreement record could only ever measure how much you anchor. The old page was 1,541 lines with literally zero input fields and a section that read "Personal conviction — Unanswered. Your call. Stu does not assess this," on every assessment, forever.',
+        benefit: 'Your view gets recorded before you can be anchored — so "when Stu and I disagreed, who was right?" finally has a dataset. It has 2 rows. It had 0.',
+      },
+      {
+        product: 'Assess',
+        change:
+          'DEFENSIBILITY is now at the top of every assessment: the moat, the build-vs-buy risk, the kill shot, and whether they get bundled. This was already being computed on every assessment since April — and rendered nowhere. It was reachable only at memo time, long after the ten-second reflex it should inform.',
+        benefit: 'Your most common kill — "technically cool but indefensible" — is the first thing you can check the machine against.',
+      },
+      {
+        product: 'Assess',
+        change:
+          'The conviction engine produced its first real score. kya labs: 4.8, Pass with respect, from your actual transcript + deck. Earned Insight 7 + Execution 5 → base 6, differentiator −0.1, docks −1.1. It had never scored a single deal in the product\'s life — 0 of 40 in production. The gate design proved itself on live data: a flat weighted mean of those four numbers lands ~5.8 "Monitor"; the gate says the two load-bearing movements averaged 6, that\'s below the bar, and nothing the other two do can rescue it.',
+        benefit: 'A score you can check line by line, with the engine\'s own arithmetic shown next to it.',
+      },
+      // ── The card ──
+      {
+        product: 'Pipeline',
+        change:
+          'Company cards. Drop a PDF, paste a URL, or type a note — one box, three ways in. The team block reads LinkedIn: who they are, when each joined, and WHERE THEY WORKED BEFORE. Permute reads "3 verified from profiles · company page claims 8 · +2 in 12mo" — both numbers shown, because they mean different things. Every field is click-to-edit and saves on blur.',
+        benefit: 'Everything about a company in one place, and you can change any of it.',
+      },
+      {
+        product: 'Pipeline',
+        change:
+          'Every fact Stu pulls from a deck, a call or a URL now carries its receipt — the verbatim line that proves it, one hover away, and the source it came from. This is enforced in the SCHEMA, not a prompt: a fact cannot exist without a source and a quote, every quote is checked against that source\'s own text, and anything that can\'t be found there is DROPPED, not badged. A claim asserting "$60K ARR" against a quote that says "zero revenue" dies, even though the quote is real.',
+        benefit: 'No hallucinations — structurally, not by asking nicely. The cost is deliberate: true facts whose wording drifted get dropped too.',
+      },
+      // ── Sourcing ──
+      {
+        product: 'Sourcing',
+        change:
+          '55 of the 85 founders on your Illinois board had no Illinois tie. They were Stanford, Yale, CMU, Wharton and USC alumni, each stamped "school_alumni" — because the tie was read from a setting that merged 12 Illinois schools with 36 national elite ones, so Stanford proved a Chicago tie. An Illinois tie is now a FACT about Illinois, not a configurable preference: place-based, evidence-backed, and it rejects the traps (IIT is Bombay not Illinois Tech; Northwestern Mutual is Milwaukee; "BEING SO NORMAL" is not Normal, IL).',
+        benefit: 'Geography is your moat. The board no longer lies about it.',
+      },
+      {
+        product: 'Sourcing',
+        change:
+          'The queue was ranked ANTI-correlated with quality. "ORDER BY whichever score exists" collided two disjoint scales — caliber runs 2–9, breakout runs 10–48 — so every breakout row mechanically outranked every caliber row, and all 7 of your S/A-tier founders sat at ranks 39–45 of 61, below rows scoring 10. They are now ranks 1–7.',
+        benefit: 'The best founders are at the top of the list you actually read.',
+      },
+      {
+        product: 'Sourcing',
+        change:
+          '"Why they\'re here" now says why they\'re here — ranked strongest reason first. Geoff Segal: "Prior exit · YC twice: S19 (TaxProper) and W26 (FullSeam)". It was rendering the person\'s name back at you on 22 of 23 rows. Also killed the "actively building" tag, which fires on the word "founder" appearing in a bio — in a table where everyone is a founder — and sat on 268 of 624 rows carrying an identical score.',
+        benefit: 'Two seconds per row instead of a click.',
+      },
+      // ── Speed and money ──
+      {
+        product: 'Everything',
+        change:
+          'First load went from ~790KB to ~97KB. Nothing was compressed — gzip was never installed, so 579KB of JavaScript shipped raw on every visit. All 24 pages were in the initial bundle. Every navigation threw away good data and repainted through a skeleton. And syncFromAirtable ran on EVERY boot, blocking the server for ~106ms exactly while your first post-login requests queued.',
+        benefit: 'It stops feeling laggy, because it stopped being laggy.',
+      },
+      {
+        product: 'Everything',
+        change:
+          '~$16.50/month of pure waste removed, and the rest made visible. The enricher was paying full price to throw the answer away: it sent every profile in one call at a 4,096-token ceiling, so every batch over ~60 truncated and returned NOTHING — 525 of 647 founders sat unenriched despite being paid for. The nightly cron re-enriched rows it then deleted as duplicates. Your spend cap exempted the only person paying (you). Cohort sources now run monthly, because YC ships two batches a year, not 365.',
+        benefit: 'You stop paying for nothing, and you can see what you do pay for.',
+      },
+      // ── The one that matters most ──
+      {
+        product: 'Everything',
+        change:
+          'Every automation now writes a ledger line — what it found, what it wrote, what it skipped, and why — including when the answer is "nothing". Five of your seven scheduled tasks had no durable record of any kind. founder-call-auto-workup fired ~13 consecutive nights without writing a single file, and nobody knew, because a run that finds nothing and a run that silently dies looked identical and both reported success into a session nobody reads. Stu\'s own job log had 2 rows, one from June 3rd.',
+        benefit: 'Silence now means "I looked", not "I didn\'t run". Tomorrow morning you\'ll know why the workup has been dead since July 2nd.',
+      },
+    ],
+  },
+  {
     version: 'v4.6.0',
     date: 'July 1, 2026',
     time: '9:00 PM CT',
