@@ -363,8 +363,21 @@ async function enrichCompany(linkedinUrl, { userId = 1, deps = {}, withSeries = 
 
 /** Persist onto a founder row. Column added lazily in db.js. */
 function saveCompanyEnrichment(founderId, blob) {
+  // The blob stays — the card reads it and should show the newest reading.
   db.prepare('UPDATE founders SET company_enrichment = ?, company_enriched_at = CURRENT_TIMESTAMP WHERE id = ?')
     .run(JSON.stringify(blob), founderId);
+
+  // ...but this UPDATE used to be the ONLY write, which made every refetch a
+  // permanent deletion of the previous reading. 44 companies were enriched on
+  // 2026-07-16 and the next run would have destroyed all of it. Headcount over
+  // time is the thing Danny asked for on day one and the one asset that cannot be
+  // bought or backfilled — see the note in db.js. Append first, then overwrite.
+  try {
+    require('../lib/snapshots').recordSnapshot({ founderId, source: 'enrichlayer', blob });
+  } catch (e) {
+    // Never let the history write break the fetch Danny paid credits for.
+    console.error('[Snapshot] enrichlayer:', e.message);
+  }
 }
 
 function getCompanyEnrichment(founderId) {

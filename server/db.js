@@ -427,6 +427,58 @@ addColumn('founders', 'company_enrichment', 'TEXT');
 addColumn('founders', 'company_enriched_at', 'DATETIME');
 addColumn('founders', 'company_linkedin_url', 'TEXT');
 
+// ══════════════════════════════════════════════════════════════════════════
+// company_snapshots — the one asset that cannot be bought or backfilled.
+//
+// Danny, day one: "get a real sense for... how it's doing."
+//
+// "How it's doing" is a DERIVATIVE. It needs two readings. Until this table,
+// there was exactly one: `company_enrichment` is a single blob and every refetch
+// OVERWROTE it. 44 companies were enriched on 2026-07-16 — 276 people, headcounts,
+// arrival curves — and the next run would have destroyed all of it. Not archived.
+// Gone. Stu could never have answered "they were 6 people when you met them and
+// they're 9 now", which is the question that was asked first.
+//
+// Three independent research lines landed on this the same day:
+//   · Harmonic's `snapshots` is their one un-buyable asset — "you cannot backfill
+//     this. If you start today you have zero history today and three years of
+//     history in three years."
+//   · The pre-seed coverage research: "instrument forward — you can manufacture a
+//     time series you can't retrieve."
+//   · The traffic research: "the delta signal is the alpha, not the snapshot.
+//     Nobody has the eight-week diff showing a waitlist form become an auth flow,
+//     because that lives beneath the floor of every commercial tool."
+//
+// It is also the insurance policy on EnrichLayer. That vendor performs the exact
+// primitive LinkedIn sued Proxycurl out of existence for, and discloses no owner,
+// no location, and no entity. If it vanishes mid-quarter, everything already
+// captured survives — but only if we stopped overwriting it first.
+//
+// ── APPEND-ONLY, AND DEDUPED AGAINST THE PREVIOUS READING ONLY ──
+// A new row only when the reading CHANGED. Deduping against the latest row rather
+// than against all history is deliberate: headcount 6 -> 7 -> 6 is a real
+// sequence, and a UNIQUE(content_hash) would silently reject that third reading
+// and erase the fact that they shrank back.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS company_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    founder_id INTEGER NOT NULL REFERENCES founders(id),
+    taken_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    -- 'enrichlayer' (LinkedIn team) | 'public_record' (Form D + open roles).
+    -- Separate series per source: they fail independently and cost differently.
+    source TEXT NOT NULL,
+    -- Denormalised out of the blob so a time series is a cheap query, not a JSON
+    -- parse across hundreds of rows. Null where the source doesn't carry it.
+    headcount INTEGER,
+    role_count INTEGER,
+    amount_sold INTEGER,
+    blob TEXT NOT NULL,
+    content_hash TEXT NOT NULL
+  );
+`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_company_snapshots_founder
+         ON company_snapshots (founder_id, source, taken_at DESC)`);
+
 // ── The free half: what the public record says (lib/edgar.js, lib/hiring.js) ──
 // Danny: "How many people/are they hiring and growing, what you could learn from
 // the company site and crunchbase, etc..."

@@ -49,6 +49,16 @@ async function readPublicRecord({ company, founderName, website, deps = {} }) {
 function savePublicRecord(founderId, blob) {
   db.prepare('UPDATE founders SET company_public = ?, company_public_at = CURRENT_TIMESTAMP WHERE id = ?')
     .run(JSON.stringify(blob), founderId);
+
+  // Same reason as company-enrich.js: keep every reading, not just the last one.
+  // This one is free to re-read, so its series is the one that can actually run
+  // nightly across the whole board — "they posted a Founding AE three weeks after
+  // we met" is a fact only a series can state.
+  try {
+    require('../lib/snapshots').recordSnapshot({ founderId, source: 'public_record', blob });
+  } catch (e) {
+    console.error('[Snapshot] public_record:', e.message);
+  }
 }
 
 /**
