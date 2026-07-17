@@ -540,6 +540,23 @@ router.get('/:id', (req, res) => {
       if (!row.company_public) return null;
       try { return JSON.parse(row.company_public); } catch { return null; }
     })(),
+
+    // Danny's own call. Never computed, never inferred, never defaulted — and
+    // deliberately NOT gated on an assessment existing: 174 of 183 cards have no
+    // assessment and he has a view on all of them.
+    my_decision: db.prepare(
+      `SELECT id, band, rationale, prediction, resolve_by, decided_at, stu_band, stu_score, outcome
+         FROM decisions WHERE founder_id = ? AND created_by = ?
+        ORDER BY decided_at DESC LIMIT 1`
+    ).get(req.params.id, req.user.id) || null,
+
+    // The card offers "Assess this company" off this.
+    assessment_id: db.prepare(
+      `SELECT id FROM opportunity_assessments
+        WHERE founder_id = ? AND is_deleted = 0 AND assessment_type = 'assessment'
+          AND status IN ('complete','partial')
+        ORDER BY created_at DESC, version_number DESC LIMIT 1`
+    ).get(req.params.id)?.id || null,
   });
 });
 

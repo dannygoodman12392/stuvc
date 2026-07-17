@@ -194,6 +194,9 @@ export default function CompanyCard() {
             )}
           </Block>
 
+          {/* ══ YOUR CALL — first, because his read outranks anything a machine fetched ══ */}
+          <YourCall founderId={id} company={c} onChange={load} />
+
           {/* ══ THE PUBLIC RECORD — free, and the only block true of every card ══ */}
           <PublicRecord founderId={id} company={c} onChange={load} />
 
@@ -405,6 +408,174 @@ function RunRead({ founderId, company: c }) {
 // from is named. If Danny can't check it in two seconds, it shouldn't be here —
 // that's what lib/signals.js enforces in the schema and this is where he sees it.
 // ══════════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════════
+// YOUR CALL — the only thing here nobody can buy.
+//
+// Danny: "It's way more efficient if I come in with conviction one way or the
+// other before brokering the second meeting."
+//
+// ── WHY THIS BLOCK EXISTS ──
+// Measured on production 2026-07-16: **0 of 183 cards carried Danny's call.**
+// Not because he has no view — he takes ~28 first calls a month and forms one on
+// every single one. Because `createDecision` was only reachable from the
+// assessment page, so recording a view REQUIRED a ~$2, 215-second AI run to exist
+// first. He could record his judgement on 9 of 183 cards.
+//
+// The free, abundant, proprietary thing was gated behind the expensive, rare,
+// commodity thing. That is exactly backwards, and it is why the disagreement
+// dataset — described in pipeline.js as "the only dataset in this product that
+// compounds, and the only question no tool he can buy is able to answer" — had
+// zero rows on both sides.
+//
+// The server never required an assessment (`assessment_id || null`). This was
+// purely a missing affordance. So: band, one line, a dated prediction, from the
+// card, in about five seconds, whether or not Stu has ever looked at the company.
+//
+// ── THE PREDICTION STAYS REQUIRED ──
+// The server refuses a decision without one and says why. That refusal is not
+// friction to be designed around — it IS the feature. Danny's own pattern analysis
+// found his undocumented passes on strong founders were his most fixable blind
+// spot: "you can't tell whether those were good passes or fear/laziness." A pass
+// without a dated, checkable claim isn't a decision; it's a reflex. So this block
+// surfaces the server's sentence rather than a generic error.
+// ══════════════════════════════════════════════════════════════════════════
+const BANDS = [
+  { key: 'anchor', label: 'Anchor-grade', hint: 'First call within a week' },
+  { key: 'memo', label: 'Top-quartile', hint: 'Write a memo' },
+  { key: 'monitor', label: 'Monitor', hint: 'Track the next data point' },
+  { key: 'pass', label: 'Pass with respect', hint: 'Pass' },
+];
+
+// Ninety days out. Long enough that a pre-seed claim can actually resolve, short
+// enough that he'll still remember the call.
+function defaultResolveBy() {
+  const d = new Date();
+  d.setDate(d.getDate() + 90);
+  return d.toISOString().slice(0, 10);
+}
+
+function YourCall({ founderId, company: c, onChange }) {
+  const d = c.my_decision;
+  const [open, setOpen] = useState(false);
+  const [band, setBand] = useState(d?.band || null);
+  const [rationale, setRationale] = useState('');
+  const [prediction, setPrediction] = useState('');
+  const [resolveBy, setResolveBy] = useState(defaultResolveBy());
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState(null);
+
+  async function submit() {
+    setErr(null); setSaving(true);
+    try {
+      await api.createDecision({
+        founder_id: Number(founderId),
+        // Deliberately absent when Stu hasn't run. A decision with no assessment is
+        // the NORMAL case — 174 of 183 cards — not a degraded one.
+        assessment_id: c.assessment_id || undefined,
+        band, rationale, prediction, resolve_by: resolveBy,
+      });
+      setOpen(false); onChange();
+    } catch (e) {
+      // The server's refusal is the teaching. Show its words.
+      setErr(e.detail ? `${e.message} ${e.detail}` : e.message);
+    } finally { setSaving(false); }
+  }
+
+  if (d && !open) {
+    return (
+      <Block label="Your call" right={
+        <button onClick={() => setOpen(true)} className="text-mini text-accent hover:text-accent-hover">Change</button>
+      }>
+        <div className="flex items-baseline gap-3">
+          <span className={`band band-${d.band}`}>{BANDS.find((b) => b.key === d.band)?.label || d.band}</span>
+          <span className="text-mini text-ink-3">{String(d.decided_at || '').slice(0, 10)}</span>
+          {/* The disagreement is the artifact — the only thing here that compounds. */}
+          {d.stu_band && d.stu_band !== d.band && d.stu_band !== 'indeterminate' && (
+            <span className="text-mini text-attention" title={`Stu read this as ${d.stu_band}`}>
+              Stu said {d.stu_band}
+            </span>
+          )}
+        </div>
+        {d.rationale && <p className="text-mini text-ink-2 mt-1">{d.rationale}</p>}
+        {d.prediction && (
+          <p className="text-mini text-ink-3 mt-1">
+            <span className="text-ink-4">Predicted:</span> {d.prediction}
+            {d.resolve_by && <span className="text-ink-4"> · check {String(d.resolve_by).slice(0, 10)}</span>}
+          </p>
+        )}
+      </Block>
+    );
+  }
+
+  if (!open) {
+    return (
+      <Block label="Your call">
+        <button onClick={() => setOpen(true)} className="text-mini text-accent hover:text-accent-hover">
+          Record your read →
+        </button>
+        <p className="text-micro text-ink-4 mt-1">
+          Takes a band, a line, and something checkable. Stu doesn’t need to have run.
+        </p>
+      </Block>
+    );
+  }
+
+  return (
+    <Block label="Your call" right={
+      <button onClick={() => { setOpen(false); setErr(null); }} className="text-mini text-ink-4 hover:text-ink">cancel</button>
+    }>
+      {err && <p className="text-mini text-danger mb-2">{err}</p>}
+
+      <div className="flex flex-wrap gap-1 mb-2">
+        {BANDS.map((b) => (
+          <button
+            key={b.key}
+            onClick={() => setBand(b.key)}
+            title={b.hint}
+            className={`text-mini px-2 py-1 rounded-sm border transition ${
+              band === b.key ? 'border-accent-line bg-accent-soft text-ink' : 'border-line text-ink-3 hover:border-line-3'
+            }`}
+          >
+            {b.label}
+          </button>
+        ))}
+      </div>
+
+      <textarea
+        value={rationale}
+        onChange={(e) => setRationale(e.target.value)}
+        placeholder="Why? One line."
+        rows={2}
+        className="w-full text-mini bg-ground border border-line rounded-sm px-2 py-1 mb-1 focus:border-line-3 focus:outline-none"
+      />
+      <textarea
+        value={prediction}
+        onChange={(e) => setPrediction(e.target.value)}
+        placeholder="What will be true — or not — by the date below?"
+        rows={2}
+        className="w-full text-mini bg-ground border border-line rounded-sm px-2 py-1 focus:border-line-3 focus:outline-none"
+      />
+      <div className="flex items-center gap-2 mt-1">
+        <span className="text-micro text-ink-4">Check on</span>
+        <input
+          type="date"
+          value={resolveBy}
+          onChange={(e) => setResolveBy(e.target.value)}
+          className="text-mini bg-ground border border-line rounded-sm px-1 py-0.5 num focus:border-line-3 focus:outline-none"
+        />
+        <div className="flex-1" />
+        <button
+          onClick={submit}
+          disabled={!band || saving}
+          className="text-mini px-2 py-1 rounded-sm bg-ink text-ground disabled:bg-ground-4 disabled:text-ink-4"
+        >
+          {saving ? 'Saving…' : 'Record'}
+        </button>
+      </div>
+    </Block>
+  );
+}
+
 // ══════════════════════════════════════════════════════════════════════════
 // The public record — what the SEC and their job board say, for free.
 //
