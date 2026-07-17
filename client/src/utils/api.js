@@ -216,6 +216,8 @@ export const api = {
   // undecided lane and the predictions-due check).
   createDecision: (body) =>
     after(request('/today/decisions', { method: 'POST', body: JSON.stringify(body) }), '/assessments', '/pipeline', '/today'),
+  deleteDecision: (id) =>
+    after(request(`/today/decisions/${id}`, { method: 'DELETE' }), '/assessments', '/pipeline', '/today'),
   getAssessmentInputs: (id) => request(`/assessments/${id}/inputs`),
   getAssessmentTasteDivergence: (id) => request(`/assessments/${id}/taste-divergence`),
   getAssessmentGroup: (groupId) => request(`/assessments/group/${groupId}`),

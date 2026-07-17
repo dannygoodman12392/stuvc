@@ -248,6 +248,26 @@ router.get('/decisions/calibration', (req, res) => {
 });
 
 // ── PATCH /api/decisions/:id/resolve ──
+// ── DELETE /api/today/decisions/:id — he mis-clicked, or it was a probe ──
+//
+// A decision is a record of judgement, so deleting one is not free: the
+// calibration set is only worth anything if it contains the calls he got wrong.
+// Nothing here stops him from deleting exactly those, and no amount of code could
+// — it's his tool, he's the one being measured, and self-deception is his risk to
+// take, not a bug for the server to police.
+//
+// It exists because the alternative is worse. Without it a fat-fingered band or a
+// test row is permanent, and a ledger you cannot correct is one you stop trusting
+// — which is the same failure as a ledger full of duplicates, arrived at from the
+// other side. Changing his mind does NOT need this: recording a new decision
+// supersedes the old one, and both are kept.
+router.delete('/decisions/:id', (req, res) => {
+  const d = db.prepare('SELECT id FROM decisions WHERE id = ? AND created_by = ?').get(req.params.id, req.user.id);
+  if (!d) return res.status(404).json({ error: 'not found' });
+  db.prepare('DELETE FROM decisions WHERE id = ?').run(d.id);
+  res.json({ deleted: true, id: d.id });
+});
+
 router.patch('/decisions/:id/resolve', (req, res) => {
   const { outcome } = req.body;
   if (!['right', 'wrong', 'unresolved'].includes(outcome)) {

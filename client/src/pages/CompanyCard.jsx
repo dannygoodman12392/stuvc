@@ -484,7 +484,18 @@ function YourCall({ founderId, company: c, onChange }) {
   if (d && !open) {
     return (
       <Block label="Your call" right={
-        <button onClick={() => setOpen(true)} className="text-mini text-accent hover:text-accent-hover">Change</button>
+        <span className="flex items-center gap-2">
+          {/* Change records a NEW decision and supersedes; both are kept. Delete is
+              for a mis-click or a probe, not for changing his mind. */}
+          <button onClick={() => setOpen(true)} className="text-mini text-accent hover:text-accent-hover">Change</button>
+          <button
+            onClick={async () => {
+              if (!confirm('Delete this call? Changing your mind doesn’t need this — recording a new one supersedes it.')) return;
+              try { await api.deleteDecision(d.id); onChange(); } catch (e) { setErr(e.message); }
+            }}
+            className="text-mini text-ink-4 hover:text-danger"
+          >delete</button>
+        </span>
       }>
         <div className="flex items-baseline gap-3">
           <span className={`band band-${d.band}`}>{BANDS.find((b) => b.key === d.band)?.label || d.band}</span>
