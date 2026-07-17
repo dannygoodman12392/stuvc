@@ -1069,6 +1069,35 @@ router.post('/public-backfill', async (req, res) => {
   }
 });
 
+// ── POST /api/pipeline/snapshot-seed — capture the readings we already hold ──
+//
+// One-time. Every blob on `founders` is a reading that exists in exactly one place
+// and would be destroyed by the next fetch. This lifts them into the append-only
+// series, backdated to when they were actually taken. Idempotent — safe to re-run.
+router.post('/snapshot-seed', (req, res) => {
+  if (req.user.id !== 1) return res.status(403).json({ error: 'not available for your account' });
+  try {
+    const { seedFromExisting } = require('../lib/snapshots');
+    res.json(seedFromExisting({ userId: req.user.id }));
+  } catch (e) {
+    console.error('[SnapshotSeed]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── GET /api/pipeline/:id/history — the series, and the delta if it's earned ──
+router.get('/:id/history', (req, res) => {
+  const row = db.prepare('SELECT id FROM founders WHERE id = ? AND created_by = ? AND is_deleted = 0')
+    .get(req.params.id, req.user.id);
+  if (!row) return res.status(404).json({ error: 'not found' });
+  const { snapshotsFor, deltaFor } = require('../lib/snapshots');
+  res.json({
+    snapshots: snapshotsFor(row.id),
+    headcount: deltaFor(row.id, 'enrichlayer', 'headcount'),
+    roles: deltaFor(row.id, 'public_record', 'role_count'),
+  });
+});
+
 // ── Notes: add / edit / delete. His words, his rows. ──
 router.post('/:id/notes', (req, res) => {
   const { content, source } = req.body;

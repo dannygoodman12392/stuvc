@@ -154,3 +154,27 @@ test('a bad source is a programming error, not a silent no-op', () => {
   assert.throws(() => recordSnapshot({ founderId: fid, source: 'crunchbase', blob: {} }), /source must be one of/);
   cleanup(fid);
 });
+
+test('seedFromExisting captures readings that exist only in the overwrite column', () => {
+  // The whole reason this shipped tonight: 44 enrichments on prod lived ONLY in
+  // company_enrichment, and the next fetch — the very event that creates the second
+  // reading — is also the event that destroys the first.
+  const { seedFromExisting } = require('../lib/snapshots');
+  const fid = probe('Seed Probe');
+  db.prepare(`UPDATE founders SET company_enrichment = ?, company_enriched_at = '2026-07-16T18:00:00Z' WHERE id = ?`)
+    .run(JSON.stringify(team(7, '2026-07-16T18:00:00Z')), fid);
+
+  const r = seedFromExisting({ userId: 1 });
+  assert.ok(r.enrichlayer >= 1);
+
+  const s = snapshotsFor(fid, 'enrichlayer');
+  assert.equal(s.length, 1);
+  assert.equal(s[0].headcount, 7);
+  assert.equal(String(s[0].taken_at).slice(0, 10), '2026-07-16',
+    'backdated to when the reading was TAKEN — stamping it with migration time would put a false date on the first point of every series');
+
+  // Idempotent.
+  seedFromExisting({ userId: 1 });
+  assert.equal(snapshotsFor(fid, 'enrichlayer').length, 1, 're-seeding must not duplicate');
+  cleanup(fid);
+});

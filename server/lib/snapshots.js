@@ -136,4 +136,49 @@ function deltaFor(founderId, source = 'enrichlayer', field = 'headcount') {
   };
 }
 
-module.exports = { recordSnapshot, snapshotsFor, deltaFor, stableHash, SOURCES };
+/**
+ * Seed the series from the blobs already sitting on `founders`.
+ *
+ * One-time, and it is the whole reason this shipped tonight. 44 companies were
+ * enriched on 2026-07-16 and 68 web-read, and every one of those readings existed
+ * ONLY in the overwrite-on-refetch column. Without this, the first reading of the
+ * series would be whenever the next fetch happened — and the next fetch is exactly
+ * the event that would have destroyed today's.
+ *
+ * The taken_at is backdated to the column's own fetch timestamp, not now: these
+ * readings were taken today, and stamping them with the migration time would put a
+ * false date on the first point of every series. A series that lies about when it
+ * started is worse than no series.
+ *
+ * Idempotent — recordSnapshot dedupes on content, so re-running is free.
+ */
+function seedFromExisting({ userId = 1 } = {}) {
+  const out = { enrichlayer: 0, public_record: 0, skipped: 0 };
+
+  const rows = db.prepare(`
+    SELECT id, company_enrichment, company_enriched_at, company_public, company_public_at
+      FROM founders
+     WHERE created_by = ? AND is_deleted = 0
+       AND (company_enrichment IS NOT NULL OR company_public IS NOT NULL)
+  `).all(userId);
+
+  for (const r of rows) {
+    for (const [col, at, source] of [
+      ['company_enrichment', r.company_enriched_at, 'enrichlayer'],
+      ['company_public', r.company_public_at, 'public_record'],
+    ]) {
+      if (!r[col]) continue;
+      let blob;
+      try { blob = JSON.parse(r[col]); } catch { out.skipped++; continue; }
+      const res = recordSnapshot({ founderId: r.id, source, blob });
+      if (!res.created) continue;
+      // Backdate to when the reading was actually taken.
+      const when = blob?.fetched_at || at;
+      if (when) db.prepare('UPDATE company_snapshots SET taken_at = ? WHERE id = ?').run(when, res.id);
+      out[source]++;
+    }
+  }
+  return out;
+}
+
+module.exports = { recordSnapshot, snapshotsFor, deltaFor, stableHash, seedFromExisting, SOURCES };
