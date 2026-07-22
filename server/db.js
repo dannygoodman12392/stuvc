@@ -412,6 +412,12 @@ db.exec(`CREATE INDEX IF NOT EXISTS idx_sources_extracted ON company_sources(sig
 // now", slope is "is their output/audience bending upward". See pipeline/github-activity.
 addColumn('sourced_founders', 'github_slope_score', 'INTEGER');
 addColumn('sourced_founders', 'github_slope_data', 'TEXT');
+// When slope was last computed. Slope is a TIME-VARYING signal — a score from three
+// weeks ago is stale — so the scorer re-does rows older than a week rather than
+// scoring once and freezing. This is also what gives the movers view a real
+// week-over-week delta, and how bug fixes (e.g. excluding content repos) reach
+// already-scored founders. NULL → never scored → scored first.
+addColumn('sourced_founders', 'github_slope_scored_at', 'DATETIME');
 // How a resolved GitHub handle was matched (or 'none' if we searched and found no
 // corroborated match). Makes every LinkedIn→GitHub resolution auditable and stops the
 // resolver re-searching the same founder every run. See pipeline/github-resolve.

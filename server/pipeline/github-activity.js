@@ -230,19 +230,23 @@ async function scoreGithubActivity({ userId, githubToken, limit = 10 }) {
   return { scored };
 }
 
-// Batch: compute slope for pool founders who have a GitHub and no slope yet.
-async function scoreGithubSlope({ userId, githubToken, limit = 40 }) {
+// Batch: compute slope for pool founders with a GitHub whose score is missing OR
+// STALE (older than a week). Slope is time-varying — scoring once and freezing it
+// would make "building fast" a permanent label and starve the movers view of deltas.
+async function scoreGithubSlope({ userId, githubToken, limit = 40, staleDays = 7 } = {}) {
   const rows = db.prepare(`
     SELECT id, github_url FROM sourced_founders
     WHERE user_id = ? AND status IN ('pending','starred')
       AND github_url IS NOT NULL AND github_url != ''
-      AND github_slope_score IS NULL
-    ORDER BY created_at DESC
+      AND (github_slope_score IS NULL
+           OR github_slope_scored_at IS NULL
+           OR github_slope_scored_at < datetime('now', ?))
+    ORDER BY (github_slope_scored_at IS NULL) DESC, github_slope_scored_at ASC
     LIMIT ?
-  `).all(userId, limit);
+  `).all(userId, `-${staleDays} days`, limit);
   if (!rows.length) return { scored: 0, remaining: 0 };
 
-  const upd = db.prepare('UPDATE sourced_founders SET github_slope_score = ?, github_slope_data = ? WHERE id = ? AND user_id = ?');
+  const upd = db.prepare("UPDATE sourced_founders SET github_slope_score = ?, github_slope_data = ?, github_slope_scored_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?");
   let scored = 0, failed = 0;
   for (const row of rows) {
     const r = await computeGithubSlope(row.github_url, githubToken);
@@ -255,10 +259,14 @@ async function scoreGithubSlope({ userId, githubToken, limit = 40 }) {
     scored++;
     await new Promise((res) => setTimeout(res, 350)); // polite to GitHub's rate limit
   }
+  // Remaining = still missing OR stale, matching the select — so the drain loop in the
+  // radar terminates when nothing needs (re)scoring this run. `failed` rows stay
+  // NULL and count as remaining (correct: they need a retry).
   const remaining = db.prepare(`
     SELECT COUNT(*) n FROM sourced_founders WHERE user_id = ? AND status IN ('pending','starred')
-      AND github_url IS NOT NULL AND github_url != '' AND github_slope_score IS NULL
-  `).get(userId).n;
+      AND github_url IS NOT NULL AND github_url != ''
+      AND (github_slope_score IS NULL OR github_slope_scored_at IS NULL OR github_slope_scored_at < datetime('now', ?))
+  `).get(userId, `-${staleDays} days`).n;
   return { scored, failed, remaining };
 }
 
