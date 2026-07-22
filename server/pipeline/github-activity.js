@@ -13,32 +13,8 @@
  * Decay: score drops to 0 if zero activity in 90 days.
  */
 
-const https = require('https');
 const db = require('../db');
-
-function ghGet(path, token) {
-  return new Promise((resolve) => {
-    const req = https.request({
-      hostname: 'api.github.com',
-      path,
-      method: 'GET',
-      headers: {
-        'User-Agent': 'stu-sourcing',
-        'Accept': 'application/vnd.github+json',
-        ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
-      },
-    }, (res) => {
-      let body = '';
-      res.on('data', d => body += d);
-      res.on('end', () => {
-        try { resolve({ status: res.statusCode, data: JSON.parse(body) }); }
-        catch { resolve({ status: res.statusCode, data: null }); }
-      });
-    });
-    req.on('error', () => resolve({ status: 0, data: null }));
-    req.end();
-  });
-}
+const { ghGet } = require('../lib/githubClient'); // shared client with rate-limit backoff
 
 function ghLoginFromUrl(url) {
   if (!url) return null;

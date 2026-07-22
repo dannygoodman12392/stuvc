@@ -412,6 +412,10 @@ db.exec(`CREATE INDEX IF NOT EXISTS idx_sources_extracted ON company_sources(sig
 // now", slope is "is their output/audience bending upward". See pipeline/github-activity.
 addColumn('sourced_founders', 'github_slope_score', 'INTEGER');
 addColumn('sourced_founders', 'github_slope_data', 'TEXT');
+// How a resolved GitHub handle was matched (or 'none' if we searched and found no
+// corroborated match). Makes every LinkedIn→GitHub resolution auditable and stops the
+// resolver re-searching the same founder every run. See pipeline/github-resolve.
+addColumn('sourced_founders', 'github_resolve_reason', 'TEXT');
 
 // ── SLOPE NEEDS MEMORY — the snapshot table ──
 // Some signals carry their own history (GitHub commits are dated). Most don't: a

@@ -23,33 +23,22 @@
 //   3. SLOPE — a real trajectory (≥ 5). The whole point.
 // ══════════════════════════════════════════════════════════════════════════
 
-const https = require('https');
 const db = require('../db');
 const { computeGithubSlope } = require('./github-activity');
 const { verifyIlTie } = require('../lib/ilTie');
+const { ghGet } = require('../lib/githubClient'); // shared client with rate-limit backoff
 
-function ghGet(path, token) {
-  return new Promise((resolve) => {
-    const req = https.request({
-      hostname: 'api.github.com', path, method: 'GET',
-      headers: {
-        'User-Agent': 'stu-sourcing', 'Accept': 'application/vnd.github+json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-    }, (res) => {
-      let b = '';
-      res.on('data', (d) => (b += d));
-      res.on('end', () => { try { resolve({ status: res.statusCode, data: JSON.parse(b) }); } catch { resolve({ status: res.statusCode, data: null }); } });
-    });
-    req.on('error', () => resolve({ status: 0, data: null }));
-    req.end();
-  });
-}
-
-// IL location queries — the common self-reported spellings. type:user excludes orgs.
+// IL location queries — the common self-reported spellings + university towns and the
+// schools themselves (which many students/researchers put as their location). type:user
+// excludes orgs. Free; each is one search call, and the shared client backs off if the
+// search rate window tightens. verifyIlTie is the real gate, so a loose query is safe —
+// it just widens the funnel that the tie check then narrows.
 const IL_QUERIES = [
-  'location:Chicago', 'location:Illinois', 'location:Evanston',
-  'location:Champaign', 'location:Urbana', 'location:Naperville', 'location:"Chicago, IL"',
+  'location:Chicago', 'location:Illinois', 'location:"Chicago, IL"',
+  'location:Evanston', 'location:Champaign', 'location:Urbana', 'location:Naperville',
+  'location:Schaumburg', 'location:Peoria', 'location:Springfield+location:Illinois',
+  'location:UIUC', 'location:"University of Illinois"', 'location:Northwestern',
+  'location:"University of Chicago"',
 ];
 
 // A founder/building signal in the bio. Not required if a recent repo is taking off.

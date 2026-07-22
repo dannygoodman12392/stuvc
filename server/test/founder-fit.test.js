@@ -285,3 +285,20 @@ test('github backfill excludes org handles (facebook) but keeps real ones', () =
   const m = 'contributed to github.com/facebook/react'.match(__test.GH_LINK);
   assert.equal(m[1], 'facebook', 'the regex captures the org, which GH_ORG then rejects');
 });
+
+// ── LinkedIn→GitHub resolver: corroboration or nothing (accuracy is everything) ──
+test('the resolver accepts only name + an independent corroborator', () => {
+  const { __test } = require('../pipeline/github-resolve');
+  const { nameMatches, corroborate } = __test;
+  assert.ok(nameMatches('Chris Doe', 'Christopher Doe'), 'prefix first name ok');
+  assert.ok(!nameMatches('Jane', 'janedev'), 'first-name-only must be rejected');
+  assert.ok(!nameMatches('Jane Smith', 'John Smith'), 'wrong first name rejected');
+
+  const f = { name: 'Jane Smith', company: 'Acme AI', chicago_connection: 'Chicago, IL' };
+  assert.ok(corroborate(f, { name: 'Jane Smith', company: 'Acme AI', location: 'SF' }).ok, 'name+company');
+  assert.ok(corroborate(f, { name: 'Jane Smith', location: 'Chicago, IL' }).ok, 'name+IL');
+  assert.ok(!corroborate(f, { name: 'Jane Smith', location: 'Berlin' }).ok, 'name only must be rejected');
+  assert.ok(!corroborate(f, { name: 'John Doe', company: 'Acme AI' }).ok, 'wrong name rejected even with company');
+  // A founder with no IL tie can't be corroborated by a Chicago GitHub location.
+  assert.ok(!corroborate({ name: 'Mike Chen', company: 'Stealth' }, { name: 'Mike Chen', location: 'Chicago' }).ok);
+});

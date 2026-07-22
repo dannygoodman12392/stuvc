@@ -610,6 +610,14 @@ app.listen(PORT, () => {
           backfilled = backfillGithubFromScrape({ userId: 1 }).github_url_set;
         } catch (e) { console.error('[Cron][Slope] backfill failed:', e.message); }
 
+        // Then corroborated LinkedIn→GitHub resolution — a bounded batch per week so
+        // the search budget stays small and the pool fills in gradually and safely.
+        let resolved = 0;
+        try {
+          const { resolveGithubHandles } = require('./pipeline/github-resolve');
+          resolved = (await resolveGithubHandles({ userId: 1, token: process.env.GITHUB_TOKEN, limit: 60 })).resolved;
+        } catch (e) { console.error('[Cron][Slope] resolve failed:', e.message); }
+
         const { scoreGithubSlope } = require('./pipeline/github-activity');
         let scored = 0, guard = 0;
         // Drain the queue in batches, capped so a huge backlog can't run for hours.
@@ -628,8 +636,8 @@ app.listen(PORT, () => {
 
         const { captureSnapshots } = require('./services/slope-snapshots');
         const snap = captureSnapshots({ userId: 1 });
-        recordJobRun('slope_refresh', 'ok', `${backfilled} gh-backfilled, ${scored} scored, ${discovered} new builders, ${snap.captured} snapshotted`, 1);
-        console.log(`[Cron][Slope] ${backfilled} backfilled, ${scored} scored, ${discovered} discovered, ${snap.captured} snapshotted`);
+        recordJobRun('slope_refresh', 'ok', `${backfilled} backfilled, ${resolved} resolved, ${scored} scored, ${discovered} new builders, ${snap.captured} snapshotted`, 1);
+        console.log(`[Cron][Slope] ${backfilled} backfilled, ${resolved} resolved, ${scored} scored, ${discovered} discovered, ${snap.captured} snapshotted`);
       } catch (e) {
         recordJobRun('slope_refresh', 'error', e.message, 1);
         console.error('[Cron][Slope] failed:', e.message);
