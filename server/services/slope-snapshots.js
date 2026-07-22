@@ -74,10 +74,14 @@ function movers({ userId = 1, limit = 40 } = {}) {
   const rank = { 'must-meet': 2, strong: 1 };
   const out = [];
   for (const p of pairs) {
-    const slopeDelta = (p.slope_now || 0) - (p.slope_prev || 0);
-    const starsDelta = (p.stars_now || 0) - (p.stars_prev || 0);
+    // "Rising" needs a real baseline. If last week's slope was null (the founder just
+    // wasn't scored yet), a jump to 5 is "first measured", not "rose" — coercing null
+    // to 0 put newly-scored founders atop the movers list (engineering red team F11).
+    const slopeComparable = p.slope_prev != null && p.slope_now != null;
+    const slopeDelta = slopeComparable ? p.slope_now - p.slope_prev : 0;
+    const starsDelta = (p.stars_prev != null && p.stars_now != null) ? p.stars_now - p.stars_prev : 0;
     const tierUp = (rank[p.tier_now] || 0) > (rank[p.tier_prev] || 0);
-    if (slopeDelta <= 0 && starsDelta <= 0 && !tierUp) continue; // only movers
+    if (slopeDelta <= 0 && starsDelta <= 0 && !tierUp) continue; // only genuine movers
     const f = db.prepare('SELECT name, company, github_url FROM sourced_founders WHERE id = ?').get(p.id);
     if (!f) continue;
     out.push({

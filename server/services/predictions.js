@@ -11,6 +11,11 @@ const ff = require('../lib/founderFit');
 // can't construct a Date; the caller stamps it. If absent, the prediction is open with
 // no deadline — still better than nothing, but the caller should supply one.
 function captureForMustMeet({ userId = 1, resolveBy = null } = {}) {
+  // A prediction with no deadline can never come due, so it inflates "open" forever
+  // and never enters the precision denominator (engineering red team F14). Refuse it.
+  if (!resolveBy || !/^\d{4}-\d{2}-\d{2}$/.test(resolveBy)) {
+    throw new Error('captureForMustMeet requires resolveBy as YYYY-MM-DD');
+  }
   const rows = db.prepare(
     "SELECT * FROM sourced_founders WHERE user_id = ? AND status IN ('pending','starred')"
   ).all(userId);

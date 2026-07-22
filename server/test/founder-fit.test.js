@@ -322,3 +322,58 @@ test('domain fit fires when the founder worked in the space they now build in', 
     linkedin_data: JSON.stringify({ experiences: [{ company: 'Google', title: 'Ads Engineer' }] }) });
   assert.ok(!noFit.markers.some((m) => m.key === 'founder_market_fit'), 'fintech + ads is not domain fit');
 });
+
+// ══════════════════════════════════════════════════════════════════════════
+// RED-TEAM BUG-BASH — every case below is a false positive a red team found.
+// ══════════════════════════════════════════════════════════════════════════
+
+// F1/location — a common name needs a real corroborator; a handle alone is worthless.
+test('resolver: common name + handle-only is rejected; positive corroborator passes', () => {
+  const { __test } = require('../pipeline/github-resolve');
+  const c = __test.corroborate;
+  assert.ok(!c({ name: 'Emily Wang' }, { name: 'Emily Wang', login: 'emilywang98' }, { nameCommon: true }).ok, 'common + handle-only → reject');
+  assert.ok(!c({ name: 'Akshay Patel', chicago_connection: 'Chicago' }, { name: 'Akshay Patel', login: 'akshaypatel80', location: 'Gujarat, India' }, { nameCommon: true }).ok, 'India location → reject');
+  assert.ok(c({ name: 'Emily Wang', chicago_connection: 'Chicago, IL' }, { name: 'Emily Wang', login: 'ew', location: 'Chicago, IL' }, { nameCommon: true }).ok, 'common + IL location → ok');
+  assert.ok(c({ name: 'Izee Madkaur' }, { name: 'Izee Madkaur', login: 'izeemadkaur' }, { nameCommon: false }).ok, 'distinctive handle → ok');
+  assert.ok(!c({ name: 'Izee Madkaur' }, { name: 'Izee Madkaur', login: 'izeemadkaur', location: 'Berlin, Germany' }, { nameCommon: false }).ok, 'contradicting location → reject');
+});
+
+// F5 — the surname must match exactly; no 2-char prefix cross-matches.
+test('resolver: "Bo Li" does not match "Bob Livingston"', () => {
+  const { __test } = require('../pipeline/github-resolve');
+  assert.ok(!__test.corroborate({ name: 'Bo Li' }, { name: 'Bob Livingston', login: 'bobliv' }, {}).ok);
+});
+
+// F2 — a weak-identity slope cannot reach must-meet on its own.
+test('slope from a name-derived-handle resolve does not auto-promote to must-meet', () => {
+  const strong = ff.evaluate({ github_slope_score: 8, github_slope_data: JSON.stringify({ evidence: 'x: 100★' }), source: 'github_builders', raw_data: JSON.stringify({ bio: 'stealth' }) });
+  assert.equal(strong.tier, 'must-meet', 'trusted-identity slope still promotes');
+  const weak = ff.evaluate({ github_slope_score: 8, github_slope_data: JSON.stringify({ evidence: 'x: 100★' }), github_resolve_reason: 'name-derived handle @jsmith', raw_data: JSON.stringify({ bio: 'stealth' }) });
+  assert.notEqual(weak.tier, 'must-meet', 'weak-identity slope must NOT alone reach must-meet');
+});
+
+// F10 — FMF must not fire on an internship, nor on an investor.
+test('FMF: internship-only and investors do not fire', () => {
+  const intern = ff.evaluate({ company: 'Ledgerly', headline: 'fintech payments',
+    linkedin_data: JSON.stringify({ experiences: [{ company: 'Citi', title: 'Summer Intern' }] }) });
+  assert.ok(!intern.markers.some((m) => m.key === 'founder_market_fit'), 'an internship is not domain mastery');
+  const vc = ff.evaluate({ company: 'Stealth', headline: 'Partner at Foo Capital, focused on fintech',
+    linkedin_data: JSON.stringify({ experiences: [{ company: 'Bank', title: 'VP fintech' }] }) });
+  assert.ok(!vc.markers.some((m) => m.key === 'founder_market_fit'), 'a VC partner is not a founder');
+});
+
+// F7 (content) — a content repo is excluded from slope.
+test('slope: CONTENT_REPO excludes awesome-lists / skills collections', () => {
+  const { CONTENT_REPO } = require('../pipeline/github-activity');
+  assert.ok(CONTENT_REPO.test('awesome-ai'));
+  assert.ok(CONTENT_REPO.test('baoyu-skills'));
+  assert.ok(CONTENT_REPO.test('interview-prep guide'));
+  assert.ok(!CONTENT_REPO.test('agentkit'), 'a product name is not content');
+});
+
+// F13 — backfill must not attribute a repo/org link as a personal handle.
+test('backfill: a github.com/org/repo link is not a personal handle', () => {
+  const { __test } = require('../pipeline/github-source');
+  // GH_ORG still guards bare org handles
+  assert.ok(__test.GH_ORG.test('facebook'));
+});

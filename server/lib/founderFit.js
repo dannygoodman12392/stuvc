@@ -309,13 +309,23 @@ const DOMAINS = {
   devtools: /\b(developer tools|devtools|infrastructure|observability|database|api platform|devops|compiler)\b/i,
 };
 
+// An INTERN title is not domain mastery — a summer isn't an unfair insight. And an
+// INVESTOR isn't a founder; a "Partner at X Capital" whose bio trips a vertical
+// keyword must not surface as a domain-fit founder (engineering + VC red team F10).
+const INTERN_TITLE = /\bintern(ship)?\b/i;
+const INVESTOR_ROLE = /\b(partner|principal|associate|analyst|managing director|gp\b|general partner|venture|vc\b) (at|@|,)?\s*[a-z0-9][\w .&-]* (capital|ventures?|partners|fund|vc)\b|\b(investor|venture capitalist|angel investor)\b/i;
+
 function assessMarketFit(text, ctx = {}, row = {}) {
   const current = [row.company, row.headline, row.company_one_liner].filter(Boolean).join(' ') || text.slice(0, 200);
+  // Not a founder → no founder-market fit. Skip investors outright.
+  if (INVESTOR_ROLE.test(current)) return { fit: false };
   const employerText = (ctx.employers || []).map((e) => `${e.company} ${e.title}`).join(' • ');
   for (const [domain, re] of Object.entries(DOMAINS)) {
     if (re.test(current) && re.test(employerText)) {
-      const emp = (ctx.employers || []).find((e) => re.test(`${e.company} ${e.title}`));
-      return { fit: true, domain, evidence: emp ? `${domain}: prev ${emp.title} at ${emp.company}` : domain };
+      // The corroborating employer must be a substantive role, not an internship.
+      const emp = (ctx.employers || []).find((e) => re.test(`${e.company} ${e.title}`) && !INTERN_TITLE.test(e.title || ''));
+      if (!emp) continue; // only an intern matched this domain → not mastery
+      return { fit: true, domain, evidence: `${domain}: prev ${emp.title} at ${emp.company}` };
     }
   }
   return { fit: false };
@@ -543,13 +553,22 @@ function markersFor(row) {
   if (row && row.github_slope_score != null && row.github_slope_score >= 3) {
     let evidence = 'GitHub momentum';
     try { const d = JSON.parse(row.github_slope_data || '{}'); if (d.evidence) evidence = d.evidence; } catch { /* keep default */ }
+    // IDENTITY CONFIDENCE (engineering red team F2). Slope only drives the tier when we
+    // trust the GitHub account IS this founder. High: the GitHub-native source (the
+    // account is the person by construction), their OWN profile link (backfill,
+    // resolve_reason null), or a resolve with a POSITIVE corroborator ("name +
+    // company/IL/site"). Weak: a name-derived handle alone — real enough to SHOW, not
+    // to promote to must-meet on its own.
+    const reason = row.github_resolve_reason || '';
+    const weakIdentity = /^name-derived handle/.test(reason);
     out.push({
       key: 'builder_slope',
       label: `Building fast (${evidence})`,
-      weight: 9,
+      weight: weakIdentity ? 5 : 9,   // weak identity can't outweigh a real credential
       evidence,
       structured: true, // from the GitHub API, not the prose blob
       slopeScore: row.github_slope_score,
+      weakIdentity,
     });
   }
 
@@ -592,8 +611,11 @@ function tierOf(coreMarkers) {
   // BUILDER SLOPE leads. A founder whose output/audience is genuinely accelerating on
   // GitHub is exactly who Danny wants to meet early — pedigree or not. Real velocity
   // (slope ≥ 6: an inflection repo or strong star-velocity) is Must-meet on its own.
+  // Slope alone reaches must-meet ONLY with a trusted identity. A name-derived-handle
+  // resolve (weakIdentity) might be a same-named stranger; its slope shows as a marker
+  // but must corroborate with a second signal before it promotes anyone (F2).
   const slope = coreMarkers.find((m) => m.key === 'builder_slope');
-  if (slope && slope.slopeScore >= 6) return { tier: 'must-meet', reason: `Building fast — ${slope.evidence}` };
+  if (slope && slope.slopeScore >= 6 && !slope.weakIdentity) return { tier: 'must-meet', reason: `Building fast — ${slope.evidence}` };
 
   if (keys.has('prior_exit')) return { tier: 'must-meet', reason: 'Exited a startup' };
   if (keys.has('prior_founding') && pedigree.length) {

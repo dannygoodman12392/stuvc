@@ -27,6 +27,9 @@ function once(path, token) {
         resolve({ status: res.statusCode, data, headers: res.headers });
       });
     });
+    // A hung socket must not stall a batch forever — 15s ceiling, then treat as a
+    // transient failure (status 0) the caller can retry.
+    req.setTimeout(15000, () => req.destroy(new Error('timeout')));
     req.on('error', () => resolve({ status: 0, data: null, headers: {} }));
     req.end();
   });

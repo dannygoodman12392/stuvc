@@ -65,6 +65,7 @@ async function assess(login, token) {
 
   // Gate 3 (compute now; we need slope for both the building gate and the score).
   const slope = await computeGithubSlope(gh(login), token);
+  if (slope && slope.failed) return { skip: 'slope fetch failed' }; // transient — retry, don't insert with 0
   const s = slope ? slope.slope_score : 0;
 
   // Gate 2 — actually building. Bio says founder/building, OR a repo is inflecting.
@@ -99,12 +100,23 @@ async function assess(login, token) {
 // Returns 'merged' (augmented an existing row), 'exists' (already had slope), or
 // null (genuinely new — caller inserts).
 function mergeIfExists(row, userId) {
-  const findSourced = db.prepare(
-    'SELECT id, github_url, github_slope_score FROM sourced_founders WHERE user_id = ? AND (github_url = ? OR (LENGTH(name) >= 4 AND LOWER(name) = LOWER(?))) LIMIT 1'
-  ).get(userId, row.github_url, row.name);
-  const findFounder = db.prepare(
-    'SELECT id, github_url, github_slope_score FROM founders WHERE created_by = ? AND is_deleted = 0 AND (github_url = ? OR (LENGTH(name) >= 4 AND LOWER(name) = LOWER(?))) LIMIT 1'
-  ).get(userId, row.github_url, row.name);
+  // Match on github_url (identity — always safe), OR on name + a corroborator. A bare
+  // name match is NOT enough: two different "David Lee"s must not have one's slope
+  // written onto the other (engineering red team F3). The corroborator is a shared
+  // company or a matching Illinois city — the same discipline the resolver uses.
+  const co = row.company ? String(row.company).toLowerCase() : null;
+  const city = row.location_city ? String(row.location_city).toLowerCase() : null;
+  const nameCorrob = (r) =>
+    (co && r.company && String(r.company).toLowerCase().includes(co)) ||
+    (city && r.location_city && String(r.location_city).toLowerCase().includes(city));
+
+  const byUrlS = db.prepare('SELECT id, github_url, github_slope_score FROM sourced_founders WHERE user_id = ? AND github_url = ? LIMIT 1').get(userId, row.github_url);
+  const byNameS = db.prepare('SELECT id, github_url, github_slope_score, company, location_city FROM sourced_founders WHERE user_id = ? AND LENGTH(name) >= 4 AND LOWER(name) = LOWER(?) LIMIT 1').get(userId, row.name);
+  const findSourced = byUrlS || (byNameS && nameCorrob(byNameS) ? byNameS : null);
+
+  const byUrlF = db.prepare('SELECT id, github_url, github_slope_score FROM founders WHERE created_by = ? AND is_deleted = 0 AND github_url = ? LIMIT 1').get(userId, row.github_url);
+  const byNameF = db.prepare('SELECT id, github_url, github_slope_score, company, location_city FROM founders WHERE created_by = ? AND is_deleted = 0 AND LENGTH(name) >= 4 AND LOWER(name) = LOWER(?) LIMIT 1').get(userId, row.name);
+  const findFounder = byUrlF || (byNameF && nameCorrob(byNameF) ? byNameF : null);
 
   // On the live pipeline already — augment the founder card so the same slope shows
   // wherever the person is, and stop (don't also add a duplicate inbox row).
@@ -193,10 +205,23 @@ function backfillGithubFromScrape({ userId = 1, limit = 2000 } = {}) {
   `).all(userId, limit);
   const upd = db.prepare("UPDATE sourced_founders SET github_url = ? WHERE id = ?");
   let set = 0;
+  // Only a PERSONAL profile link (github.com/<handle> with no /<repo> after it). A
+  // two-segment link like github.com/facebook/react is a repo they cited, not their
+  // account — attributing it would slope-score a stranger's org (engineering red
+  // team F13). \bTWO_SEG detects the trailing /repo.
+  const TWO_SEG = /github\.com\/[a-zA-Z0-9-]+\/[a-zA-Z0-9._-]+/i;
   for (const r of rows) {
     const blob = [r.raw_data, r.enriched_data, r.linkedin_data, r.headline].filter(Boolean).join(' ');
-    const m = blob.match(GH_LINK);
-    if (m && !GH_RESERVED.test(m[1]) && !GH_ORG.test(m[1])) { upd.run(`https://github.com/${m[1]}`, r.id); set++; }
+    // Find the first PERSONAL link: match a github.com/handle that isn't followed by /repo.
+    let handle = null;
+    const re = /github\.com\/([a-zA-Z0-9](?:[a-zA-Z0-9-]{0,38})?)(\/[a-zA-Z0-9._-]+)?/gi;
+    let mm;
+    while ((mm = re.exec(blob)) !== null) {
+      if (mm[2]) continue;                          // has /repo → a repo link, skip
+      if (GH_RESERVED.test(mm[1]) || GH_ORG.test(mm[1])) continue;
+      handle = mm[1]; break;
+    }
+    if (handle) { upd.run(`https://github.com/${handle}`, r.id); set++; }
   }
   return { scanned: rows.length, github_url_set: set };
 }

@@ -103,6 +103,11 @@ async function computeGithubActivity(ghUrl, token) {
 // favors the recent and the accelerating over the accumulated — an early builder
 // with a fast-rising repo outscores a veteran with an old famous one.
 // ══════════════════════════════════════════════════════════════════════════
+// Content, not a product — excluded from velocity/inflection (VC red team).
+const CONTENT_REPO = /\b(awesome|awesome-|list|lists|dotfiles|tutorial|guide|guides|notes|book|books|roadmap|interview|cheat-?sheet|skills|prompts?|resources?|handbook|curriculum|course|courses|learn|learning|101|examples?|demos?|blog|portfolio|readme|papers?|wiki|docs|documentation|boilerplate|template|starter|config|configs)\b/i;
+
+// Returns { slope_score, data, evidence } | null (no usable GitHub) | { failed:true }
+// (a fetch error — NOT the same as "scored 0"; the caller must not persist a failure).
 async function computeGithubSlope(ghUrl, token) {
   const login = ghLoginFromUrl(ghUrl);
   if (!login) return null;
@@ -111,26 +116,44 @@ async function computeGithubSlope(ghUrl, token) {
   const months = (ms) => Math.max(1, days(ms) / 30.4);
 
   const events = await ghGet(`/users/${login}/events/public?per_page=100`, token);
-  if (events.status !== 200 || !Array.isArray(events.data)) return null;
+  // A non-200 here is a FETCH FAILURE, not "no activity". Signal it so the caller
+  // retries rather than permanently recording slope 0 (engineering red team F6).
+  if (events.status !== 200) return { failed: true };
+  if (!Array.isArray(events.data)) return { failed: true };
 
-  // ACCELERATION — recent 30d vs the 30d before it. >1 means speeding up.
+  // ACCELERATION — recent 30d vs the 30d before. But the events feed is one page
+  // (~90d max, far less for hyperactive users). If it doesn't demonstrably reach back
+  // 60 days, we CAN'T compute a derivative — treat as unknown (1), never a bonus,
+  // else the busiest builders get a fake "accelerating" from truncation (F9).
   const isBuild = (e) => e.type === 'PushEvent' || e.type === 'PullRequestEvent' || e.type === 'CreateEvent';
+  const oldestEventDays = events.data.length ? days(events.data[events.data.length - 1].created_at) : 0;
+  const windowCovers60 = oldestEventDays >= 58;
   const last30 = events.data.filter((e) => isBuild(e) && days(e.created_at) <= 30).length;
   const prev30 = events.data.filter((e) => isBuild(e) && days(e.created_at) > 30 && days(e.created_at) <= 60).length;
-  const accel = prev30 === 0 ? (last30 > 0 ? 2 : 0) : last30 / prev30;
+  const accel = !windowCovers60 ? 1 : (prev30 === 0 ? (last30 > 0 ? 2 : 0) : last30 / prev30);
 
   const repos = await ghGet(`/users/${login}/repos?sort=pushed&direction=desc&per_page=100`, token);
+  if (repos.status !== 200) return { failed: true };
   let topRepo = null, starVelocity = 0, inflection = null, totalStars = 0, freshestPushDays = Infinity;
   if (Array.isArray(repos.data)) {
     for (const r of repos.data) {
       if (r.fork) continue;
+      // CONTENT is not a PRODUCT (Jim Liu's "baoyu-skills, 23,982★" is a list).
+      if (CONTENT_REPO.test(`${r.name} ${r.description || ''}`)) continue;
       totalStars += r.stargazers_count || 0;
       freshestPushDays = Math.min(freshestPushDays, days(r.pushed_at));
-      const vel = (r.stargazers_count || 0) / months(r.created_at);
       if (!topRepo || (r.stargazers_count || 0) > (topRepo.stargazers_count || 0)) topRepo = r;
-      if (vel > starVelocity) starVelocity = vel;
-      // Inflection: created within a year, already ≥ 20 stars — a fast riser.
-      if (days(r.created_at) <= 365 && (r.stargazers_count || 0) >= 20) {
+      // STAR VELOCITY — only for RECENT repos (≤18mo). Dividing lifetime stars by a
+      // repo's whole age is a diluted historical average, not the current rate; an old
+      // 500★ repo shows ~8★/mo forever (F8). Velocity should mean "rising NOW".
+      if (days(r.created_at) <= 550) {
+        const vel = (r.stargazers_count || 0) / months(r.created_at);
+        if (vel > starVelocity) starVelocity = vel;
+      }
+      // INFLECTION — a repo created in the last year already past a REAL bar. Raised
+      // from 20 to 75: 20 stars is one tweet, and it was auto-promoting to must-meet
+      // (F7). 75+ on a young product repo is a genuine "taking off".
+      if (days(r.created_at) <= 365 && (r.stargazers_count || 0) >= 75) {
         if (!inflection || (r.stargazers_count || 0) > (inflection.stargazers_count || 0)) inflection = r;
       }
     }
@@ -220,11 +243,14 @@ async function scoreGithubSlope({ userId, githubToken, limit = 40 }) {
   if (!rows.length) return { scored: 0, remaining: 0 };
 
   const upd = db.prepare('UPDATE sourced_founders SET github_slope_score = ?, github_slope_data = ? WHERE id = ? AND user_id = ?');
-  let scored = 0;
+  let scored = 0, failed = 0;
   for (const row of rows) {
     const r = await computeGithubSlope(row.github_url, githubToken);
-    // Store even a 0 (with null data) so we don't re-fetch a dead/empty account
-    // every run — the whole point of not re-billing an API for the same answer.
+    // A FETCH FAILURE ({failed:true}) must NOT be written — persisting it as slope 0
+    // would leave github_slope_score non-null, so the row is never retried, and a
+    // transient 403 permanently zeroes a real builder (engineering red team F6).
+    // A genuine null (no usable account) stores 0 so a dead handle isn't re-fetched.
+    if (r && r.failed) { failed++; await new Promise((res) => setTimeout(res, 350)); continue; }
     upd.run(r ? r.slope_score : 0, r ? JSON.stringify({ ...r.data, evidence: r.evidence }) : null, row.id, userId);
     scored++;
     await new Promise((res) => setTimeout(res, 350)); // polite to GitHub's rate limit
@@ -233,7 +259,7 @@ async function scoreGithubSlope({ userId, githubToken, limit = 40 }) {
     SELECT COUNT(*) n FROM sourced_founders WHERE user_id = ? AND status IN ('pending','starred')
       AND github_url IS NOT NULL AND github_url != '' AND github_slope_score IS NULL
   `).get(userId).n;
-  return { scored, remaining };
+  return { scored, failed, remaining };
 }
 
-module.exports = { scoreGithubActivity, scoreGithubSlope, computeGithubActivity, computeGithubSlope, ghLoginFromUrl };
+module.exports = { scoreGithubActivity, scoreGithubSlope, computeGithubActivity, computeGithubSlope, ghLoginFromUrl, CONTENT_REPO };
