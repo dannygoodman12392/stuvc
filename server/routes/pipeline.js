@@ -922,6 +922,26 @@ router.post('/score-slope', async (req, res) => {
   }
 });
 
+// ── POST /api/pipeline/discover-builders — GitHub-native builder sourcing ──
+// The elegant inversion: source builders from the builder graph (GitHub), IL-tied and
+// ranked by slope, so the illegible builder shows up natively. See pipeline/github-source.
+router.post('/discover-builders', async (req, res) => {
+  if (req.user.id !== 1) return res.status(403).json({ error: 'not available for your account' });
+  try {
+    const { discoverGithubBuilders } = require('../pipeline/github-source');
+    const r = await discoverGithubBuilders({
+      userId: req.user.id,
+      token: process.env.GITHUB_TOKEN,
+      candidatesPerQuery: req.query.per ? Number(req.query.per) : 15,
+      pages: req.query.pages ? Number(req.query.pages) : 1,
+    });
+    res.json(r);
+  } catch (e) {
+    console.error('[DiscoverBuilders]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── POST /api/pipeline/snapshot — capture the weekly signal state (manual trigger) ──
 router.post('/snapshot', (req, res) => {
   if (req.user.id !== 1) return res.status(403).json({ error: 'not available for your account' });

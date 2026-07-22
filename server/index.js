@@ -610,10 +610,18 @@ app.listen(PORT, () => {
           scored += r.scored;
           if (r.remaining === 0 || r.scored === 0 || ++guard >= 15) break;
         }
+        // Source new IL builders natively from GitHub — the front door for slope.
+        let discovered = 0;
+        try {
+          const { discoverGithubBuilders } = require('./pipeline/github-source');
+          const d = await discoverGithubBuilders({ userId: 1, token: process.env.GITHUB_TOKEN, candidatesPerQuery: 20, pages: 1 });
+          discovered = d.added;
+        } catch (e) { console.error('[Cron][Slope] discovery failed:', e.message); }
+
         const { captureSnapshots } = require('./services/slope-snapshots');
         const snap = captureSnapshots({ userId: 1 });
-        recordJobRun('slope_refresh', 'ok', `${scored} scored, ${snap.captured} snapshotted`, 1);
-        console.log(`[Cron][Slope] ${scored} scored, ${snap.captured} snapshotted`);
+        recordJobRun('slope_refresh', 'ok', `${scored} scored, ${discovered} new builders, ${snap.captured} snapshotted`, 1);
+        console.log(`[Cron][Slope] ${scored} scored, ${discovered} discovered, ${snap.captured} snapshotted`);
       } catch (e) {
         recordJobRun('slope_refresh', 'error', e.message, 1);
         console.error('[Cron][Slope] failed:', e.message);

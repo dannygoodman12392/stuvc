@@ -267,3 +267,13 @@ test('a stealth founder with two markers outranks a past-earliest founder with t
   assert.ok(late.stageTooLate, 'the Series B founder is past earliest');
   assert.ok(early.priority > late.priority, 'earliest-stage must outrank a stronger-but-too-late founder');
 });
+
+// ── GitHub-native builder sourcing: the building gate ──
+test('the building signal separates founders/builders from employed engineers', () => {
+  const { __test } = require('../pipeline/github-source');
+  assert.ok(__test.BUILDING_RE.test('Founder, building in stealth'));
+  assert.ok(__test.BUILDING_RE.test('working on something new'));
+  assert.ok(!__test.BUILDING_RE.test('Senior Software Engineer at Nielsen'));
+  assert.equal(__test.cleanCompany('@gridstatus'), 'gridstatus');
+  assert.equal(__test.cleanCompany('A very long company description that is basically a bio sentence'), null);
+});
