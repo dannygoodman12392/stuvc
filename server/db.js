@@ -417,6 +417,31 @@ addColumn('sourced_founders', 'github_slope_data', 'TEXT');
 // resolver re-searching the same founder every run. See pipeline/github-resolve.
 addColumn('sourced_founders', 'github_resolve_reason', 'TEXT');
 
+// ── THE FALSIFIABLE LEARNING LOOP ──
+// The quant red-teamer's core point: "will attract tier-1 tomorrow" is unfalsifiable
+// with no deadline, so the engine can never be scored. This is the fix — when a
+// founder is flagged Must-meet, pre-commit a DATED, BINARY prediction ("will raise a
+// priced seed from a top-quartile lead by <18mo out>"). When the date passes, Danny
+// (or a future check) marks it true/false. Over enough resolved predictions, the
+// engine's precision becomes a real number instead of a flattering story. One row per
+// founder-flag, so it's a ledger, not vault spam. resolve_by is stored as text
+// (YYYY-MM-DD) because the codebase's cron-safe contexts can't call new Date().
+db.exec(`
+  CREATE TABLE IF NOT EXISTS founder_predictions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    sourced_founder_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    predicted_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    resolve_by TEXT,                 -- YYYY-MM-DD, ~18 months out
+    tier_at_prediction TEXT,
+    claim TEXT,                      -- the falsifiable statement
+    outcome TEXT,                    -- NULL = open, 'raised' | 'not' | 'skip'
+    resolved_at DATETIME,
+    UNIQUE(sourced_founder_id, user_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_predictions_open ON founder_predictions(user_id, outcome, resolve_by);
+`);
+
 // ── SLOPE NEEDS MEMORY — the snapshot table ──
 // Some signals carry their own history (GitHub commits are dated). Most don't: a
 // follower count, a stealth bio, a stage — a single number with no past. Slope on

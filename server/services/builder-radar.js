@@ -43,6 +43,13 @@ async function runBuilderRadar({ userId = 1, token = process.env.GITHUB_TOKEN } 
     out.snapshotted = captureSnapshots({ userId }).captured;
   } catch (e) { out.errors.push(`snapshot: ${e.message}`); }
 
+  // Pre-commit a dated prediction for every Must-meet founder — the falsifiable loop.
+  try {
+    const { captureForMustMeet } = require('./predictions');
+    const d = new Date(); d.setMonth(d.getMonth() + 18);
+    out.predictions = captureForMustMeet({ userId, resolveBy: d.toISOString().slice(0, 10) }).created;
+  } catch (e) { out.errors.push(`predictions: ${e.message}`); }
+
   const summary = `${out.backfilled} backfilled, ${out.resolved} resolved, ${out.scored} scored, ${out.discovered} new builders, ${out.snapshotted} snapshotted`;
   recordJobRun('slope_refresh', out.errors.length ? 'error' : 'ok', out.errors.length ? `${summary}; errors: ${out.errors.join('; ')}` : summary, userId);
   return { ...out, summary };

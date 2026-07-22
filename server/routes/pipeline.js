@@ -986,6 +986,24 @@ router.post('/run-radar', (req, res) => {
   res.json({ started: true, note: 'running in the background; watch job_runs (slope_refresh) or /movers' });
 });
 
+// ── Predictions — the falsifiable learning loop (the quant red-teamer's ask) ──
+// GET returns the scoreboard + what's due to score; POST resolves one true/false.
+router.get('/predictions', (req, res) => {
+  if (req.user.id !== 1) return res.status(403).json({ error: 'not available for your account' });
+  try {
+    const P = require('../services/predictions');
+    const today = new Date().toISOString().slice(0, 10);
+    res.json({ scoreboard: P.scoreboard({ userId: req.user.id }), due: P.due({ userId: req.user.id, today }) });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+router.post('/predictions/:id/resolve', (req, res) => {
+  if (req.user.id !== 1) return res.status(403).json({ error: 'not available for your account' });
+  try {
+    const P = require('../services/predictions');
+    res.json(P.resolve({ id: Number(req.params.id), userId: req.user.id, outcome: req.body?.outcome }));
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
 // ── GET /api/pipeline/movers — who is rising since the last snapshot ──
 // The "catch the inflection" view: founders whose slope, stars, or tier moved UP
 // week-over-week. Empty until there are two snapshot rounds to compare.
