@@ -287,7 +287,10 @@ router.get('/inbox', (req, res) => {
            -- silently find nothing. These are the fields lib/founderFit.profileText
            -- actually reads.
            raw_data, enriched_data, linkedin_data, pedigree_signals,
-           tags, previous_company_norm
+           tags, previous_company_norm,
+           -- Builder slope. Without these the founder-slope marker silently never
+           -- fires — the exact narrow-column trap this file keeps re-learning.
+           github_slope_score, github_slope_data
     FROM sourced_founders
     WHERE user_id = ? AND status IN ('pending','starred')
       AND COALESCE(do_not_resurface, 0) = 0
@@ -359,8 +362,8 @@ router.get('/inbox', (req, res) => {
     const f = ff.evaluate(r);
     // Strip the heavy source blobs back out — they were selected only to feed the
     // rubric, and the inbox payload shouldn't carry every founder's full scrape.
-    const { raw_data, enriched_data, linkedin_data, ...rest } = r;
-    return { ...rest, fit: { meetWorthy: f.meetWorthy, tier: f.tier, tierReason: f.tierReason, priority: f.priority, stage: f.stage, stageTooLate: f.stageTooLate, why: f.why, markers: f.markers } };
+    const { raw_data, enriched_data, linkedin_data, github_slope_data, ...rest } = r;
+    return { ...rest, fit: { meetWorthy: f.meetWorthy, tier: f.tier, tierReason: f.tierReason, priority: f.priority, stage: f.stage, stageTooLate: f.stageTooLate, lifestyle: f.lifestyle, why: f.why, markers: f.markers } };
   });
 
   // Tier counts over the FULL list, before any filter — the header shows the size
@@ -899,6 +902,37 @@ router.patch('/:id/represented-by', (req, res) => {
 // pass over ~250 sources is minutes of work and the platform proxy 502s long before.
 // Both return { done } so the caller knows when to stop.
 // ══════════════════════════════════════════════════════════════════════════
+
+// ── POST /api/pipeline/score-slope — compute GitHub founder-slope for the pool ──
+// Paged (?limit): each call scores a batch and reports what's left, same as the
+// other backfills. Uses the server's GITHUB_TOKEN (5000 req/hr authed).
+router.post('/score-slope', async (req, res) => {
+  if (req.user.id !== 1) return res.status(403).json({ error: 'not available for your account' });
+  try {
+    const { scoreGithubSlope } = require('../pipeline/github-activity');
+    const r = await scoreGithubSlope({
+      userId: req.user.id,
+      githubToken: process.env.GITHUB_TOKEN,
+      limit: req.query.limit ? Number(req.query.limit) : 40,
+    });
+    res.json({ ...r, done: r.remaining === 0 });
+  } catch (e) {
+    console.error('[ScoreSlope]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── POST /api/pipeline/snapshot — capture the weekly signal state (manual trigger) ──
+router.post('/snapshot', (req, res) => {
+  if (req.user.id !== 1) return res.status(403).json({ error: 'not available for your account' });
+  try {
+    const { captureSnapshots } = require('../services/slope-snapshots');
+    res.json(captureSnapshots({ userId: req.user.id }));
+  } catch (e) {
+    console.error('[Snapshot]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
 
 router.post('/read-web', async (req, res) => {
   if (req.user.id !== 1) return res.status(403).json({ error: 'not available for your account' });

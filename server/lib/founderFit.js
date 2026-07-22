@@ -285,6 +285,67 @@ function employedAtInText(company, text) {
 
 const cap = (s) => String(s).replace(/\b\w/g, (ch) => ch.toUpperCase());
 
+// ══════════════════════════════════════════════════════════════════════════
+// VENTURE-SCALE, NOT LIFESTYLE. Danny: "I don't want to ignore those non-tech
+// archetypes in fintech, health, logistics, defense, etc. I just don't want to
+// source people who started consulting firms or an agency or something."
+//
+// So the cut is NOT "non-tech" — a fintech or logistics or defense founder stays.
+// The cut is the lifestyle / services business: the café, the marketing agency, the
+// consultancy, the franchise. Sreekesh Bompally is the case — his "serial founder"
+// tag was true, but his companies were a cake kitchen, a café, and a chocolate-room
+// franchise. Real, and not a venture.
+//
+// Two safety rails, because dropping a genuine founder is far worse than keeping a
+// borderline one:
+//   1. Any real VENTURE signal overrides — an institutional raise, YC/Speedrun, a
+//      SaaS/platform/API/hardware descriptor, a venture vertical. If it's there, the
+//      founder is venture-scale regardless of a stray "agency" in the text.
+//   2. The lifestyle read must be CLEAR — a founder-title company that is plainly a
+//      services/lifestyle business, or a current company that is one with no venture
+//      signal at all. Absent clear evidence, assume venture. Conservative on purpose.
+// ══════════════════════════════════════════════════════════════════════════
+const LIFESTYLE_RE = /\b(consult(ing|ancy|ants?)|advisory (firm|services)|(marketing|creative|digital|ad|branding|design|staffing|recruit(ing|ment)|talent|pr|social media|web design) agency|freelanc(e|er|ing)|solopreneur|independent contractor|(life|business|executive|career) coach(ing)?|franchis(e|ee|or)|restaurant|caf[eé]|bakery|catering|food truck|salon|spa|barbershop|barber|nail\b|gym|fitness studio|personal train(er|ing)|real estate (agent|brokerage|broker)|realtor|law (firm|practice)|accounting (firm|practice)|bookkeeping|photograph(y|er)|videograph(y|er)|event planning|wedding planning|\bdj\b|dropship(ping)?|etsy shop|retail (store|shop)|boutique|e-?commerce store)\b/i;
+// Venture verticals + product shapes that KEEP a founder in scope even if a lifestyle
+// word appears ("AI for restaurants" is venture; "owns a restaurant" is not).
+const VENTURE_KEEP_RE = /\b(fintech|insurtech|health ?tech|biotech|medtech|med ?device|logistics|supply chain|defen[cs]e|aerospace|robotics|climate|clean ?tech|energy|proptech|legal ?tech|ed ?tech|ag ?tech|foodtech|saas|platform|marketplace|\bapi\b|infrastructure|\bai\b|\bml\b|machine learning|\bllm\b|agents?|data (platform|infra|pipeline)|hardware|semiconductor|chips?|devtools?|developer tools|cybersecurity|security|blockchain|crypto|autonomous|drones?|satellite|space|vertical software|b2b software|enterprise software)\b/i;
+const VENTURE_SIGNAL_RE = /\b(raised|pre[- ]?seed|seed round|series [a-e]|venture[- ]backed|vc[- ]backed|y[- ]?combinator|\byc\b|speedrun|techstars|angel round|institutional|term sheet|cap table|arr|mrr|users|shipped|launched|beta|waitlist|open source|github)\b/i;
+
+// Returns { lifestyle: bool, evidence }. Uses structured founder-title companies when
+// present (most reliable — Sreekesh's cafés live there), else the free-text current co.
+function assessVentureScale(text, ctx = {}, row = {}) {
+  const t = String(text || '');
+  // Override: any venture signal at all → venture, full stop.
+  if (VENTURE_KEEP_RE.test(t) || VENTURE_SIGNAL_RE.test(t)) return { lifestyle: false };
+
+  // A TITLE that is itself a lifestyle role — "Franchise Owner", "Restaurateur",
+  // "Salon Owner". Venture founders say Founder/CEO; a franchise owner says owner.
+  // This is the tell for Sreekesh, whose café company NAMES ("The Cake Kitchen")
+  // carry no keyword but whose titles do.
+  const LIFESTYLE_TITLE_RE = /\b(franchise (owner|e)|restaurateur|(shop|store|salon|spa|gym|studio|restaurant|cafe|café|boutique|franchise) owner|proprietor|realtor|freelanc)/i;
+
+  // The companies/roles where this person was actually a founder/owner (structured).
+  const founderRoles = (ctx.employers || [])
+    .filter((e) => /found|ceo|owner|proprietor/i.test(e.title || ''));
+  if (founderRoles.length) {
+    const lifestyle = founderRoles.filter((e) =>
+      (LIFESTYLE_RE.test(e.company || '') || LIFESTYLE_TITLE_RE.test(e.title || '')) && !VENTURE_KEEP_RE.test(e.company || ''));
+    // Every founder/owner role is a lifestyle business → not the founder Danny wants.
+    if (lifestyle.length && lifestyle.length === founderRoles.length) {
+      return { lifestyle: true, evidence: lifestyle.map((e) => `${e.title} @ ${e.company}`).join(', ') };
+    }
+    return { lifestyle: false };
+  }
+
+  // No structured founder history — fall back to the current company / bio, but only
+  // fire on an explicit "founded/owns a <lifestyle business>" so a stray word can't
+  // drop a real founder. Trigger covers "founder of", "co-founder of", "owns", etc.
+  const trigger = '(?:founded|founder of|co-?founder of|owns?|running|started|proprietor of|principal at|owner of)';
+  const m = t.match(new RegExp(`\\b${trigger}\\b[^.]{0,25}?${LIFESTYLE_RE.source}`, 'i'));
+  if (m && !VENTURE_KEEP_RE.test(m[0])) return { lifestyle: true, evidence: m[0].replace(/\s+/g, ' ').trim() };
+  return { lifestyle: false };
+}
+
 const MARKERS = [
   {
     key: 'prior_exit',
@@ -432,6 +493,24 @@ function markersFor(row) {
     if (!isStructured && !verbatimIn(quote, text)) continue; // the receipt has to be real
     out.push({ key: m.key, label, weight: m.weight, evidence: quote, modifier: !!m.modifier, structured: !!isStructured });
   }
+  // ── BUILDER SLOPE — the pre-seed signal, read from the row, not the text ──
+  // GitHub trajectory (pipeline/github-activity → github_slope_score). This is the
+  // one marker that CANNOT be self-labeled and that a founder with zero pedigree can
+  // score high on — the illegible-builder unlock the red team demanded. Weighted
+  // above credentials on purpose: at pre-seed, Danny cares most about slope.
+  if (row && row.github_slope_score != null && row.github_slope_score >= 3) {
+    let evidence = 'GitHub momentum';
+    try { const d = JSON.parse(row.github_slope_data || '{}'); if (d.evidence) evidence = d.evidence; } catch { /* keep default */ }
+    out.push({
+      key: 'builder_slope',
+      label: `Building fast (${evidence})`,
+      weight: 9,
+      evidence,
+      structured: true, // from the GitHub API, not the prose blob
+      slopeScore: row.github_slope_score,
+    });
+  }
+
   // Strongest first, so "Why they're here" leads with the best reason.
   out.sort((a, b) => b.weight - a.weight);
   return { markers: out, text };
@@ -467,11 +546,19 @@ const PEDIGREE_KEYS = new Set(['hyperscale', 'yc', 'speedrun_zfellows', 'spc', '
 function tierOf(coreMarkers) {
   const keys = new Set(coreMarkers.map((m) => m.key));
   const pedigree = [...keys].filter((k) => PEDIGREE_KEYS.has(k));
+
+  // BUILDER SLOPE leads. A founder whose output/audience is genuinely accelerating on
+  // GitHub is exactly who Danny wants to meet early — pedigree or not. Real velocity
+  // (slope ≥ 6: an inflection repo or strong star-velocity) is Must-meet on its own.
+  const slope = coreMarkers.find((m) => m.key === 'builder_slope');
+  if (slope && slope.slopeScore >= 6) return { tier: 'must-meet', reason: `Building fast — ${slope.evidence}` };
+
   if (keys.has('prior_exit')) return { tier: 'must-meet', reason: 'Exited a startup' };
   if (keys.has('prior_founding') && pedigree.length) {
     const p = coreMarkers.find((m) => PEDIGREE_KEYS.has(m.key));
     return { tier: 'must-meet', reason: `Repeat founder + ${p.label.replace(/^Hyperscaler: /, '')}` };
   }
+  // Corroboration: two independent signals. Slope + anything counts strongly here.
   if (coreMarkers.length >= 2) return { tier: 'must-meet', reason: `${coreMarkers.length} independent signals` };
   return { tier: 'strong', reason: coreMarkers[0] ? coreMarkers[0].label : 'One signal' };
 }
@@ -487,6 +574,7 @@ function tierOf(coreMarkers) {
 // ══════════════════════════════════════════════════════════════════════════
 function evaluate(row) {
   const { markers, text } = markersFor(row);
+  const ctx = structuredProfile(row);
   const stage = classifyStage(text);
   const markerScore = markers.reduce((s, m) => s + m.weight, 0);
 
@@ -494,7 +582,12 @@ function evaluate(row) {
   // signal is "went to Northwestern" is not someone Danny asked to meet — he asked
   // for a school PLUS a track record. Core markers are the track record.
   const coreMarkers = markers.filter((m) => !m.modifier);
-  const meetWorthy = !stage.tooLate && coreMarkers.length > 0;
+
+  // Venture-scale gate. A lifestyle/services founder (café, agency, consultancy) is
+  // not who Danny is sourcing, regardless of how many "serial founder" tags fire.
+  const venture = assessVentureScale(text, ctx, row);
+
+  const meetWorthy = !stage.tooLate && !venture.lifestyle && coreMarkers.length > 0;
   // Past-earliest founders keep a residual score (so the board can still show them,
   // sorted below), but they can never sit among the earliest-stage names Danny is
   // hunting for. Multiply, don't zero, so ranking within the excluded set is stable.
@@ -511,6 +604,8 @@ function evaluate(row) {
     stage: stage.stage,
     stageTooLate: stage.tooLate,
     stageEvidence: stage.evidence,
+    lifestyle: venture.lifestyle,
+    lifestyleEvidence: venture.evidence || null,
     markers,
     coreMarkerCount: coreMarkers.length,
     why: markers.map((m) => m.label),

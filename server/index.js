@@ -591,6 +591,37 @@ app.listen(PORT, () => {
     console.log('Daily signal monitors scheduled (7:00 AM CT)');
   }
 
+  // ── Weekly founder-slope refresh + snapshot (Sun 6:00 AM CT) ──
+  // Danny: "At pre-seed we really care about founder slope." GitHub trajectory is
+  // recomputed for pool founders, then every founder's signal state is snapshotted so
+  // slope on non-timestamped signals becomes a week-over-week delta. Weekly because
+  // slope is a slow-moving signal and the clock only needs to tick steadily — the
+  // point is that history accumulates, not that it's real-time.
+  {
+    const cron = require('node-cron');
+    cron.schedule('0 6 * * 0', async () => {
+      const { recordJobRun } = require('./services/health');
+      try {
+        const { scoreGithubSlope } = require('./pipeline/github-activity');
+        let scored = 0, guard = 0;
+        // Drain the queue in batches, capped so a huge backlog can't run for hours.
+        for (;;) {
+          const r = await scoreGithubSlope({ userId: 1, githubToken: process.env.GITHUB_TOKEN, limit: 40 });
+          scored += r.scored;
+          if (r.remaining === 0 || r.scored === 0 || ++guard >= 15) break;
+        }
+        const { captureSnapshots } = require('./services/slope-snapshots');
+        const snap = captureSnapshots({ userId: 1 });
+        recordJobRun('slope_refresh', 'ok', `${scored} scored, ${snap.captured} snapshotted`, 1);
+        console.log(`[Cron][Slope] ${scored} scored, ${snap.captured} snapshotted`);
+      } catch (e) {
+        recordJobRun('slope_refresh', 'error', e.message, 1);
+        console.error('[Cron][Slope] failed:', e.message);
+      }
+    }, { timezone: 'America/Chicago' });
+    console.log('Weekly founder-slope refresh scheduled (Sun 6:00 AM CT)');
+  }
+
   // Daily early-signal sources — pulls USPTO trademarks (and future connectors) for the
   // owner, geo-filtered to their Chicago/IL criteria, into the sourced queue. Connectors
   // without a configured key (e.g. USPTO until USPTO_API_KEY is set) no-op harmlessly.

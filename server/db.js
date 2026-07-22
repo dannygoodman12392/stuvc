@@ -405,6 +405,38 @@ db.exec(`CREATE INDEX IF NOT EXISTS idx_founders_represented_by ON founders(repr
 addColumn('company_sources', 'signals_extracted_at', 'DATETIME');
 db.exec(`CREATE INDEX IF NOT EXISTS idx_sources_extracted ON company_sources(signals_extracted_at);`);
 
+// ── FOUNDER SLOPE — the pre-seed signal Danny cares most about ──
+// GitHub trajectory (star velocity, inflection, commit acceleration) — the
+// derivative, not the 30-day snapshot github_activity_score already stores. Kept
+// separate because they answer different questions: activity is "are they working
+// now", slope is "is their output/audience bending upward". See pipeline/github-activity.
+addColumn('sourced_founders', 'github_slope_score', 'INTEGER');
+addColumn('sourced_founders', 'github_slope_data', 'TEXT');
+
+// ── SLOPE NEEDS MEMORY — the snapshot table ──
+// Some signals carry their own history (GitHub commits are dated). Most don't: a
+// follower count, a stealth bio, a stage — a single number with no past. Slope on
+// THOSE only exists if Stu remembers last week's value. This table captures each
+// pool founder's state on a cadence so deltas are computable run-over-run — and it's
+// also the answer to "the engine can never learn": it accumulates its own time
+// series. Clock is ticking; history not captured is unrecoverable.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS founder_signal_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    sourced_founder_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    captured_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    github_slope_score INTEGER,
+    github_total_stars INTEGER,
+    github_last30 INTEGER,
+    caliber_tier TEXT,
+    fit_tier TEXT,
+    stage TEXT,
+    marker_keys TEXT   -- JSON array, so we can see which signals appeared/vanished
+  );
+  CREATE INDEX IF NOT EXISTS idx_fss_founder ON founder_signal_snapshots(sourced_founder_id, captured_at DESC);
+`);
+
 // A source that already has signals was, self-evidently, read. Marking those closes
 // the gap for the 60 sources extracted before this column existed — without it the
 // first run after deploy would pay to read every one of them a second time.

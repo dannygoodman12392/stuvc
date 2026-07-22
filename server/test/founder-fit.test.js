@@ -154,6 +154,72 @@ test('an empty profile yields nothing — no marker without a source', () => {
   assert.equal(v.tier, null);
 });
 
+// ── VENTURE-SCALE, NOT LIFESTYLE ──
+// Danny: "I don't want to source people who started consulting firms or an agency or
+// something" — but fintech/health/logistics/defense stay. Catches the CLEAR cases;
+// caliber (a café founder who self-labels "serial entrepreneur") is the re-tier's job.
+test('a founder whose only companies are a consultancy/agency is not meet-worthy', () => {
+  const consult = ff.evaluate({ linkedin_data: JSON.stringify({ experiences: [{ company: 'Peak Advisory Consulting', title: 'Founder' }] }) });
+  assert.equal(consult.lifestyle, true);
+  assert.equal(consult.meetWorthy, false);
+
+  const agency = ff.evaluate({ raw_data: JSON.stringify({ bio: 'Founder of a digital marketing agency. Serial entrepreneur.' }) });
+  assert.equal(agency.lifestyle, true);
+});
+
+test('a franchise-owner TITLE flags lifestyle even when the company name is clean', () => {
+  const v = ff.evaluate({ linkedin_data: JSON.stringify({ experiences: [{ company: 'The Chocolate Room', title: 'Franchise Owner' }] }) });
+  assert.equal(v.lifestyle, true);
+});
+
+test('venture verticals that sound non-tech are KEPT', () => {
+  for (const bio of [
+    'Founder of a fintech startup, in stealth. Ex-Stripe.',
+    'Building supply chain software. Previously founded a logistics company.',
+    'Health-tech founder, ex-Google. Building in stealth.',
+  ]) {
+    const v = ff.evaluate({ raw_data: JSON.stringify({ bio }) });
+    assert.equal(v.lifestyle, false, `must keep: ${bio}`);
+  }
+});
+
+test('a real tech founder who also freelanced once is not flagged lifestyle', () => {
+  const v = ff.evaluate({
+    linkedin_data: JSON.stringify({ experiences: [{ company: 'Stealth AI', title: 'Founder' }, { company: 'Upwork', title: 'Freelancer' }] }),
+    raw_data: JSON.stringify({ bio: 'Building an AI platform. Ex-Google.' }),
+  });
+  assert.equal(v.lifestyle, false, 'not ALL founder roles are lifestyle → venture');
+});
+
+// ── BUILDER SLOPE — the pre-seed signal, and the illegible-talent unlock ──
+// Danny: "At pre-seed we really care about founder slope." The red team: the model
+// must admit a no-pedigree builder whose GitHub is accelerating.
+test('a no-pedigree builder with real GitHub slope is Must-meet on slope alone', () => {
+  const v = ff.evaluate({
+    github_slope_score: 8,
+    github_slope_data: JSON.stringify({ evidence: 'agentkit: 340★ in 4mo' }),
+    raw_data: JSON.stringify({ bio: 'Building in stealth. Self-taught. UIUC.' }),
+  });
+  assert.equal(v.tier, 'must-meet');
+  assert.match(v.tierReason, /Building fast/);
+  assert.equal(v.meetWorthy, true, 'no credential required — the slope is the signal');
+});
+
+test('weak slope alone is Strong, not Must-meet', () => {
+  const v = ff.evaluate({ github_slope_score: 4, github_slope_data: JSON.stringify({ evidence: 'tool: 30★' }), raw_data: JSON.stringify({ bio: 'Building in stealth.' }) });
+  assert.equal(v.tier, 'strong');
+});
+
+test('slope + a credential clears Must-meet by corroboration', () => {
+  const v = ff.evaluate({ github_slope_score: 5, github_slope_data: JSON.stringify({ evidence: 'x: 60★' }), raw_data: JSON.stringify({ bio: 'YC alum building in stealth.' }) });
+  assert.equal(v.tier, 'must-meet');
+});
+
+test('no GitHub slope column = no builder_slope marker (never invented)', () => {
+  const v = ff.evaluate({ raw_data: JSON.stringify({ bio: 'YC alum building in stealth.' }) });
+  assert.ok(!v.markers.some((m) => m.key === 'builder_slope'));
+});
+
 // ── TIERS — the selectivity Danny asked for, deterministic and explained ──
 test('a prior exit is Must-meet, with a stated reason', () => {
   const v = ff.evaluate({ raw_data: JSON.stringify({ bio: 'Founder in stealth. Previously sold my company to Stripe.' }) });
