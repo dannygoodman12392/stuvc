@@ -285,6 +285,11 @@ function employedAtInText(company, text) {
 
 const cap = (s) => String(s).replace(/\b\w/g, (ch) => ch.toUpperCase());
 
+// A slope whose top repo is content, not a product — used as a read-time tier
+// safeguard (mirrors CONTENT_REPO in pipeline/github-activity, checked against the
+// stored evidence string like "baoyu-skills: 23982★").
+const SLOPE_CONTENT = /\b(awesome|list|dotfiles|tutorial|guide|notes|book|roadmap|interview|cheat-?sheet|skills|prompts?|resources?|handbook|curriculum|course|learn|examples?|demos?|blog|portfolio|papers?|wiki|docs|boilerplate|template|starter|config)\b/i;
+
 // ══════════════════════════════════════════════════════════════════════════
 // FOUNDER-MARKET FIT — "why this person, for this problem." The market red-teamer's
 // core point: the old model scored talent with zero market signal. This is the free
@@ -560,14 +565,19 @@ function markersFor(row) {
     // company/IL/site"). Weak: a name-derived handle alone — real enough to SHOW, not
     // to promote to must-meet on its own.
     const reason = row.github_resolve_reason || '';
-    const weakIdentity = /^name-derived handle/.test(reason);
+    // Read-time safeguard: a slope whose headline repo is CONTENT (an awesome-list, a
+    // skills/prompts collection) is never trusted to drive the tier — even if the
+    // stored score predates the content-exclusion fix. This drops the content-creator
+    // (Jim Liu's "baoyu-skills") on read, without waiting for a re-score.
+    const contentEvidence = SLOPE_CONTENT.test(evidence);
+    const weakIdentity = /^name-derived handle/.test(reason) || contentEvidence;
     out.push({
       key: 'builder_slope',
       label: `Building fast (${evidence})`,
-      weight: weakIdentity ? 5 : 9,   // weak identity can't outweigh a real credential
+      weight: weakIdentity ? 5 : 9,   // weak identity / content can't outweigh a real credential
       evidence,
       structured: true, // from the GitHub API, not the prose blob
-      slopeScore: row.github_slope_score,
+      slopeScore: contentEvidence ? Math.min(row.github_slope_score, 4) : row.github_slope_score,
       weakIdentity,
     });
   }
