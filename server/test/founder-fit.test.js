@@ -151,6 +151,47 @@ test('an empty profile yields nothing — no marker without a source', () => {
   assert.equal(v.markers.length, 0);
   assert.equal(v.meetWorthy, false);
   assert.equal(v.priority, 0);
+  assert.equal(v.tier, null);
+});
+
+// ── TIERS — the selectivity Danny asked for, deterministic and explained ──
+test('a prior exit is Must-meet, with a stated reason', () => {
+  const v = ff.evaluate({ raw_data: JSON.stringify({ bio: 'Founder in stealth. Previously sold my company to Stripe.' }) });
+  assert.equal(v.tier, 'must-meet');
+  assert.match(v.tierReason, /Exited/);
+});
+
+test('a repeat founder WITH pedigree is Must-meet', () => {
+  const v = ff.evaluate({ raw_data: JSON.stringify({ bio: 'Second-time founder, in stealth. Ex-Google engineer.' }) });
+  assert.equal(v.tier, 'must-meet');
+  assert.match(v.tierReason, /Repeat founder/);
+});
+
+test('two independent signals are Must-meet', () => {
+  const v = ff.evaluate({ raw_data: JSON.stringify({ bio: 'YC alum, ex-Meta engineer, building in stealth.' }) });
+  assert.equal(v.tier, 'must-meet');
+  assert.match(v.tierReason, /2 independent/);
+});
+
+test('a single program badge is Strong, not Must-meet — meet them before the badge', () => {
+  // Danny wants builders "before they get into YC/Speedrun or think to apply", so a
+  // lone program membership is a solid signal, not the top tier.
+  const yc = ff.evaluate({ raw_data: JSON.stringify({ bio: 'YC S24 founder building in stealth.' }) });
+  assert.equal(yc.tier, 'strong', 'YC alone is Strong');
+  const spr = ff.evaluate({ raw_data: JSON.stringify({ bio: 'a16z Speedrun founder, stealth.' }) });
+  assert.equal(spr.tier, 'strong', 'Speedrun alone is Strong');
+});
+
+test('a lone hyperscaler is Strong, not Must-meet', () => {
+  const v = ff.evaluate({ raw_data: JSON.stringify({ bio: 'Ex-Amazon engineer building in stealth.' }) });
+  assert.equal(v.tier, 'strong');
+});
+
+test('tier is null unless the founder clears the gates', () => {
+  // Past-earliest → not meet-worthy → no tier, however strong the background.
+  const late = ff.evaluate({ raw_data: JSON.stringify({ bio: 'Exited a startup, ex-Google. Now raising our Series B.' }) });
+  assert.equal(late.meetWorthy, false);
+  assert.equal(late.tier, null);
 });
 
 // ── PRIORITY ORDERING ──

@@ -360,23 +360,39 @@ router.get('/inbox', (req, res) => {
     // Strip the heavy source blobs back out — they were selected only to feed the
     // rubric, and the inbox payload shouldn't carry every founder's full scrape.
     const { raw_data, enriched_data, linkedin_data, ...rest } = r;
-    return { ...rest, fit: { meetWorthy: f.meetWorthy, priority: f.priority, stage: f.stage, stageTooLate: f.stageTooLate, why: f.why, markers: f.markers } };
+    return { ...rest, fit: { meetWorthy: f.meetWorthy, tier: f.tier, tierReason: f.tierReason, priority: f.priority, stage: f.stage, stageTooLate: f.stageTooLate, why: f.why, markers: f.markers } };
   });
 
-  // ?meetWorthy=1 — the shortlist. ?hideLate=1 — drop past-earliest (Cargado).
-  if (String(req.query.meetWorthy) === '1') scored = scored.filter((r) => r.fit.meetWorthy);
+  // Tier counts over the FULL list, before any filter — the header shows the size
+  // of each tier so Danny can widen from Must-meet knowing exactly how many more
+  // are behind it. Computed once, here, so the counts and the filter never disagree.
+  const tierCounts = {
+    mustMeet: scored.filter((r) => r.fit.tier === 'must-meet').length,
+    strong: scored.filter((r) => r.fit.tier === 'strong').length,
+    all: scored.length,
+  };
+
+  // ?tier=must-meet — the very best (default view). ?tier=strong — widen to solid
+  // single-signal founders. ?meetWorthy=1 — both tiers. Anything else — everything.
+  const tierParam = String(req.query.tier || '');
+  if (tierParam === 'must-meet') scored = scored.filter((r) => r.fit.tier === 'must-meet');
+  else if (tierParam === 'strong') scored = scored.filter((r) => r.fit.tier === 'strong' || r.fit.tier === 'must-meet');
+  else if (String(req.query.meetWorthy) === '1') scored = scored.filter((r) => r.fit.meetWorthy);
   if (String(req.query.hideLate) === '1') scored = scored.filter((r) => !r.fit.stageTooLate);
 
-  // Rank by the rubric first. A stable sort preserves the SQL's normalized-score
-  // order as the tiebreak within equal priority — so this refines the existing
-  // ranking rather than throwing it away.
+  // Rank: Must-meet first, then explicit earliest-stage (the cream of a tier),
+  // then priority. A stable sort keeps the SQL's normalized-score order as the
+  // final tiebreak, so this refines the ranking rather than discarding it.
+  const tierRank = (t) => (t === 'must-meet' ? 2 : t === 'strong' ? 1 : 0);
   scored.sort((a, b) =>
-    (b.fit.meetWorthy - a.fit.meetWorthy) ||
+    (tierRank(b.fit.tier) - tierRank(a.fit.tier)) ||
+    ((b.fit.stage === 'earliest' ? 1 : 0) - (a.fit.stage === 'earliest' ? 1 : 0)) ||
     (b.fit.priority - a.fit.priority));
 
   res.json({
     rows: scored,
     total: scored.length,
+    tiers: tierCounts,
     // The national Frontier Watch — everything with no Illinois tie. Kept separate
     // rather than dropped, because "best of the best" is a different question from
     // "best we can be first to," and Brandon asks the first one.

@@ -183,9 +183,13 @@ function classifyStage(text) {
     const m = t.match(d.re);
     if (!m) continue;
     if (d.min && !d.min(m)) continue; // e.g. a $2M raise, or 12 employees — still early
-    // Is this disqualifier flagged as background? Look at the ~60 chars before it.
+    // Is this disqualifier flagged as background? Look at a TIGHT window right
+    // before it — 28 chars, ~4 words. Wider than that and an unrelated "exited"
+    // elsewhere in the bio ("Exited a startup, ex-Google. Now raising our Series B")
+    // launders a CURRENT round into "prior". The genuine background phrasing puts the
+    // cue adjacent: "previously raised our Series A". Immediacy is the signal.
     const idx = m.index || 0;
-    const before = t.slice(Math.max(0, idx - 60), idx);
+    const before = t.slice(Math.max(0, idx - 28), idx);
     if (PRIOR_CUES.test(before)) continue; // "previously raised $10M" — that's a WIN, not a stage
     tooLate = true;
     evidence.push(`${d.label}: "${m[0].trim()}"`);
@@ -434,13 +438,51 @@ function markersFor(row) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-// THE VERDICT — gates + score, in one call.
+// THE TIER — how selective, and WHY. Danny: "get a bit more selective ... cull the
+// list down to the very best while making this a repeat-use feature so I can trust
+// the engine's judgment."
+//
+// Trust comes from a named, deterministic, EXPLAINABLE bar — the same founder lands
+// in the same tier every run, and the reason is stated. Not a silent threshold.
+//
+//   MUST-MEET — the very best. A proven builder, not just a credential:
+//       · a prior EXIT (his stated #1 signal), OR
+//       · a repeat founder WITH real pedigree (hyperscaler / top program / prior
+//         raise) — founding again, and not from nowhere, OR
+//       · ≥2 independent core markers — corroboration beats a single signal.
+//     Measured against the live Illinois inbox: 82 of 1908. A real shortlist.
+//
+//   STRONG — one solid core marker, earliest-stage, IL tie. Real, worth a look,
+//     but a single signal. The 534 that meetWorthy included but "the very best"
+//     shouldn't be crowded by.
+//
+//   (no tier) — didn't clear the gates. Not meet-worthy.
+//
+// Pedigree here EXCLUDES a bare program badge as the ONLY corroborator on purpose:
+// Danny wants to meet builders "before they get into YC/Speedrun or think to apply,"
+// so YC-alone or Speedrun-alone is a Strong signal, not a Must-meet one. A repeat
+// founder who ALSO did time at a hyperscaler is the profile that earns the top tier.
+const PEDIGREE_KEYS = new Set(['hyperscale', 'yc', 'speedrun_zfellows', 'spc', 'prior_raise']);
+
+function tierOf(coreMarkers) {
+  const keys = new Set(coreMarkers.map((m) => m.key));
+  const pedigree = [...keys].filter((k) => PEDIGREE_KEYS.has(k));
+  if (keys.has('prior_exit')) return { tier: 'must-meet', reason: 'Exited a startup' };
+  if (keys.has('prior_founding') && pedigree.length) {
+    const p = coreMarkers.find((m) => PEDIGREE_KEYS.has(m.key));
+    return { tier: 'must-meet', reason: `Repeat founder + ${p.label.replace(/^Hyperscaler: /, '')}` };
+  }
+  if (coreMarkers.length >= 2) return { tier: 'must-meet', reason: `${coreMarkers.length} independent signals` };
+  return { tier: 'strong', reason: coreMarkers[0] ? coreMarkers[0].label : 'One signal' };
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// THE VERDICT — gates + score + tier, in one call.
 //
 //   meetWorthy  = earliest-stage (not past it) AND at least one outlier marker.
-//                 This is the shortlist: who Danny should actually meet.
-//   priority    = sum of marker weights, with a hard cut to 0 when the stage gate
-//                 fails, so a strong-but-too-late founder can never outrank a
-//                 genuinely early one. That is the ranking he asked for.
+//   tier        = 'must-meet' | 'strong' | null — the selectivity Danny asked for.
+//   priority    = sum of marker weights; a strong-but-too-late founder is cut to a
+//                 residual so it can never outrank a genuinely early one.
 //   why         = the surviving marker labels — the honest "Why they're here".
 // ══════════════════════════════════════════════════════════════════════════
 function evaluate(row) {
@@ -458,8 +500,13 @@ function evaluate(row) {
   // hunting for. Multiply, don't zero, so ranking within the excluded set is stable.
   const priority = stage.tooLate ? Math.round(markerScore * 0.1) : markerScore;
 
+  // Tier only applies to meet-worthy founders — the gates come first.
+  const { tier, reason } = meetWorthy ? tierOf(coreMarkers) : { tier: null, reason: null };
+
   return {
     meetWorthy,
+    tier,
+    tierReason: reason,
     priority,
     stage: stage.stage,
     stageTooLate: stage.tooLate,
@@ -472,6 +519,6 @@ function evaluate(row) {
 }
 
 module.exports = {
-  evaluate, markersFor, classifyStage, profileText, verbatimIn,
-  MARKERS, HYPERSCALERS, IL_ELITE_SCHOOLS,
+  evaluate, markersFor, classifyStage, tierOf, profileText, verbatimIn,
+  MARKERS, HYPERSCALERS, IL_ELITE_SCHOOLS, PEDIGREE_KEYS,
 };

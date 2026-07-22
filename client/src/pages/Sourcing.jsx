@@ -205,11 +205,15 @@ export default function Sourcing() {
   const nav = useNavigate();
   const [data, setData] = useState(null);
   const [scope, setScope] = useState('pipeline');
-  // The shortlist. Danny: "come up with a founder quality check ... to identify,
-  // select, and prioritize who I should meet." On = only the meet-worthy
-  // (earliest-stage + a real outlier marker); off = the whole inbox, still ranked
-  // by the same check so the best are on top either way.
-  const [shortlist, setShortlist] = useState(false);
+  // How selective. Danny: "cull the list down to the very best while making this a
+  // repeat-use feature so I can trust the engine's judgment."
+  //   must-meet — the very best (default): a proven builder at the earliest stage —
+  //               a prior exit, a repeat founder with pedigree, or 2+ signals.
+  //   strong    — widen to solid single-signal founders.
+  //   all       — the whole inbox, still ranked by the same check.
+  // Defaulting to must-meet IS the repeat-use trust feature: every time he opens
+  // Sourcing, the engine has already done the culling and shown its reasoning.
+  const [tierView, setTierView] = useState('must-meet');
   const [q, setQ] = useState('');
   const [busy, setBusy] = useState(null);
   const [cursor, setCursor] = useState(0);
@@ -227,11 +231,11 @@ export default function Sourcing() {
     let dead = false;
     setData(null);
     api
-      .getPipelineInbox({ scope, meetWorthy: shortlist ? 1 : undefined })
+      .getPipelineInbox({ scope, tier: tierView === 'all' ? undefined : tierView })
       .then((d) => !dead && setData(d))
       .catch((e) => !dead && setErr(e.message));
     return () => { dead = true; };
-  }, [scope, shortlist]);
+  }, [scope, tierView]);
 
   const rows = useMemo(() => {
     if (!data) return [];
@@ -350,15 +354,23 @@ export default function Sourcing() {
             </button>
           ))}
           <div className="w-px h-3.5 bg-line-2 mx-1" />
-          <button
-            onClick={() => { setShortlist((v) => !v); setCursor(0); }}
-            title="Only earliest-stage founders with a real outlier marker (exit, YC, Speedrun, SPC, hyperscaler, prior founding/raise)"
-            className={`px-2 h-6 rounded text-mini font-medium transition ${
-              shortlist ? 'bg-accent-soft text-accent' : 'text-ink-3 hover:text-ink hover:bg-ground-3'
-            }`}
-          >
-            Shortlist
-          </button>
+          {[
+            { k: 'must-meet', label: 'Must-meet', n: data?.tiers?.mustMeet, title: 'The very best: a prior exit, a repeat founder with pedigree, or 2+ independent signals — all at the earliest stage with a verified Illinois tie.' },
+            { k: 'strong', label: 'Strong', n: data?.tiers ? data.tiers.mustMeet + data.tiers.strong : undefined, title: 'Widen to solid single-signal founders (one core marker), still earliest-stage with an Illinois tie.' },
+            { k: 'all', label: 'All', n: data?.tiers?.all, title: 'The whole inbox, still ranked best-first by the same check.' },
+          ].map((t) => (
+            <button
+              key={t.k}
+              onClick={() => { setTierView(t.k); setCursor(0); }}
+              title={t.title}
+              className={`px-2 h-6 rounded text-mini font-medium transition ${
+                tierView === t.k ? 'bg-accent-soft text-accent' : 'text-ink-3 hover:text-ink hover:bg-ground-3'
+              }`}
+            >
+              {t.label}
+              {t.n != null && <span className="num text-ink-4 ml-1">{t.n}</span>}
+            </button>
+          ))}
         </div>
       </div>
 
@@ -424,6 +436,12 @@ export default function Sourcing() {
               }`}
             >
               <span className="flex-[2] min-w-0 flex items-baseline gap-2">
+                {/* Must-meet marker — the engine's top tier, with its reason on
+                    hover. Only shown when the view is mixed (Strong/All); in the
+                    Must-meet view every row is one, so the star would be noise. */}
+                {r.fit?.tier === 'must-meet' && tierView !== 'must-meet' && (
+                  <span className="flex-none text-accent text-mini leading-none" title={`Must-meet — ${r.fit.tierReason}`}>★</span>
+                )}
                 <span className="row-primary flex-none max-w-[150px]">{r.name}</span>
                 {companyOf(r) && <span className="row-meta min-w-0">{companyOf(r)}</span>}
               </span>
