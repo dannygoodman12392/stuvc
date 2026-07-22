@@ -527,6 +527,24 @@ function cardRow(userId, id) {
   `).get(userId, id);
 }
 
+// ── Literal GET routes MUST come before GET /:id, or Express treats "movers" and
+// "predictions" as founder ids and 404s them (it did). ──
+router.get('/movers', (req, res) => {
+  if (req.user.id !== 1) return res.status(403).json({ error: 'not available for your account' });
+  try {
+    const { movers } = require('../services/slope-snapshots');
+    res.json({ movers: movers({ userId: req.user.id, limit: req.query.limit ? Number(req.query.limit) : 40 }) });
+  } catch (e) { console.error('[Movers]', e.message); res.status(500).json({ error: e.message }); }
+});
+router.get('/predictions', (req, res) => {
+  if (req.user.id !== 1) return res.status(403).json({ error: 'not available for your account' });
+  try {
+    const P = require('../services/predictions');
+    const today = new Date().toISOString().slice(0, 10);
+    res.json({ scoreboard: P.scoreboard({ userId: req.user.id }), due: P.due({ userId: req.user.id, today }) });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 router.get('/:id', (req, res) => {
   // PIPELINE_SQL lists columns explicitly because it runs over 187 rows and its
   // payload is already 136KB — widening it to carry deck URLs and enrichment
@@ -986,36 +1004,12 @@ router.post('/run-radar', (req, res) => {
   res.json({ started: true, note: 'running in the background; watch job_runs (slope_refresh) or /movers' });
 });
 
-// ── Predictions — the falsifiable learning loop (the quant red-teamer's ask) ──
-// GET returns the scoreboard + what's due to score; POST resolves one true/false.
-router.get('/predictions', (req, res) => {
-  if (req.user.id !== 1) return res.status(403).json({ error: 'not available for your account' });
-  try {
-    const P = require('../services/predictions');
-    const today = new Date().toISOString().slice(0, 10);
-    res.json({ scoreboard: P.scoreboard({ userId: req.user.id }), due: P.due({ userId: req.user.id, today }) });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
 router.post('/predictions/:id/resolve', (req, res) => {
   if (req.user.id !== 1) return res.status(403).json({ error: 'not available for your account' });
   try {
     const P = require('../services/predictions');
     res.json(P.resolve({ id: Number(req.params.id), userId: req.user.id, outcome: req.body?.outcome }));
   } catch (e) { res.status(400).json({ error: e.message }); }
-});
-
-// ── GET /api/pipeline/movers — who is rising since the last snapshot ──
-// The "catch the inflection" view: founders whose slope, stars, or tier moved UP
-// week-over-week. Empty until there are two snapshot rounds to compare.
-router.get('/movers', (req, res) => {
-  if (req.user.id !== 1) return res.status(403).json({ error: 'not available for your account' });
-  try {
-    const { movers } = require('../services/slope-snapshots');
-    res.json({ movers: movers({ userId: req.user.id, limit: req.query.limit ? Number(req.query.limit) : 40 }) });
-  } catch (e) {
-    console.error('[Movers]', e.message);
-    res.status(500).json({ error: e.message });
-  }
 });
 
 // ── POST /api/pipeline/snapshot — capture the weekly signal state (manual trigger) ──
