@@ -66,6 +66,76 @@ test('a real LinkedIn employer still counts', () => {
   assert.ok(v.markers.some((m) => m.key === 'hyperscale'), 'employment at LinkedIn is a real hyperscaler marker');
 });
 
+// ── HYPERSCALE = EMPLOYMENT, NOT A MENTION ──
+// Danny, 2026-07-22: "the hyperscale experience tag is hallucinating ... calibrate
+// this to read their real LinkedIn history." A company NAME in the text is not a job.
+test('a hyperscaler mentioned as product/customer/backer never fires', () => {
+  const noFire = [
+    'Building AI tools for Amazon sellers. Founder in stealth.',
+    'Our product is aimed at Google ad market.',
+    'Backed by ex-Googlers and Stripe alumni. Founder at NewCo.',
+    'Building a Google Maps competitor.',
+    'Sold my last startup to Meta in 2021.',
+    'We integrate with Amazon and Google APIs.',
+    'A customer at Google gave us feedback.',
+  ];
+  for (const bio of noFire) {
+    const v = ff.evaluate({ raw_data: JSON.stringify({ bio }) });
+    assert.ok(!v.markers.some((m) => m.key === 'hyperscale'), `must NOT fire on: ${bio}`);
+  }
+});
+
+test('real employment phrasings still fire', () => {
+  const fire = [
+    'SWE at Google for 4 years, now in stealth.',
+    'Previously at Meta on Core Ads.',
+    'Ex-Stripe engineer building in stealth.',
+    '9 years at Instacart building ML infra.',
+    'Machine Learning Engineer at Microsoft.',
+    'Spent three years at Amazon AGI Labs.',
+  ];
+  for (const bio of fire) {
+    const v = ff.evaluate({ raw_data: JSON.stringify({ bio }) });
+    assert.ok(v.markers.some((m) => m.key === 'hyperscale'), `must fire on: ${bio}`);
+  }
+});
+
+// ── STRUCTURED HISTORY IS GROUND TRUTH ──
+// The LinkedIn scrape's experiences[]/education[] arrays are where someone actually
+// worked and studied — un-hallucinatable, because a product blurb never lands there.
+test('structured experiences produce an accurate employer, with title', () => {
+  const row = {
+    linkedin_data: JSON.stringify({
+      experiences: [
+        { company: 'Stealth', title: 'Founder' },
+        { company: 'Google', title: 'Staff Software Engineer' },
+      ],
+    }),
+  };
+  const v = ff.evaluate(row);
+  const h = v.markers.find((m) => m.key === 'hyperscale');
+  assert.ok(h, 'a Google role in experiences[] must fire');
+  assert.ok(h.structured, 'it must be marked as structured (ground truth)');
+  assert.match(h.evidence, /Google/, 'evidence should name the real role/company');
+});
+
+test('a hyperscaler ONLY in a product blurb, absent from experiences[], does not fire', () => {
+  const row = {
+    linkedin_data: JSON.stringify({ experiences: [{ company: 'Acme AI', title: 'Founder' }] }),
+    raw_data: JSON.stringify({ bio: 'Acme AI — the Amazon of B2B procurement.' }),
+  };
+  const v = ff.evaluate(row);
+  assert.ok(!v.markers.some((m) => m.key === 'hyperscale'), '"the Amazon of X" is not employment at Amazon');
+});
+
+test('structured education gives an accurate school; a campus mention does not', () => {
+  const alum = ff.evaluate({ linkedin_data: JSON.stringify({ education: [{ school: 'Northwestern University' }], experiences: [{ company: 'YC co', title: 'Founder' }] }) });
+  assert.ok(alum.markers.some((m) => m.key === 'il_elite_school'), 'a Northwestern education must count');
+
+  const nearby = ff.evaluate({ raw_data: JSON.stringify({ bio: 'Building study tools for University of Chicago students.' }) });
+  assert.ok(!nearby.markers.some((m) => m.key === 'il_elite_school'), 'serving a campus is not attending it');
+});
+
 // ── THE RECEIPT RULE ──
 test('every surfaced marker carries evidence verbatim in the profile', () => {
   const row = { raw_data: JSON.stringify({ bio: 'YC S24. Founder in stealth. Ex-Stripe engineer.' }) };

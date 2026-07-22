@@ -85,6 +85,46 @@ function profileText(row = {}) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════
+// STRUCTURED employment + education — the ground truth, when we have it.
+//
+// Danny: "the hyperscale experience tag is hallucinating ... make sure this is
+// calibrated to read, understand, and interpret accurately their real LinkedIn
+// history." He's right, and the cause is that the old detector matched a company
+// NAME anywhere in a text blob — so "AI for Amazon sellers", "backed by
+// ex-Googlers", or a customer logo all fired "Hyperscaler: Amazon". A company
+// mention is not employment.
+//
+// The LinkedIn scrape carries a real experiences[] array — {company, title,
+// starts_at, ends_at}. That is where someone actually WORKED, and it's un-
+// hallucinatable: a product blurb naming Amazon never appears there. When we have
+// it, employment markers read it and nothing else. Only when there's no structured
+// history do we fall back to free text — and then demand an employment cue next to
+// the company, never a bare mention.
+// ══════════════════════════════════════════════════════════════════════════
+function structuredProfile(row = {}) {
+  const employers = []; // { company, title }
+  const schools = [];   // school name
+  for (const blob of [row.linkedin_data, row.enriched_data]) {
+    if (typeof blob !== 'string' || !blob) continue;
+    let o; try { o = JSON.parse(blob); } catch { continue; }
+    const exp = o.experiences || o.experience || o.positions || [];
+    if (Array.isArray(exp)) {
+      for (const e of exp) {
+        if (e && (e.company || e.title)) employers.push({ company: String(e.company || ''), title: String(e.title || '') });
+      }
+    }
+    const edu = o.education || o.educations || [];
+    if (Array.isArray(edu)) {
+      for (const e of edu) {
+        const s = e && (e.school || e.school_name || e.name);
+        if (s) schools.push(String(s));
+      }
+    }
+  }
+  return { employers, schools, hasStructured: employers.length > 0 || schools.length > 0 };
+}
+
+// ══════════════════════════════════════════════════════════════════════════
 // GATE 1 — CURRENT-COMPANY STAGE
 //
 // Returns { stage, tooLate, evidence }. `tooLate` true means the current company is
@@ -195,6 +235,52 @@ function firstMatch(t, re) {
   return m ? m[0].trim() : null;
 }
 
+// Does `company` appear as a real EMPLOYER in `text` — not just mentioned? Requires
+// an employment cue immediately next to the name, inside a tight window, so
+// "AI for Amazon sellers" or "backed by ex-Googlers advising us" cannot fire while
+// "SWE at Amazon", "9 years at Amazon", "ex-Amazon", "Amazon engineer" do. Returns
+// the matched employment phrase, or null.
+const ROLE_WORDS = 'swe|engineer|software engineer|ml engineer|scientist|researcher|research scientist|pm|product manager|designer|architect|developer|intern|analyst|lead|manager|director|vp|vice president|head|founder|cofounder|co-founder|president|officer|cto|ceo|coo|cpo';
+// Words that make an adjacent "at COMPANY" mean employment, not location or aim.
+// A bare "at COMPANY" is NOT enough — "aimed at Google", "sell at Amazon scale" are
+// not jobs. Employment needs a role, a tenure, or a history word right in front.
+const HISTORY_WORDS = 'previously|prior|formerly|spent|before|earlier|was';
+// Non-employment framings that must VETO a match even when a company name is near a
+// cue: the ex-Googler is a backer/advisor, not the founder; the company is a
+// customer/partner, not an employer.
+const EMPLOYMENT_VETO = /\b(backed by|investors?|investor|advis|angel|customer|client|partner|integrat|acquired by|sold to|competitor|for)\b/i;
+
+function employedAtInText(company, text) {
+  const c = company.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const frames = [
+    // "<role> at/@/, Amazon"
+    new RegExp(`(?:${ROLE_WORDS})\\s+(?:at|@|,)\\s*${c}\\b`, 'i'),
+    // "Amazon engineer" (role AFTER the company)
+    new RegExp(`\\b${c}\\s+(?:${ROLE_WORDS})\\b`, 'i'),
+    // "ex-Amazon", "former(ly) (at) Amazon"
+    new RegExp(`\\bex-?\\s*${c}\\b`, 'i'),
+    new RegExp(`\\bformer(?:ly)?\\s+(?:at\\s+)?${c}\\b`, 'i'),
+    // "joined/worked at/interned at Amazon"
+    new RegExp(`\\b(?:joined|worked\\s+at|interned?\\s+at)\\s+${c}\\b`, 'i'),
+    // "9 years at Amazon"
+    new RegExp(`\\b\\d+\\+?\\s*years?\\s+(?:at|@)\\s+${c}\\b`, 'i'),
+    // History word + "at/@ Amazon": "previously at Meta", "spent 4 years... at Meta"
+    new RegExp(`\\b(?:${HISTORY_WORDS})\\b[^.]{0,15}?\\b(?:at|@)\\s+${c}\\b`, 'i'),
+  ];
+  for (const re of frames) {
+    const m = String(text).match(re);
+    if (!m) continue;
+    // Veto if this sits in a backing/advisor/customer frame — look just before it.
+    const idx = m.index || 0;
+    const before = String(text).slice(Math.max(0, idx - 22), idx);
+    if (EMPLOYMENT_VETO.test(before)) continue;
+    return m[0].replace(/\s+/g, ' ').trim();
+  }
+  return null;
+}
+
+const cap = (s) => String(s).replace(/\b\w/g, (ch) => ch.toUpperCase());
+
 const MARKERS = [
   {
     key: 'prior_exit',
@@ -250,15 +336,26 @@ const MARKERS = [
     key: 'hyperscale',
     label: 'Hyperscaler background',
     weight: 6,
-    detect(t) {
-      const lc = normText(t);
-      for (const co of HYPERSCALERS) {
-        if (reWord(co).test(lc)) {
-          // Prefer to show a senior/departure phrasing if present, else the company.
-          const senior = firstMatch(t, new RegExp(`\\b(staff|principal|lead|senior|head of|vp|director|founding)\\b[^.]{0,30}\\b${co}\\b`, 'i'))
-            || firstMatch(t, new RegExp(`\\b${co}\\b[^.]{0,30}\\b(staff|principal|lead|senior|head of|vp|director)\\b`, 'i'));
-          return { quote: senior || co, label: `Hyperscaler: ${co.replace(/\b\w/g, (c) => c.toUpperCase())}` };
+    // EMPLOYMENT, not a mention. Structured experiences[] first (ground truth); only
+    // then free text, and only with an employment cue beside the company name.
+    structured: true,
+    detect(t, ctx = {}) {
+      // 1) Real employment history. A hyperscaler in experiences[].company is a fact.
+      for (const emp of ctx.employers || []) {
+        const lc = normText(emp.company);
+        for (const co of HYPERSCALERS) {
+          // Whole-company match, not substring: "Amazon" must be the employer, not
+          // "Amazon Web Services Partner Co" — reWord on the normalized company name.
+          if (reWord(co).test(lc)) {
+            const title = emp.title ? `${emp.title} at ${emp.company}` : emp.company;
+            return { quote: title, label: `Hyperscaler: ${cap(co)}`, structured: true };
+          }
         }
+      }
+      // 2) No structured history — demand an employment cue in the prose.
+      for (const co of HYPERSCALERS) {
+        const phrase = employedAtInText(co, t);
+        if (phrase) return { quote: phrase, label: `Hyperscaler: ${cap(co)}` };
       }
       return null;
     },
@@ -272,10 +369,27 @@ const MARKERS = [
     // school boosts priority but never makes the shortlist on its own — a degree is
     // not a track record. meetWorthy requires a core marker; this isn't one.
     modifier: true,
-    detect(t) {
-      const lc = normText(t);
+    structured: true,
+    detect(t, ctx = {}) {
+      // Structured education[] first — the same discipline as employment. "AI for
+      // Northwestern students" or "based near the University of Chicago" is a
+      // mention, not an alma mater; the education array never contains those.
+      for (const school of ctx.schools || []) {
+        const lc = normText(school);
+        for (const s of IL_ELITE_SCHOOLS) {
+          if (lc.includes(normText(s))) return { quote: school, label: cap(s), structured: true };
+        }
+      }
+      // Free-text fallback: require an education cue near the school name.
+      const eduCue = /\b(studied|degree|b\.?s\.?|m\.?s\.?|ph\.?d|mba|bachelor|master|alum|alumni|graduate|grad|class of|attended|educated)\b/i;
       for (const s of IL_ELITE_SCHOOLS) {
-        if (lc.includes(normText(s))) return { quote: s, label: `${s.replace(/\b\w/g, (c) => c.toUpperCase())}` };
+        const re = new RegExp(`(?:${s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'i');
+        const m = t.match(re);
+        if (m) {
+          const idx = m.index || 0;
+          const window = t.slice(Math.max(0, idx - 60), idx + s.length + 40);
+          if (eduCue.test(window)) return { quote: m[0], label: cap(s) };
+        }
       }
       return null;
     },
@@ -299,14 +413,20 @@ function verbatimIn(quote, text) {
 
 function markersFor(row) {
   const text = profileText(row);
+  const ctx = structuredProfile(row);
   const out = [];
   for (const m of MARKERS) {
-    const hit = m.detect(text);
+    const hit = m.detect(text, ctx);
     if (!hit) continue;
     const quote = typeof hit === 'string' ? hit : hit.quote;
     const label = typeof hit === 'string' ? m.label : (hit.label || m.label);
-    if (!verbatimIn(quote, text)) continue; // the receipt has to be real
-    out.push({ key: m.key, label, weight: m.weight, evidence: quote, modifier: !!m.modifier });
+    // A structured hit's evidence comes from the LinkedIn experiences[]/education[]
+    // arrays — ground truth that need not appear in the flattened prose blob, and
+    // often won't (the array is separate from the bio). Only free-text hits face the
+    // verbatim gate, which is exactly where invention is possible.
+    const isStructured = typeof hit === 'object' && hit.structured;
+    if (!isStructured && !verbatimIn(quote, text)) continue; // the receipt has to be real
+    out.push({ key: m.key, label, weight: m.weight, evidence: quote, modifier: !!m.modifier, structured: !!isStructured });
   }
   // Strongest first, so "Why they're here" leads with the best reason.
   out.sort((a, b) => b.weight - a.weight);
