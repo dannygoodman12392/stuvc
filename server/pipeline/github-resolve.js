@@ -110,20 +110,20 @@ function corroborate(founder, gh, { nameCommon = false } = {}) {
   const facts = founderFacts(founder);
   const ghBlob = norm([gh.company, gh.bio, gh.location, gh.blog].filter(Boolean).join(' '));
 
-  // Positive corroborators — sufficient regardless of name commonality.
+  // A POSITIVE corroborator is REQUIRED — a name match alone (even a name-derived
+  // handle) is never enough. Ground truth kept finding the failure: "Jake Taylor →
+  // jakewtaylor" is a frontend dev in Suffolk, England; "Emily Wang → Emilywang98" a
+  // Calgary student. Both red teams were unequivocal — attributing a stranger's
+  // GitHub trajectory to a founder, and possibly citing it in a meeting, is the
+  // worst failure this system can make. So: a shared specific company, an affirmative
+  // Illinois location, or a personal site carrying their name. Nothing else.
   const co = facts.companies.find((c) => ghBlob.includes(c));
   if (co) return { ok: true, reason: `name + company "${co}"` };
   if (facts.ilTie && IL_LOC.test(gh.location || '')) return { ok: true, reason: `name + IL location "${gh.location}"` };
   if (gh.blog && facts.nameNorm && norm(gh.blog).includes(facts.nameNorm.replace(/ /g, ''))) {
     return { ok: true, reason: `name + personal site` };
   }
-
-  // Handle-derivation — only for a DISTINCTIVE name, and only if the location doesn't
-  // contradict the founder's Illinois tie.
-  if (!nameCommon && handleDerivedFromName(gh.login, founder.name) && !locationContradictsIL(gh.location)) {
-    return { ok: true, reason: `name-derived handle @${gh.login}` };
-  }
-  return { ok: false, reason: nameCommon ? 'common name — no corroborator' : 'name only — no strong corroborator' };
+  return { ok: false, reason: 'name match but no positive corroborator (company/IL/site)' };
 }
 
 // Returns { url, login, reason } on a confident match, null on a genuine no-match, or

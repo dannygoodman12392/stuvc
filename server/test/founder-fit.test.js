@@ -304,10 +304,11 @@ test('the resolver accepts only name + an independent corroborator', () => {
   // A SHARED SCHOOL alone is not enough (too common) — this was the Eric Xia bug.
   const sf = { name: 'Eric Xia', linkedin_data: JSON.stringify({ education: [{ school: 'Brown University' }] }) };
   assert.ok(!corroborate(sf, { name: 'Eric Xia', login: 'rkique', bio: 'Brown University' }).ok, 'shared school must not corroborate');
-  // A name-DERIVED handle IS a strong corroborator on its own.
-  assert.ok(corroborate({ name: 'Ben Monahan' }, { name: 'Ben Monahan', login: 'benmonahan03' }).ok, 'full-name-derived handle corroborates');
-  assert.ok(!corroborate({ name: 'Sam Miller' }, { name: 'Sam Miller', login: 'smillerc' }).ok, 'first-initial handle on a common name is rejected');
-  assert.ok(corroborate({ name: 'Demetri Morris' }, { name: 'Demetri Morris', login: 'demetrimorris' }).ok);
+  // A name-derived handle ALONE is NOT sufficient anymore — ground truth kept finding
+  // strangers (Jake Taylor/England, Emily Wang/Calgary). A positive corroborator is
+  // required, so even a clean full-name handle is rejected without one.
+  assert.ok(!corroborate({ name: 'Ben Monahan' }, { name: 'Ben Monahan', login: 'benmonahan03' }).ok, 'handle alone is no longer enough');
+  assert.ok(!corroborate({ name: 'Demetri Morris' }, { name: 'Demetri Morris', login: 'demetrimorris' }).ok, 'handle alone rejected');
   // A company that is a fragment of the person's own surname is NOT independent.
   assert.ok(!corroborate({ name: 'Demetri Morris', company: 'Morr' }, { name: 'Demetri Morris', login: 'xyz', company: 'Morr' }).ok, 'name-fragment company rejected');
 });
@@ -334,8 +335,7 @@ test('resolver: common name + handle-only is rejected; positive corroborator pas
   assert.ok(!c({ name: 'Emily Wang' }, { name: 'Emily Wang', login: 'emilywang98' }, { nameCommon: true }).ok, 'common + handle-only → reject');
   assert.ok(!c({ name: 'Akshay Patel', chicago_connection: 'Chicago' }, { name: 'Akshay Patel', login: 'akshaypatel80', location: 'Gujarat, India' }, { nameCommon: true }).ok, 'India location → reject');
   assert.ok(c({ name: 'Emily Wang', chicago_connection: 'Chicago, IL' }, { name: 'Emily Wang', login: 'ew', location: 'Chicago, IL' }, { nameCommon: true }).ok, 'common + IL location → ok');
-  assert.ok(c({ name: 'Izee Madkaur' }, { name: 'Izee Madkaur', login: 'izeemadkaur' }, { nameCommon: false }).ok, 'distinctive handle → ok');
-  assert.ok(!c({ name: 'Izee Madkaur' }, { name: 'Izee Madkaur', login: 'izeemadkaur', location: 'Berlin, Germany' }, { nameCommon: false }).ok, 'contradicting location → reject');
+  assert.ok(!c({ name: 'Izee Madkaur' }, { name: 'Izee Madkaur', login: 'izeemadkaur' }, { nameCommon: false }).ok, 'distinctive handle ALONE → reject (positive corroborator required)');
 });
 
 // F5 — the surname must match exactly; no 2-char prefix cross-matches.
