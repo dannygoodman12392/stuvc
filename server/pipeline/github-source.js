@@ -102,17 +102,40 @@ async function assess(login, token) {
   };
 }
 
-// Already in the pool or the pipeline? Dedup on github_url first, then name.
-function isDuplicate(row, userId) {
-  const byGh = db.prepare('SELECT 1 FROM sourced_founders WHERE user_id = ? AND github_url = ? LIMIT 1').get(userId, row.github_url)
-    || db.prepare('SELECT 1 FROM founders WHERE created_by = ? AND is_deleted = 0 AND github_url = ? LIMIT 1').get(userId, row.github_url);
-  if (byGh) return true;
-  if (row.name && row.name.length >= 4) {
-    const byName = db.prepare('SELECT 1 FROM sourced_founders WHERE user_id = ? AND LOWER(name) = LOWER(?) LIMIT 1').get(userId, row.name)
-      || db.prepare('SELECT 1 FROM founders WHERE created_by = ? AND is_deleted = 0 AND LOWER(name) = LOWER(?) LIMIT 1').get(userId, row.name);
-    if (byName) return true;
+// AUGMENT, DON'T SKIP. Danny: "Whatever you build needs to augment/complement the
+// LinkedIn scraping... I need ONE prioritized list of the top builders." A founder
+// who is BOTH a rich LinkedIn profile AND a fast GitHub builder is the strongest row
+// on the board — but the old dedup just skipped the GitHub insert and threw the slope
+// away. So instead: if the person already exists, MERGE the slope onto their record.
+// Returns 'merged' (augmented an existing row), 'exists' (already had slope), or
+// null (genuinely new — caller inserts).
+function mergeIfExists(row, userId) {
+  const findSourced = db.prepare(
+    'SELECT id, github_url, github_slope_score FROM sourced_founders WHERE user_id = ? AND (github_url = ? OR (LENGTH(name) >= 4 AND LOWER(name) = LOWER(?))) LIMIT 1'
+  ).get(userId, row.github_url, row.name);
+  const findFounder = db.prepare(
+    'SELECT id, github_url, github_slope_score FROM founders WHERE created_by = ? AND is_deleted = 0 AND (github_url = ? OR (LENGTH(name) >= 4 AND LOWER(name) = LOWER(?))) LIMIT 1'
+  ).get(userId, row.github_url, row.name);
+
+  // On the live pipeline already — augment the founder card so the same slope shows
+  // wherever the person is, and stop (don't also add a duplicate inbox row).
+  if (findFounder) {
+    if (findFounder.github_slope_score == null) {
+      db.prepare('UPDATE founders SET github_url = COALESCE(github_url, ?), github_slope_score = ?, github_slope_data = ? WHERE id = ?')
+        .run(row.github_url, row.github_slope_score, row.github_slope_data, findFounder.id);
+      return 'merged';
+    }
+    return 'exists';
   }
-  return false;
+  if (findSourced) {
+    if (findSourced.github_slope_score == null) {
+      db.prepare('UPDATE sourced_founders SET github_url = COALESCE(github_url, ?), github_slope_score = ?, github_slope_data = ? WHERE id = ?')
+        .run(row.github_url, row.github_slope_score, row.github_slope_data, findSourced.id);
+      return 'merged';
+    }
+    return 'exists';
+  }
+  return null;
 }
 
 const INSERT = `
@@ -129,7 +152,7 @@ const INSERT = `
 // candidatesPerQuery bounds API spend; the search API is 30 req/min authed and each
 // kept candidate costs ~3 calls (search page is shared, profile + 2 slope calls).
 async function discoverGithubBuilders({ userId = 1, token, candidatesPerQuery = 15, pages = 1 } = {}) {
-  const out = { considered: 0, added: 0, skipped: {}, examples: [] };
+  const out = { considered: 0, added: 0, merged: 0, skipped: {}, examples: [] };
   const seen = new Set();
   const ins = db.prepare(INSERT);
 
@@ -144,7 +167,12 @@ async function discoverGithubBuilders({ userId = 1, token, candidatesPerQuery = 
         let a;
         try { a = await assess(u.login, token); } catch (e) { out.skipped[e.message] = (out.skipped[e.message] || 0) + 1; continue; }
         if (!a || a.skip) { const k = (a && a.skip) || 'error'; out.skipped[k] = (out.skipped[k] || 0) + 1; continue; }
-        if (isDuplicate(a.row, userId)) { out.skipped.duplicate = (out.skipped.duplicate || 0) + 1; continue; }
+        // If the person is already known (LinkedIn pool or the live pipeline), AUGMENT
+        // that record with the slope instead of adding a second row — one prioritized
+        // list, and the founder-on-both becomes the strongest row on it.
+        const merged = mergeIfExists(a.row, userId);
+        if (merged === 'merged') { out.merged = (out.merged || 0) + 1; if (out.examples.length < 15) out.examples.push(`↳ merged slope ${a.slope} onto existing ${a.row.name}`); continue; }
+        if (merged === 'exists') { out.skipped.already_had_slope = (out.skipped.already_had_slope || 0) + 1; continue; }
         ins.run({ ...a.row, confidence_score: Math.min(10, 5 + Math.floor(a.slope / 3)), user_id: userId });
         out.added++;
         if (out.examples.length < 15) out.examples.push(`${a.row.name} (slope ${a.slope}) — ${a.evidence || a.row.chicago_connection}`);
@@ -156,4 +184,32 @@ async function discoverGithubBuilders({ userId = 1, token, candidatesPerQuery = 
   return out;
 }
 
-module.exports = { discoverGithubBuilders, assess, __test: { cleanCompany, BUILDING_RE } };
+// ── SAFE BACKFILL — GitHub links already in the LinkedIn scrape ──
+// The zero-risk half of the augmentation: many technical founders already link their
+// GitHub in their profile/bio. Extract those (no fuzzy name-matching, no false
+// positives) and set github_url, so the LinkedIn pool earns slope on the next refresh
+// too — the two fronts converging on one record without guessing anyone's identity.
+const GH_LINK = /github\.com\/([a-zA-Z0-9](?:[a-zA-Z0-9-]{0,38})?)(?![a-zA-Z0-9-])/i;
+const GH_RESERVED = /^(orgs?|about|features|pricing|marketplace|topics|sponsors|readme|explore|login|join|settings|apps|customer-stories|enterprise|team|collections|trending|search|notifications|new|dashboard)$/i;
+// Well-known ORG handles. A link to "github.com/facebook/react" is a contribution
+// or a mention, not the founder's own account — attaching it would give a stranger's
+// slope to the wrong person, the exact hallucination class to avoid.
+const GH_ORG = /^(facebook|google|microsoft|apple|amazon|aws|netflix|meta|openai|anthropic|vercel|nodejs|kubernetes|tensorflow|pytorch|angular|reactjs|vuejs|golang|rust-lang|apache|nvidia|huggingface|langchain-ai|stripe|shopify|airbnb|uber|twitter|x|spotify)$/i;
+
+function backfillGithubFromScrape({ userId = 1, limit = 2000 } = {}) {
+  const rows = db.prepare(`
+    SELECT id, raw_data, enriched_data, linkedin_data, headline FROM sourced_founders
+    WHERE user_id = ? AND status IN ('pending','starred') AND (github_url IS NULL OR github_url = '')
+    LIMIT ?
+  `).all(userId, limit);
+  const upd = db.prepare("UPDATE sourced_founders SET github_url = ? WHERE id = ?");
+  let set = 0;
+  for (const r of rows) {
+    const blob = [r.raw_data, r.enriched_data, r.linkedin_data, r.headline].filter(Boolean).join(' ');
+    const m = blob.match(GH_LINK);
+    if (m && !GH_RESERVED.test(m[1]) && !GH_ORG.test(m[1])) { upd.run(`https://github.com/${m[1]}`, r.id); set++; }
+  }
+  return { scanned: rows.length, github_url_set: set };
+}
+
+module.exports = { discoverGithubBuilders, backfillGithubFromScrape, assess, __test: { cleanCompany, BUILDING_RE, GH_LINK, GH_RESERVED, GH_ORG } };

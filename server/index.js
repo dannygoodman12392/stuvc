@@ -602,6 +602,14 @@ app.listen(PORT, () => {
     cron.schedule('0 6 * * 0', async () => {
       const { recordJobRun } = require('./services/health');
       try {
+        // Safe backfill first: pull GitHub links already in the LinkedIn scrape so
+        // those pool founders get scored this run too — augmenting the LinkedIn side.
+        let backfilled = 0;
+        try {
+          const { backfillGithubFromScrape } = require('./pipeline/github-source');
+          backfilled = backfillGithubFromScrape({ userId: 1 }).github_url_set;
+        } catch (e) { console.error('[Cron][Slope] backfill failed:', e.message); }
+
         const { scoreGithubSlope } = require('./pipeline/github-activity');
         let scored = 0, guard = 0;
         // Drain the queue in batches, capped so a huge backlog can't run for hours.
@@ -620,8 +628,8 @@ app.listen(PORT, () => {
 
         const { captureSnapshots } = require('./services/slope-snapshots');
         const snap = captureSnapshots({ userId: 1 });
-        recordJobRun('slope_refresh', 'ok', `${scored} scored, ${discovered} new builders, ${snap.captured} snapshotted`, 1);
-        console.log(`[Cron][Slope] ${scored} scored, ${discovered} discovered, ${snap.captured} snapshotted`);
+        recordJobRun('slope_refresh', 'ok', `${backfilled} gh-backfilled, ${scored} scored, ${discovered} new builders, ${snap.captured} snapshotted`, 1);
+        console.log(`[Cron][Slope] ${backfilled} backfilled, ${scored} scored, ${discovered} discovered, ${snap.captured} snapshotted`);
       } catch (e) {
         recordJobRun('slope_refresh', 'error', e.message, 1);
         console.error('[Cron][Slope] failed:', e.message);

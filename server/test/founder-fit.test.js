@@ -277,3 +277,11 @@ test('the building signal separates founders/builders from employed engineers', 
   assert.equal(__test.cleanCompany('@gridstatus'), 'gridstatus');
   assert.equal(__test.cleanCompany('A very long company description that is basically a bio sentence'), null);
 });
+
+test('github backfill excludes org handles (facebook) but keeps real ones', () => {
+  const { __test } = require('../pipeline/github-source');
+  assert.ok(__test.GH_ORG.test('facebook'), 'a link to github.com/facebook is not a person');
+  assert.ok(!__test.GH_ORG.test('akashp3128'));
+  const m = 'contributed to github.com/facebook/react'.match(__test.GH_LINK);
+  assert.equal(m[1], 'facebook', 'the regex captures the org, which GH_ORG then rejects');
+});

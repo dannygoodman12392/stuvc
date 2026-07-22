@@ -942,6 +942,18 @@ router.post('/discover-builders', async (req, res) => {
   }
 });
 
+// ── POST /api/pipeline/backfill-github — pull GitHub links from the LinkedIn scrape ──
+router.post('/backfill-github', (req, res) => {
+  if (req.user.id !== 1) return res.status(403).json({ error: 'not available for your account' });
+  try {
+    const { backfillGithubFromScrape } = require('../pipeline/github-source');
+    res.json(backfillGithubFromScrape({ userId: req.user.id }));
+  } catch (e) {
+    console.error('[BackfillGithub]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── POST /api/pipeline/snapshot — capture the weekly signal state (manual trigger) ──
 router.post('/snapshot', (req, res) => {
   if (req.user.id !== 1) return res.status(403).json({ error: 'not available for your account' });
