@@ -18,9 +18,12 @@ async function runBuilderRadar({ userId = 1, token = process.env.GITHUB_TOKEN } 
     out.backfilled = backfillGithubFromScrape({ userId }).github_url_set;
   } catch (e) { out.errors.push(`backfill: ${e.message}`); }
 
+  // Resolve is the heaviest step (each founder = 1 search + up to 5 profile calls),
+  // so it's bounded small — otherwise it monopolizes GitHub's rate limit for 10+ min
+  // and starves the score/discover steps. 20/week fills the pool steadily.
   try {
     const { resolveGithubHandles } = require('../pipeline/github-resolve');
-    out.resolved = (await resolveGithubHandles({ userId, token, limit: 60 })).resolved;
+    out.resolved = (await resolveGithubHandles({ userId, token, limit: 20 })).resolved;
   } catch (e) { out.errors.push(`resolve: ${e.message}`); }
 
   try {
