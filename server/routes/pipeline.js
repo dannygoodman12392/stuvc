@@ -967,6 +967,20 @@ router.post('/backfill-github', (req, res) => {
   }
 });
 
+// ── GET /api/pipeline/movers — who is rising since the last snapshot ──
+// The "catch the inflection" view: founders whose slope, stars, or tier moved UP
+// week-over-week. Empty until there are two snapshot rounds to compare.
+router.get('/movers', (req, res) => {
+  if (req.user.id !== 1) return res.status(403).json({ error: 'not available for your account' });
+  try {
+    const { movers } = require('../services/slope-snapshots');
+    res.json({ movers: movers({ userId: req.user.id, limit: req.query.limit ? Number(req.query.limit) : 40 }) });
+  } catch (e) {
+    console.error('[Movers]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── POST /api/pipeline/snapshot — capture the weekly signal state (manual trigger) ──
 router.post('/snapshot', (req, res) => {
   if (req.user.id !== 1) return res.status(403).json({ error: 'not available for your account' });

@@ -49,4 +49,51 @@ function movementFor(sourcedFounderId) {
   };
 }
 
-module.exports = { captureSnapshots, movementFor };
+// The MOVERS — who accelerated, and who newly crossed into a tier, since the last
+// snapshot. The red team's "catch the inflection" made concrete: not "who is high"
+// but "who is RISING". Compares each founder's two most recent snapshots and returns
+// only the ones that actually moved, biggest jump first.
+function movers({ userId = 1, limit = 40 } = {}) {
+  // Latest two snapshots per founder; the delta between them is the movement.
+  const pairs = db.prepare(`
+    WITH ranked AS (
+      -- id DESC as the tiebreaker: two snapshots captured in the same second (or a
+      -- manual double-run) must still order by which was inserted later.
+      SELECT s.*, ROW_NUMBER() OVER (PARTITION BY sourced_founder_id ORDER BY captured_at DESC, id DESC) AS rn
+      FROM founder_signal_snapshots s WHERE user_id = ?
+    )
+    SELECT cur.sourced_founder_id AS id,
+      cur.github_slope_score AS slope_now, prev.github_slope_score AS slope_prev,
+      cur.github_total_stars AS stars_now, prev.github_total_stars AS stars_prev,
+      cur.fit_tier AS tier_now, prev.fit_tier AS tier_prev, prev.captured_at AS since
+    FROM ranked cur
+    JOIN ranked prev ON prev.sourced_founder_id = cur.sourced_founder_id AND prev.rn = 2
+    WHERE cur.rn = 1
+  `).all(userId);
+
+  const rank = { 'must-meet': 2, strong: 1 };
+  const out = [];
+  for (const p of pairs) {
+    const slopeDelta = (p.slope_now || 0) - (p.slope_prev || 0);
+    const starsDelta = (p.stars_now || 0) - (p.stars_prev || 0);
+    const tierUp = (rank[p.tier_now] || 0) > (rank[p.tier_prev] || 0);
+    if (slopeDelta <= 0 && starsDelta <= 0 && !tierUp) continue; // only movers
+    const f = db.prepare('SELECT name, company, github_url FROM sourced_founders WHERE id = ?').get(p.id);
+    if (!f) continue;
+    out.push({
+      id: p.id, name: f.name, company: f.company, github_url: f.github_url,
+      slope_delta: slopeDelta, slope_now: p.slope_now,
+      stars_delta: starsDelta, tier_now: p.tier_now,
+      tier_up: tierUp ? { from: p.tier_prev, to: p.tier_now } : null,
+      since: p.since,
+    });
+  }
+  // Biggest jump first: a tier promotion, then slope delta, then star delta.
+  out.sort((a, b) =>
+    (Number(!!b.tier_up) - Number(!!a.tier_up)) ||
+    (b.slope_delta - a.slope_delta) ||
+    (b.stars_delta - a.stars_delta));
+  return out.slice(0, limit);
+}
+
+module.exports = { captureSnapshots, movementFor, movers };
