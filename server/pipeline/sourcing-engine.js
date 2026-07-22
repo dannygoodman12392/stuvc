@@ -1245,24 +1245,35 @@ async function scoreFounder(client, founder, scoringPrompt) {
 
 // ── Deduplication ──
 
-// R7: Dedup rules
-//   - Match ANY sourced_founders row (including dismissed) that has do_not_resurface=1
-//     → block forever. User explicitly said "never show again."
-//   - Match any non-dismissed sourced_founders row → block (already in queue).
-//   - Dismissed rows with do_not_resurface=0 → allow re-surface (intentional: user
-//     may want second look later when circumstances change).
+// Dedup rules — once a person is in sourced_founders in ANY status, Scout never
+// re-adds them.
+//
+// This changed because the old rule broke the one promise the Pass button makes.
+// Danny: "If I pass on a founder and then hit Scout, a lot of times those passed-on
+// founders show up again." He was right. The Pass button calls /dismiss, which set
+// status='dismissed' with do_not_resurface=0 — and the old dedup let exactly those
+// rows re-surface, on the theory that a plain Pass meant "maybe later." It doesn't.
+// A Pass is Danny clearing the person off the board, and Scout re-adding them the
+// next morning meant the inbox could never get cleaner: he'd re-triage the same
+// people every run. The distinction between "pass" and "hide forever" was invented
+// here, not by him, and it cost him exactly the noise the inbox exists to remove.
+//
+// So: any existing sourced_founders row for this identity blocks re-adding, whatever
+// its status. dismissed (passed), starred, approved, pending — all already-seen, and
+// a second copy is never what he wants. `do_not_resurface` no longer gates dedup;
+// clearing a row for a deliberate re-look stays a manual action.
 function isDuplicate(founder, userId) {
   const slug = linkedinSlug(founder.linkedin_url);
   if (slug) {
     const existing = db.prepare('SELECT id FROM founders WHERE LOWER(linkedin_url) LIKE ? AND created_by = ? AND is_deleted = 0').get(`%/in/${slug}%`, userId);
     if (existing) return true;
-    const sourced = db.prepare("SELECT id FROM sourced_founders WHERE LOWER(linkedin_url) LIKE ? AND user_id = ? AND (status != 'dismissed' OR do_not_resurface = 1)").get(`%/in/${slug}%`, userId);
+    const sourced = db.prepare('SELECT id FROM sourced_founders WHERE LOWER(linkedin_url) LIKE ? AND user_id = ?').get(`%/in/${slug}%`, userId);
     if (sourced) return true;
   }
   if (founder.email) {
     const existing = db.prepare('SELECT id FROM founders WHERE email = ? AND created_by = ? AND is_deleted = 0').get(founder.email, userId);
     if (existing) return true;
-    const sourced = db.prepare("SELECT id FROM sourced_founders WHERE email = ? AND user_id = ? AND (status != 'dismissed' OR do_not_resurface = 1)").get(founder.email, userId);
+    const sourced = db.prepare('SELECT id FROM sourced_founders WHERE email = ? AND user_id = ?').get(founder.email, userId);
     if (sourced) return true;
   }
   // Name match. Block when company also matches OR either side has no company —
@@ -1273,7 +1284,7 @@ function isDuplicate(founder, userId) {
       const co = (founder.company || '').toLowerCase();
       const existing = db.prepare('SELECT company FROM founders WHERE LOWER(name) = LOWER(?) AND created_by = ? AND is_deleted = 0').all(founder.name, userId);
       if (existing.some(r => !r.company || !co || r.company.toLowerCase() === co)) return true;
-      const sourced = db.prepare("SELECT company FROM sourced_founders WHERE LOWER(name) = LOWER(?) AND user_id = ? AND (status != 'dismissed' OR do_not_resurface = 1)").all(founder.name, userId);
+      const sourced = db.prepare('SELECT company FROM sourced_founders WHERE LOWER(name) = LOWER(?) AND user_id = ?').all(founder.name, userId);
       if (sourced.some(r => !r.company || !co || r.company.toLowerCase() === co)) return true;
     }
   }

@@ -280,7 +280,14 @@ router.get('/inbox', (req, res) => {
            -- because "'evidence_map' in row" was false and undefined skips a block
            -- without erroring. Half the panel was dead for 23 of 61 rows that HAVE
            -- the data. Same narrow-column-list trap as the company card.
-           evidence_map, caliber_signals, builder_signals
+           evidence_map, caliber_signals, builder_signals,
+           -- The founder-quality check reads the SOURCE material — bio, experience,
+           -- tags. Leaving these out is the same narrow-column trap the comment
+           -- above is about: founderFit would score every row against empty text and
+           -- silently find nothing. These are the fields lib/founderFit.profileText
+           -- actually reads.
+           raw_data, enriched_data, linkedin_data, pedigree_signals,
+           tags, previous_company_norm
     FROM sourced_founders
     WHERE user_id = ? AND status IN ('pending','starred')
       AND COALESCE(do_not_resurface, 0) = 0
@@ -335,9 +342,41 @@ router.get('/inbox', (req, res) => {
   const { lastRun } = require('../services/health');
   const last = lastRun('early_signal_sources', req.user.id) || lastRun('sourcing_run', req.user.id);
 
+  // ── The founder-quality check, on read ──
+  // Danny asked for a check to "identify, select, and prioritize who I should meet":
+  // earliest-stage + IL tie + an outlier marker (exit/YC/Speedrun/SPC/hyperscaler/
+  // prior-founding/prior-raise). Attached here, not stored, so it's always fresh.
+  //
+  //   fit.why      — the verified "Why they're here". Only markers whose evidence is
+  //                  verbatim in the profile survive, which is the fix for "some
+  //                  descriptions are good, some bad."
+  //   fit.priority — the ranking. It becomes the PRIMARY sort key, ahead of the
+  //                  normalized caliber/breakout score the query ordered by. A
+  //                  stable sort keeps that score as the within-priority tiebreak.
+  //   stageTooLate — the Cargado case: past earliest stage. Optionally hidden.
+  const ff = require('../lib/founderFit');
+  let scored = rows.map((r) => {
+    const f = ff.evaluate(r);
+    // Strip the heavy source blobs back out — they were selected only to feed the
+    // rubric, and the inbox payload shouldn't carry every founder's full scrape.
+    const { raw_data, enriched_data, linkedin_data, ...rest } = r;
+    return { ...rest, fit: { meetWorthy: f.meetWorthy, priority: f.priority, stage: f.stage, stageTooLate: f.stageTooLate, why: f.why, markers: f.markers } };
+  });
+
+  // ?meetWorthy=1 — the shortlist. ?hideLate=1 — drop past-earliest (Cargado).
+  if (String(req.query.meetWorthy) === '1') scored = scored.filter((r) => r.fit.meetWorthy);
+  if (String(req.query.hideLate) === '1') scored = scored.filter((r) => !r.fit.stageTooLate);
+
+  // Rank by the rubric first. A stable sort preserves the SQL's normalized-score
+  // order as the tiebreak within equal priority — so this refines the existing
+  // ranking rather than throwing it away.
+  scored.sort((a, b) =>
+    (b.fit.meetWorthy - a.fit.meetWorthy) ||
+    (b.fit.priority - a.fit.priority));
+
   res.json({
-    rows,
-    total: rows.length,
+    rows: scored,
+    total: scored.length,
     // The national Frontier Watch — everything with no Illinois tie. Kept separate
     // rather than dropped, because "best of the best" is a different question from
     // "best we can be first to," and Brandon asks the first one.

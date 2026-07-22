@@ -91,7 +91,38 @@ router.get('/queue', (req, res) => {
       return res.json(filtered.map(({ row, signals }) => ({ ...row, matched_signals: signals })));
     }
   }
-  res.json(founders);
+
+  // ── The founder-quality check, applied on read ──
+  // Danny asked for a check that identifies, selects, and PRIORITIZES who to meet:
+  // earliest-stage + IL tie + at least one outlier marker (exit/YC/Speedrun/SPC/
+  // hyperscaler/prior-founding/prior-raise). Computed here rather than stored so it's
+  // always fresh and needs no re-score migration — the queue already loads every row.
+  //
+  // `fit` rides on each row: { meetWorthy, priority, stage, why: [markers] }. The
+  // `why` is the honest "Why they're here" — only markers whose evidence is verbatim
+  // in the profile survive, which is the fix for "some descriptions are good, some
+  // bad." The client renders fit.why, not the loose regex caliber_signals.
+  const ff = require('../lib/founderFit');
+  let scored = founders.map((row) => {
+    const f = ff.evaluate(row);
+    return { ...row, fit: { meetWorthy: f.meetWorthy, priority: f.priority, stage: f.stage, stageTooLate: f.stageTooLate, why: f.why, markers: f.markers } };
+  });
+
+  // ?meetWorthy=1 — the shortlist. Earliest-stage with a real outlier marker.
+  if (String(req.query.meetWorthy) === '1') scored = scored.filter((r) => r.fit.meetWorthy);
+  // ?hideLate=1 — drop the ones the stage gate says are past earliest (the Cargado case).
+  if (String(req.query.hideLate) === '1') scored = scored.filter((r) => !r.fit.stageTooLate);
+
+  // ?sort=fit — rank by the rubric: shortlist first, then priority, then the
+  // existing caliber/affinity order as the tiebreak.
+  if (sort === 'fit') {
+    scored.sort((a, b) =>
+      (b.fit.meetWorthy - a.fit.meetWorthy) ||
+      (b.fit.priority - a.fit.priority) ||
+      (b.fit.markers.length - a.fit.markers.length));
+  }
+
+  res.json(scored);
 });
 
 // GET /api/sourcing/starred — starred for later review

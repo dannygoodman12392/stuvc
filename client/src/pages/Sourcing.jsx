@@ -108,6 +108,15 @@ const JUNK_SIGNAL = /^(actively building|founder|building|startup|entrepreneur)$
 const isTag = (s) => s && s.length <= 46 && !/:\s*['"]/.test(s);
 
 function whyOf(r) {
+  // Prefer the founder-quality check's verified markers. Danny, 2026-07-21: "I'm
+  // super not confident about the 'Why they're here' descriptions. I've checked a
+  // few and some are good, some are bad." The old source below is loose regex tags
+  // that could fire wrong. fit.why is different in kind: every marker's evidence is
+  // verbatim in the profile or it's dropped server-side (lib/founderFit). A chip
+  // here now means a receipt exists — that's the whole fix.
+  const fitWhy = r.fit && Array.isArray(r.fit.why) ? r.fit.why.filter(Boolean) : [];
+  if (fitWhy.length) return [...new Set(fitWhy)];
+
   const tags = [...parseArr(r.caliber_signals), ...parseArr(r.pedigree_signals)]
     .filter((s) => isTag(s) && !JUNK_SIGNAL.test(String(s).trim()));
 
@@ -196,6 +205,11 @@ export default function Sourcing() {
   const nav = useNavigate();
   const [data, setData] = useState(null);
   const [scope, setScope] = useState('pipeline');
+  // The shortlist. Danny: "come up with a founder quality check ... to identify,
+  // select, and prioritize who I should meet." On = only the meet-worthy
+  // (earliest-stage + a real outlier marker); off = the whole inbox, still ranked
+  // by the same check so the best are on top either way.
+  const [shortlist, setShortlist] = useState(false);
   const [q, setQ] = useState('');
   const [busy, setBusy] = useState(null);
   const [cursor, setCursor] = useState(0);
@@ -213,11 +227,11 @@ export default function Sourcing() {
     let dead = false;
     setData(null);
     api
-      .getPipelineInbox({ scope })
+      .getPipelineInbox({ scope, meetWorthy: shortlist ? 1 : undefined })
       .then((d) => !dead && setData(d))
       .catch((e) => !dead && setErr(e.message));
     return () => { dead = true; };
-  }, [scope]);
+  }, [scope, shortlist]);
 
   const rows = useMemo(() => {
     if (!data) return [];
@@ -335,6 +349,16 @@ export default function Sourcing() {
               {s.n != null && <span className="num text-ink-4 ml-1">{s.n}</span>}
             </button>
           ))}
+          <div className="w-px h-3.5 bg-line-2 mx-1" />
+          <button
+            onClick={() => { setShortlist((v) => !v); setCursor(0); }}
+            title="Only earliest-stage founders with a real outlier marker (exit, YC, Speedrun, SPC, hyperscaler, prior founding/raise)"
+            className={`px-2 h-6 rounded text-mini font-medium transition ${
+              shortlist ? 'bg-accent-soft text-accent' : 'text-ink-3 hover:text-ink hover:bg-ground-3'
+            }`}
+          >
+            Shortlist
+          </button>
         </div>
       </div>
 
