@@ -30,49 +30,69 @@ function nameMatches(founderName, ghName) {
   return a.every((t) => b.has(t) || [...b].some((x) => x.startsWith(t) || t.startsWith(x)));
 }
 
-// Pull the founder's corroborating facts from whatever we already scraped.
+// Pull the founder's corroborating facts. Companies ONLY — schools are deliberately
+// excluded, because a shared university ("Brown") is common to thousands and is not
+// evidence that two accounts are the same person. That over-trust produced the
+// Eric Xia → rkique match on "brown university" alone.
 function founderFacts(row) {
-  const parts = [];
+  const companies = [];
   for (const blob of [row.linkedin_data, row.enriched_data, row.raw_data]) {
     if (typeof blob === 'string' && blob) {
       try {
         const o = JSON.parse(blob);
-        for (const e of o.experiences || []) if (e && e.company) parts.push(e.company);
-        for (const e of o.education || []) { const s = e && (e.school || e.school_name); if (s) parts.push(s); }
-        if (o.summary) parts.push(o.summary);
+        for (const e of o.experiences || []) if (e && e.company) companies.push(e.company);
       } catch { /* free text */ }
     }
   }
-  const companies = [row.company, row.previous_company_norm, ...parts].filter(Boolean).map(norm);
+  companies.push(row.company, row.previous_company_norm);
+  const nm = norm(row.name);
   return {
-    companies: [...new Set(companies)].filter((c) => c.length >= 3),
+    companies: [...new Set(companies.filter(Boolean).map(norm))]
+      // A company corroborator must be specific (≥5 chars), not a generic word, and
+      // NOT a fragment of the founder's own name — "morr" ⊂ "morris" is the person's
+      // surname leaking into the company field, not independent evidence.
+      .filter((c) => c.length >= 5 && !nm.includes(c) && !c.includes(nm.split(' ').pop())),
     ilTie: /\b(chicago|illinois|evanston|champaign|urbana|naperville|uiuc|northwestern|uchicago)\b/i.test(
-      [row.chicago_connection, row.location_city, ...parts].filter(Boolean).join(' ')
+      [row.chicago_connection, row.location_city].filter(Boolean).join(' ')
     ),
-    nameNorm: norm(row.name),
+    nameNorm: nm,
   };
 }
 
-// Score one GitHub candidate against the founder. Returns { ok, reason } — ok only on
-// name + at least one independent corroborator.
+// Is the GitHub LOGIN itself derived from the person's full name? "mfigdore" for Matt
+// Figdore, "demetrimorris" for Demetri Morris, "chrisgeo" for Chris George. A handle
+// built from a real first+last is strong, independent evidence the account is theirs —
+// far stronger than a shared school. Requires the (distinctive) LAST name present.
+function handleDerivedFromName(login, name) {
+  if (!login) return false;
+  const t = tokens(name);
+  if (t.length < 2) return false;
+  const first = t[0], last = t[t.length - 1];
+  if (last.length < 4) return false;              // a too-short surname collides
+  const h = login.toLowerCase();
+  if (!h.includes(last)) return false;            // the surname must be in the handle
+  return h.includes(first) || h.includes(first[0] + last) || h.startsWith(first[0]);
+}
+
+// Score one GitHub candidate. ok only on a full-name match AND one STRONG independent
+// corroborator: a specific shared company, a name-derived handle, an IL location for
+// an IL-tied founder, or a personal site carrying their name.
 function corroborate(founder, gh) {
-  if (!nameMatches(founder.name, gh.name || gh.login)) return { ok: false };
+  const ghName = gh.name || gh.login;
+  if (!nameMatches(founder.name, ghName)) return { ok: false };
   const facts = founderFacts(founder);
   const ghBlob = norm([gh.company, gh.bio, gh.location, gh.blog].filter(Boolean).join(' '));
 
-  // Corroborator 1 — a shared company name.
-  const co = facts.companies.find((c) => c.length >= 4 && ghBlob.includes(c));
+  const co = facts.companies.find((c) => ghBlob.includes(c));
   if (co) return { ok: true, reason: `name + company "${co}"` };
-  // Corroborator 2 — the candidate is in Illinois AND the founder has an IL tie.
+  if (handleDerivedFromName(gh.login, founder.name)) return { ok: true, reason: `name-derived handle @${gh.login}` };
   if (facts.ilTie && /\b(chicago|illinois|\bil\b|evanston|champaign|urbana|naperville)\b/i.test(gh.location || '')) {
     return { ok: true, reason: `name + IL location "${gh.location}"` };
   }
-  // Corroborator 3 — the candidate's blog/bio links back to their own name or site
-  // that the founder record also has (a self-referential cross-link).
   if (gh.blog && facts.nameNorm && norm(gh.blog).includes(facts.nameNorm.replace(/ /g, ''))) {
     return { ok: true, reason: `name + personal site` };
   }
-  return { ok: false, reason: 'name only — no corroborator' };
+  return { ok: false, reason: 'name only — no strong corroborator' };
 }
 
 async function resolveOne(founder, token) {
@@ -92,7 +112,15 @@ async function resolveOne(founder, token) {
 
 // Batch: resolve GitHub for pool founders who have none, only accepting corroborated
 // matches. Stores how it matched (github_resolve_reason) for auditability.
-async function resolveGithubHandles({ userId = 1, token, limit = 30 } = {}) {
+async function resolveGithubHandles({ userId = 1, token, limit = 30, reset = false } = {}) {
+  // reset clears PRIOR resolver writes (url + reason + the slope derived from them) so
+  // a tightened matcher can re-decide from scratch. Targeted: only rows the resolver
+  // itself touched (github_resolve_reason set) — backfill/discovery URLs are untouched.
+  if (reset) {
+    db.prepare(`UPDATE sourced_founders SET github_url = NULL, github_slope_score = NULL, github_slope_data = NULL,
+                github_resolve_reason = NULL WHERE user_id = ? AND github_resolve_reason IS NOT NULL AND github_resolve_reason != 'none'`).run(userId);
+    db.prepare(`UPDATE sourced_founders SET github_resolve_reason = NULL WHERE user_id = ? AND github_resolve_reason = 'none'`).run(userId);
+  }
   const rows = db.prepare(`
     SELECT id, name, company, previous_company_norm, chicago_connection, location_city,
            linkedin_data, enriched_data, raw_data

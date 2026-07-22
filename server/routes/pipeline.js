@@ -948,7 +948,7 @@ router.post('/resolve-github', async (req, res) => {
   if (req.user.id !== 1) return res.status(403).json({ error: 'not available for your account' });
   try {
     const { resolveGithubHandles } = require('../pipeline/github-resolve');
-    res.json(await resolveGithubHandles({ userId: req.user.id, token: process.env.GITHUB_TOKEN, limit: req.query.limit ? Number(req.query.limit) : 30 }));
+    res.json(await resolveGithubHandles({ userId: req.user.id, token: process.env.GITHUB_TOKEN, limit: req.query.limit ? Number(req.query.limit) : 30, reset: String(req.query.reset) === '1' }));
   } catch (e) {
     console.error('[ResolveGithub]', e.message);
     res.status(500).json({ error: e.message });

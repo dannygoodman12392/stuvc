@@ -286,6 +286,42 @@ function employedAtInText(company, text) {
 const cap = (s) => String(s).replace(/\b\w/g, (ch) => ch.toUpperCase());
 
 // ══════════════════════════════════════════════════════════════════════════
+// FOUNDER-MARKET FIT — "why this person, for this problem." The market red-teamer's
+// core point: the old model scored talent with zero market signal. This is the free
+// (no-LLM) version — has the founder actually WORKED in the domain they're now
+// building in? Deliberately scoped to SPECIFIC verticals where domain tenure is a
+// real moat (fintech, health, defense, logistics, security, legal, energy,
+// robotics, devtools) — not "AI"/"software", which are too broad to mean anything.
+//
+// Confidence discipline: the background match must come from a STRUCTURED past
+// employer (experiences[].company/title), not bio prose — so "why this person" is
+// grounded in where they actually worked, not a self-description.
+// ══════════════════════════════════════════════════════════════════════════
+const DOMAINS = {
+  fintech: /\b(fintech|payments?|banking|lending|insurtech|insurance|trading|brokerage|wealth|capital markets|hedge fund|neobank|underwriting)\b/i,
+  health: /\b(health ?tech|healthcare|clinical|medical|biotech|pharma|hospital|patient|medtech|diagnostics|therapeutics|life sciences)\b/i,
+  defense: /\b(defen[cs]e|aerospace|military|govtech|national security|intelligence community|dod\b)\b/i,
+  logistics: /\b(logistics|supply chain|freight|shipping|warehouse|fulfillment|trucking|last[- ]mile)\b/i,
+  security: /\b(cybersecurity|infosec|security|threat|vulnerability|siem|soc\b|zero trust)\b/i,
+  legal: /\b(legal ?tech|law firm|litigation|compliance|contracts?|regulatory)\b/i,
+  energy: /\b(energy|climate|clean ?tech|solar|grid|battery|carbon|renewables?|utilities)\b/i,
+  robotics: /\b(robotics|autonomous|drones?|manufacturing|industrial automation|hardware)\b/i,
+  devtools: /\b(developer tools|devtools|infrastructure|observability|database|api platform|devops|compiler)\b/i,
+};
+
+function assessMarketFit(text, ctx = {}, row = {}) {
+  const current = [row.company, row.headline, row.company_one_liner].filter(Boolean).join(' ') || text.slice(0, 200);
+  const employerText = (ctx.employers || []).map((e) => `${e.company} ${e.title}`).join(' • ');
+  for (const [domain, re] of Object.entries(DOMAINS)) {
+    if (re.test(current) && re.test(employerText)) {
+      const emp = (ctx.employers || []).find((e) => re.test(`${e.company} ${e.title}`));
+      return { fit: true, domain, evidence: emp ? `${domain}: prev ${emp.title} at ${emp.company}` : domain };
+    }
+  }
+  return { fit: false };
+}
+
+// ══════════════════════════════════════════════════════════════════════════
 // VENTURE-SCALE, NOT LIFESTYLE. Danny: "I don't want to ignore those non-tech
 // archetypes in fintech, health, logistics, defense, etc. I just don't want to
 // source people who started consulting firms or an agency or something."
@@ -493,6 +529,12 @@ function markersFor(row) {
     if (!isStructured && !verbatimIn(quote, text)) continue; // the receipt has to be real
     out.push({ key: m.key, label, weight: m.weight, evidence: quote, modifier: !!m.modifier, structured: !!isStructured });
   }
+  // ── FOUNDER-MARKET FIT — has this person worked in the domain they're building? ──
+  const fmf = assessMarketFit(text, ctx, row);
+  if (fmf.fit) {
+    out.push({ key: 'founder_market_fit', label: `Domain fit — ${fmf.domain}`, weight: 6, evidence: fmf.evidence, structured: true });
+  }
+
   // ── BUILDER SLOPE — the pre-seed signal, read from the row, not the text ──
   // GitHub trajectory (pipeline/github-activity → github_slope_score). This is the
   // one marker that CANNOT be self-labeled and that a founder with zero pedigree can
@@ -614,6 +656,6 @@ function evaluate(row) {
 }
 
 module.exports = {
-  evaluate, markersFor, classifyStage, tierOf, profileText, verbatimIn,
-  MARKERS, HYPERSCALERS, IL_ELITE_SCHOOLS, PEDIGREE_KEYS,
+  evaluate, markersFor, classifyStage, tierOf, profileText, verbatimIn, assessMarketFit,
+  MARKERS, HYPERSCALERS, IL_ELITE_SCHOOLS, PEDIGREE_KEYS, DOMAINS,
 };

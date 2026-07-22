@@ -301,4 +301,23 @@ test('the resolver accepts only name + an independent corroborator', () => {
   assert.ok(!corroborate(f, { name: 'John Doe', company: 'Acme AI' }).ok, 'wrong name rejected even with company');
   // A founder with no IL tie can't be corroborated by a Chicago GitHub location.
   assert.ok(!corroborate({ name: 'Mike Chen', company: 'Stealth' }, { name: 'Mike Chen', location: 'Chicago' }).ok);
+  // A SHARED SCHOOL alone is not enough (too common) — this was the Eric Xia bug.
+  const sf = { name: 'Eric Xia', linkedin_data: JSON.stringify({ education: [{ school: 'Brown University' }] }) };
+  assert.ok(!corroborate(sf, { name: 'Eric Xia', login: 'rkique', bio: 'Brown University' }).ok, 'shared school must not corroborate');
+  // A name-DERIVED handle IS a strong corroborator on its own.
+  assert.ok(corroborate({ name: 'Matt Figdore' }, { name: 'Matt Figdore', login: 'mfigdore' }).ok, 'name-derived handle corroborates');
+  assert.ok(corroborate({ name: 'Demetri Morris' }, { name: 'Demetri Morris', login: 'demetrimorris' }).ok);
+  // A company that is a fragment of the person's own surname is NOT independent.
+  assert.ok(!corroborate({ name: 'Demetri Morris', company: 'Morr' }, { name: 'Demetri Morris', login: 'xyz', company: 'Morr' }).ok, 'name-fragment company rejected');
+});
+
+// ── FOUNDER-MARKET FIT — grounded in real employers, scoped to real verticals ──
+test('domain fit fires when the founder worked in the space they now build in', () => {
+  const fit = ff.evaluate({ company: 'Ledgerly', headline: 'fintech payments infra',
+    linkedin_data: JSON.stringify({ experiences: [{ company: 'JPMorgan', title: 'Payments Engineer' }] }) });
+  assert.ok(fit.markers.some((m) => m.key === 'founder_market_fit'), 'fintech + a bank = domain fit');
+
+  const noFit = ff.evaluate({ company: 'Ledgerly', headline: 'fintech payments',
+    linkedin_data: JSON.stringify({ experiences: [{ company: 'Google', title: 'Ads Engineer' }] }) });
+  assert.ok(!noFit.markers.some((m) => m.key === 'founder_market_fit'), 'fintech + ads is not domain fit');
 });
