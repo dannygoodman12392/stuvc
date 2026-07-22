@@ -600,46 +600,11 @@ app.listen(PORT, () => {
   {
     const cron = require('node-cron');
     cron.schedule('0 6 * * 0', async () => {
-      const { recordJobRun } = require('./services/health');
       try {
-        // Safe backfill first: pull GitHub links already in the LinkedIn scrape so
-        // those pool founders get scored this run too — augmenting the LinkedIn side.
-        let backfilled = 0;
-        try {
-          const { backfillGithubFromScrape } = require('./pipeline/github-source');
-          backfilled = backfillGithubFromScrape({ userId: 1 }).github_url_set;
-        } catch (e) { console.error('[Cron][Slope] backfill failed:', e.message); }
-
-        // Then corroborated LinkedIn→GitHub resolution — a bounded batch per week so
-        // the search budget stays small and the pool fills in gradually and safely.
-        let resolved = 0;
-        try {
-          const { resolveGithubHandles } = require('./pipeline/github-resolve');
-          resolved = (await resolveGithubHandles({ userId: 1, token: process.env.GITHUB_TOKEN, limit: 60 })).resolved;
-        } catch (e) { console.error('[Cron][Slope] resolve failed:', e.message); }
-
-        const { scoreGithubSlope } = require('./pipeline/github-activity');
-        let scored = 0, guard = 0;
-        // Drain the queue in batches, capped so a huge backlog can't run for hours.
-        for (;;) {
-          const r = await scoreGithubSlope({ userId: 1, githubToken: process.env.GITHUB_TOKEN, limit: 40 });
-          scored += r.scored;
-          if (r.remaining === 0 || r.scored === 0 || ++guard >= 15) break;
-        }
-        // Source new IL builders natively from GitHub — the front door for slope.
-        let discovered = 0;
-        try {
-          const { discoverGithubBuilders } = require('./pipeline/github-source');
-          const d = await discoverGithubBuilders({ userId: 1, token: process.env.GITHUB_TOKEN, candidatesPerQuery: 20, pages: 1 });
-          discovered = d.added;
-        } catch (e) { console.error('[Cron][Slope] discovery failed:', e.message); }
-
-        const { captureSnapshots } = require('./services/slope-snapshots');
-        const snap = captureSnapshots({ userId: 1 });
-        recordJobRun('slope_refresh', 'ok', `${backfilled} backfilled, ${resolved} resolved, ${scored} scored, ${discovered} new builders, ${snap.captured} snapshotted`, 1);
-        console.log(`[Cron][Slope] ${backfilled} backfilled, ${resolved} resolved, ${scored} scored, ${discovered} discovered, ${snap.captured} snapshotted`);
+        const { runBuilderRadar } = require('./services/builder-radar');
+        const r = await runBuilderRadar({ userId: 1 });
+        console.log(`[Cron][Slope] ${r.summary}`);
       } catch (e) {
-        recordJobRun('slope_refresh', 'error', e.message, 1);
         console.error('[Cron][Slope] failed:', e.message);
       }
     }, { timezone: 'America/Chicago' });

@@ -68,10 +68,14 @@ function handleDerivedFromName(login, name) {
   const t = tokens(name);
   if (t.length < 2) return false;
   const first = t[0], last = t[t.length - 1];
-  if (last.length < 4) return false;              // a too-short surname collides
+  if (first.length < 3 || last.length < 4) return false; // too short → collides
   const h = login.toLowerCase();
-  if (!h.includes(last)) return false;            // the surname must be in the handle
-  return h.includes(first) || h.includes(first[0] + last) || h.startsWith(first[0]);
+  // Require BOTH the full first AND full last name in the handle. "Benmonahan03" for
+  // Ben Monahan passes; "smillerc" for the very common "Sam Miller" does NOT (no
+  // "sam") — and it shouldn't, because a first-initial handle on a common name is
+  // exactly where this false-matches. Precision over recall: a missed match just
+  // means the founder ranks on other signals; a false one hands away someone's slope.
+  return h.includes(first) && h.includes(last);
 }
 
 // Score one GitHub candidate. ok only on a full-name match AND one STRONG independent

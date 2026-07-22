@@ -305,7 +305,8 @@ test('the resolver accepts only name + an independent corroborator', () => {
   const sf = { name: 'Eric Xia', linkedin_data: JSON.stringify({ education: [{ school: 'Brown University' }] }) };
   assert.ok(!corroborate(sf, { name: 'Eric Xia', login: 'rkique', bio: 'Brown University' }).ok, 'shared school must not corroborate');
   // A name-DERIVED handle IS a strong corroborator on its own.
-  assert.ok(corroborate({ name: 'Matt Figdore' }, { name: 'Matt Figdore', login: 'mfigdore' }).ok, 'name-derived handle corroborates');
+  assert.ok(corroborate({ name: 'Ben Monahan' }, { name: 'Ben Monahan', login: 'benmonahan03' }).ok, 'full-name-derived handle corroborates');
+  assert.ok(!corroborate({ name: 'Sam Miller' }, { name: 'Sam Miller', login: 'smillerc' }).ok, 'first-initial handle on a common name is rejected');
   assert.ok(corroborate({ name: 'Demetri Morris' }, { name: 'Demetri Morris', login: 'demetrimorris' }).ok);
   // A company that is a fragment of the person's own surname is NOT independent.
   assert.ok(!corroborate({ name: 'Demetri Morris', company: 'Morr' }, { name: 'Demetri Morris', login: 'xyz', company: 'Morr' }).ok, 'name-fragment company rejected');

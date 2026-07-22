@@ -967,6 +967,25 @@ router.post('/backfill-github', (req, res) => {
   }
 });
 
+// ── POST /api/pipeline/run-radar — run the whole builder-radar now, DETACHED ──
+// The full pipeline (backfill → resolve → score → discover → snapshot) makes dozens
+// of rate-limited GitHub calls and takes minutes — far past the platform's HTTP
+// timeout, which is why the per-step endpoints 502. This fires it server-side and
+// returns immediately; progress lands in job_runs (slope_refresh). This is the "refresh
+// my builders now" button — same code the Sunday cron runs.
+let radarRunning = false;
+router.post('/run-radar', (req, res) => {
+  if (req.user.id !== 1) return res.status(403).json({ error: 'not available for your account' });
+  if (radarRunning) return res.json({ started: false, note: 'a radar run is already in progress' });
+  radarRunning = true;
+  const { runBuilderRadar } = require('../services/builder-radar');
+  runBuilderRadar({ userId: req.user.id })
+    .then((r) => console.log(`[RunRadar] ${r.summary}`))
+    .catch((e) => console.error('[RunRadar]', e.message))
+    .finally(() => { radarRunning = false; });
+  res.json({ started: true, note: 'running in the background; watch job_runs (slope_refresh) or /movers' });
+});
+
 // ── GET /api/pipeline/movers — who is rising since the last snapshot ──
 // The "catch the inflection" view: founders whose slope, stars, or tier moved UP
 // week-over-week. Empty until there are two snapshot rounds to compare.
