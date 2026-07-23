@@ -242,11 +242,14 @@ function backfillGithubFromScrape({ userId = 1, limit = 2000 } = {}) {
 // github_url, NO resolver reason, and NOT sourced natively from GitHub — so their URL
 // came from the scrape. Clears the URL + the slope derived from it.
 function revalidateBackfill({ userId = 1 } = {}) {
+  // Every non-native-GitHub row with a URL, EXCEPT a positively-corroborated resolver
+  // match ("name + company/IL/site" — the corroborator justifies a non-name handle).
+  // This also catches the inconsistent state where a 'none' reason kept a stale URL.
   const rows = db.prepare(`
     SELECT id, name, github_url FROM sourced_founders
     WHERE user_id = ? AND github_url IS NOT NULL AND github_url != ''
-      AND github_resolve_reason IS NULL
       AND (source IS NULL OR source != 'github_builders')
+      AND (github_resolve_reason IS NULL OR github_resolve_reason NOT LIKE 'name +%')
   `).all(userId);
   const clear = db.prepare("UPDATE sourced_founders SET github_url = NULL, github_slope_score = NULL, github_slope_data = NULL, github_slope_scored_at = NULL WHERE id = ?");
   let cleared = 0; const purged = [];
