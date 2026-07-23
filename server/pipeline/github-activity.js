@@ -104,7 +104,7 @@ async function computeGithubActivity(ghUrl, token) {
 // with a fast-rising repo outscores a veteran with an old famous one.
 // ══════════════════════════════════════════════════════════════════════════
 // Content, not a product — excluded from velocity/inflection (VC red team).
-const CONTENT_REPO = /\b(awesome|awesome-|list|lists|dotfiles|tutorial|guide|guides|notes|book|books|roadmap|interview|cheat-?sheet|skills|prompts?|resources?|handbook|curriculum|course|courses|learn|learning|101|examples?|demos?|blog|portfolio|readme|papers?|wiki|docs|documentation|boilerplate|template|starter|config|configs)\b/i;
+const CONTENT_REPO = /\b(awesome|awesome-|list|lists|dotfiles|tutorial|guide|guides|notes|book|books|roadmap|interview|cheat-?sheet|skills|prompts?|resources?|handbook|curriculum|course|courses|learn|learning|101|examples?|demos?|blog|portfolio|readme|papers?|wiki|docs|documentation|boilerplate|template|starter|config|configs|design|designs|collection|collections|gallery|showcase|snippets?|reference|references|gpts?|chatgpt|awesome[- ]?ai|ai[- ]?tools?)\b/i;
 
 // Returns { slope_score, data, evidence } | null (no usable GitHub) | { failed:true }
 // (a fetch error — NOT the same as "scored 0"; the caller must not persist a failure).

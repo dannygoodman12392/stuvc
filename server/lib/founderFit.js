@@ -288,7 +288,7 @@ const cap = (s) => String(s).replace(/\b\w/g, (ch) => ch.toUpperCase());
 // A slope whose top repo is content, not a product — used as a read-time tier
 // safeguard (mirrors CONTENT_REPO in pipeline/github-activity, checked against the
 // stored evidence string like "baoyu-skills: 23982★").
-const SLOPE_CONTENT = /\b(awesome|list|dotfiles|tutorial|guide|notes|book|roadmap|interview|cheat-?sheet|skills|prompts?|resources?|handbook|curriculum|course|learn|examples?|demos?|blog|portfolio|papers?|wiki|docs|boilerplate|template|starter|config)\b/i;
+const SLOPE_CONTENT = /\b(awesome|list|dotfiles|tutorial|guide|notes|book|roadmap|interview|cheat-?sheet|skills|prompts?|resources?|handbook|curriculum|course|learn|examples?|demos?|blog|portfolio|papers?|wiki|docs|boilerplate|template|starter|config|design|designs|collection|gallery|showcase|snippets?|reference|gpts?|chatgpt|ai[- ]?tools?)\b/i;
 
 // ══════════════════════════════════════════════════════════════════════════
 // FOUNDER-MARKET FIT — "why this person, for this problem." The market red-teamer's
