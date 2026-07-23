@@ -985,6 +985,18 @@ router.post('/backfill-github', (req, res) => {
   }
 });
 
+// ── POST /api/pipeline/revalidate-backfill — purge name-inconsistent backfill URLs ──
+router.post('/revalidate-backfill', (req, res) => {
+  if (req.user.id !== 1) return res.status(403).json({ error: 'not available for your account' });
+  try {
+    const { revalidateBackfill } = require('../pipeline/github-source');
+    res.json(revalidateBackfill({ userId: req.user.id }));
+  } catch (e) {
+    console.error('[RevalidateBackfill]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── POST /api/pipeline/run-radar — run the whole builder-radar now, DETACHED ──
 // The full pipeline (backfill → resolve → score → discover → snapshot) makes dozens
 // of rate-limited GitHub calls and takes minutes — far past the platform's HTTP

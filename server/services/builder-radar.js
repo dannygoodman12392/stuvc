@@ -14,7 +14,10 @@ async function runBuilderRadar({ userId = 1, token = process.env.GITHUB_TOKEN } 
   const out = { backfilled: 0, resolved: 0, scored: 0, discovered: 0, snapshotted: 0, errors: [] };
 
   try {
-    const { backfillGithubFromScrape } = require('../pipeline/github-source');
+    // Purge any name-inconsistent backfill URLs first (the aidenybai class), then
+    // backfill fresh with the name-consistency guard in place.
+    const { backfillGithubFromScrape, revalidateBackfill } = require('../pipeline/github-source');
+    out.purged = revalidateBackfill({ userId }).cleared;
     out.backfilled = backfillGithubFromScrape({ userId }).github_url_set;
   } catch (e) { out.errors.push(`backfill: ${e.message}`); }
 

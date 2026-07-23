@@ -197,33 +197,64 @@ const GH_RESERVED = /^(orgs?|about|features|pricing|marketplace|topics|sponsors|
 // slope to the wrong person, the exact hallucination class to avoid.
 const GH_ORG = /^(facebook|google|microsoft|apple|amazon|aws|netflix|meta|openai|anthropic|vercel|nodejs|kubernetes|tensorflow|pytorch|angular|reactjs|vuejs|golang|rust-lang|apache|nvidia|huggingface|langchain-ai|stripe|shopify|airbnb|uber|twitter|x|spotify)$/i;
 
+// Does a github handle plausibly belong to THIS founder? Their scraped text often
+// cites OTHER people's GitHub — a collaborator, the author of a repo they use. The
+// live failure: "Rob Pruzan → github.com/aidenybai" (Aiden Bai, creator of react-scan)
+// gave Rob a stranger's 7,444★ repo. A handle is accepted only if it contains a
+// name token (≥3 chars) — "paulsmith" for Paul Smith yes, "aidenybai" for Rob Pruzan
+// no, "rkique" for Eric Xia no. Precision over recall: a pseudonymous founder is
+// missed, but nobody gets someone else's trajectory.
+function handleMatchesName(handle, name) {
+  const h = String(handle).toLowerCase();
+  return String(name || '').toLowerCase().split(/[^a-z]+/).filter((t) => t.length >= 3).some((t) => h.includes(t));
+}
+
+function pickPersonalHandle(blob, name) {
+  const re = /github\.com\/([a-zA-Z0-9](?:[a-zA-Z0-9-]{0,38})?)(\/[a-zA-Z0-9._-]+)?/gi;
+  let mm;
+  while ((mm = re.exec(blob)) !== null) {
+    if (mm[2]) continue;                              // has /repo → a repo link, skip
+    if (GH_RESERVED.test(mm[1]) || GH_ORG.test(mm[1])) continue;
+    if (!handleMatchesName(mm[1], name)) continue;    // not name-consistent → someone else's link
+    return mm[1];
+  }
+  return null;
+}
+
 function backfillGithubFromScrape({ userId = 1, limit = 2000 } = {}) {
   const rows = db.prepare(`
-    SELECT id, raw_data, enriched_data, linkedin_data, headline FROM sourced_founders
+    SELECT id, name, raw_data, enriched_data, linkedin_data, headline FROM sourced_founders
     WHERE user_id = ? AND status IN ('pending','starred') AND (github_url IS NULL OR github_url = '')
     LIMIT ?
   `).all(userId, limit);
   const upd = db.prepare("UPDATE sourced_founders SET github_url = ? WHERE id = ?");
   let set = 0;
-  // Only a PERSONAL profile link (github.com/<handle> with no /<repo> after it). A
-  // two-segment link like github.com/facebook/react is a repo they cited, not their
-  // account — attributing it would slope-score a stranger's org (engineering red
-  // team F13). \bTWO_SEG detects the trailing /repo.
-  const TWO_SEG = /github\.com\/[a-zA-Z0-9-]+\/[a-zA-Z0-9._-]+/i;
   for (const r of rows) {
     const blob = [r.raw_data, r.enriched_data, r.linkedin_data, r.headline].filter(Boolean).join(' ');
-    // Find the first PERSONAL link: match a github.com/handle that isn't followed by /repo.
-    let handle = null;
-    const re = /github\.com\/([a-zA-Z0-9](?:[a-zA-Z0-9-]{0,38})?)(\/[a-zA-Z0-9._-]+)?/gi;
-    let mm;
-    while ((mm = re.exec(blob)) !== null) {
-      if (mm[2]) continue;                          // has /repo → a repo link, skip
-      if (GH_RESERVED.test(mm[1]) || GH_ORG.test(mm[1])) continue;
-      handle = mm[1]; break;
-    }
+    const handle = pickPersonalHandle(blob, r.name);
     if (handle) { upd.run(`https://github.com/${handle}`, r.id); set++; }
   }
   return { scanned: rows.length, github_url_set: set };
 }
 
-module.exports = { discoverGithubBuilders, backfillGithubFromScrape, assess, __test: { cleanCompany, BUILDING_RE, GH_LINK, GH_RESERVED, GH_ORG } };
+// One-time cleanup: purge existing backfill attributions whose handle isn't
+// name-consistent (the aidenybai/rkique class). Backfill rows are those with a
+// github_url, NO resolver reason, and NOT sourced natively from GitHub — so their URL
+// came from the scrape. Clears the URL + the slope derived from it.
+function revalidateBackfill({ userId = 1 } = {}) {
+  const rows = db.prepare(`
+    SELECT id, name, github_url FROM sourced_founders
+    WHERE user_id = ? AND github_url IS NOT NULL AND github_url != ''
+      AND github_resolve_reason IS NULL
+      AND (source IS NULL OR source != 'github_builders')
+  `).all(userId);
+  const clear = db.prepare("UPDATE sourced_founders SET github_url = NULL, github_slope_score = NULL, github_slope_data = NULL, github_slope_scored_at = NULL WHERE id = ?");
+  let cleared = 0; const purged = [];
+  for (const r of rows) {
+    const handle = String(r.github_url).replace(/^https?:\/\/github\.com\//i, '').replace(/\/.*$/, '');
+    if (!handleMatchesName(handle, r.name)) { clear.run(r.id); cleared++; if (purged.length < 20) purged.push(`${r.name} ✗ ${handle}`); }
+  }
+  return { checked: rows.length, cleared, purged };
+}
+
+module.exports = { discoverGithubBuilders, backfillGithubFromScrape, revalidateBackfill, assess, __test: { cleanCompany, BUILDING_RE, GH_LINK, GH_RESERVED, GH_ORG, handleMatchesName, pickPersonalHandle } };

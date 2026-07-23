@@ -377,3 +377,16 @@ test('backfill: a github.com/org/repo link is not a personal handle', () => {
   // GH_ORG still guards bare org handles
   assert.ok(__test.GH_ORG.test('facebook'));
 });
+
+// The aidenybai class — backfill must not attribute a stranger's GitHub to a founder.
+test('backfill handle must be name-consistent with the founder', () => {
+  const { __test } = require('../pipeline/github-source');
+  const { handleMatchesName, pickPersonalHandle } = __test;
+  assert.ok(handleMatchesName('paulsmith', 'Paul Smith'), 'own handle matches');
+  assert.ok(handleMatchesName('HudsonGri', 'Hudson Griffith'));
+  assert.ok(!handleMatchesName('aidenybai', 'Rob Pruzan'), 'Aiden Bai is not Rob Pruzan');
+  assert.ok(!handleMatchesName('rkique', 'Eric Xia'), 'rkique is not name-consistent');
+  // pickPersonalHandle skips a cited stranger link, takes the founder's own
+  assert.equal(pickPersonalHandle('contributed to github.com/aidenybai/react-scan and github.com/robpruzan', 'Rob Pruzan'), 'robpruzan');
+  assert.equal(pickPersonalHandle('see github.com/aidenybai', 'Rob Pruzan'), null, 'only a stranger link → nothing');
+});
